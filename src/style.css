@@ -217,15 +217,15 @@ body {
   max-width: 320px;
 }
 .ticker-item {
-  background: rgba(10, 15, 28, 0.85);
-  backdrop-filter: blur(8px);
+  background: rgba(17, 23, 41, 0.94);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   padding: 6px 10px;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text);
   animation: tickerIn 240ms ease-out, tickerOut 400ms ease-in 4.6s forwards;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 .ticker-item.good { color: var(--accent); }
 .ticker-item.bad { color: var(--danger); }
@@ -243,12 +243,13 @@ body {
   right: 16px;
   top: 16px;
   width: 280px;
-  background: rgba(10, 15, 28, 0.85);
-  backdrop-filter: blur(8px);
+  background: rgba(17, 23, 41, 0.96);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: 12px 14px;
   pointer-events: none;
+  z-index: 60;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 .goal-label {
   font-family: var(--font-mono);
@@ -278,13 +279,13 @@ body {
   right: 16px;
   bottom: 16px;
   width: 230px;
-  background: rgba(10, 15, 28, 0.85);
-  backdrop-filter: blur(8px);
+  background: rgba(17, 23, 41, 0.96);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: 10px 12px;
   pointer-events: auto;
-  z-index: 5;
+  z-index: 60;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 .music-head {
   display: flex;
@@ -361,16 +362,15 @@ body {
   cursor: pointer;
 }
 
-/* AUDIO PROMPT (shown until user clicks to enable) */
+/* AUDIO PROMPT (shown until user clicks to enable) — does not cover side panels */
 .audio-prompt {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(6, 8, 15, 0.65);
-  backdrop-filter: blur(2px);
-  z-index: 50;
+  background: transparent;
+  z-index: 40;
   pointer-events: auto;
   transition: opacity 240ms ease;
 }
