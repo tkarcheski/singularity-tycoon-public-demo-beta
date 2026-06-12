@@ -1,9 +1,14 @@
 // Audio bootstrap for Singularity Tycoon Mini.
 // Thin layer over GameAudio that registers the four procedural vibes,
-// wires the music UI, and exposes a small API to the game module.
+// wires the music UI, and exposes a small API to the game script.
+//
+// Classic script (no modules) so the game runs straight from file:// —
+// reads window.GameAudio + window.SynthRecipes, exposes window.GameMusic.
 
-import { GameAudio } from './audio-engine.js';
-import { RECIPES } from './synth-recipes.js';
+(() => {
+
+const GameAudio = window.GameAudio;
+const RECIPES = window.SynthRecipes;
 
 const VIBES = {
   hopeful:    RECIPES.hopefulAmbient,
@@ -15,7 +20,7 @@ const VIBES = {
 let audio = null;
 let currentVibe = 'hopeful';
 
-export async function startAudio(initialVibe = 'hopeful') {
+async function startAudio(initialVibe = 'hopeful') {
   if (audio?.isStarted) return audio;
 
   const startFactory = VIBES[initialVibe] ?? VIBES.hopeful;
@@ -30,7 +35,7 @@ export async function startAudio(initialVibe = 'hopeful') {
   return audio;
 }
 
-export async function swapVibe(name, crossfadeMs = 1600) {
+async function swapVibe(name, crossfadeMs = 1600) {
   if (!audio?.isStarted) return;
   const factory = VIBES[name];
   if (!factory || name === currentVibe) return;
@@ -38,14 +43,25 @@ export async function swapVibe(name, crossfadeMs = 1600) {
   currentVibe = name;
 }
 
-export function setMusicVolume(v01) {
+function setMusicVolume(v01) {
   audio?.setMasterGain(v01);
 }
 
-export function toggleMute() {
+function toggleMute() {
   audio?.toggleMute();
   return audio?._muted ?? false;
 }
 
-export function getCurrentVibe() { return currentVibe; }
-export function isAudioStarted() { return audio?.isStarted ?? false; }
+function getCurrentVibe() { return currentVibe; }
+function isAudioStarted() { return audio?.isStarted ?? false; }
+
+window.GameMusic = {
+  startAudio,
+  swapVibe,
+  setMusicVolume,
+  toggleMute,
+  getCurrentVibe,
+  isAudioStarted,
+};
+
+})();

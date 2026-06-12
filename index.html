@@ -83,31 +83,11 @@
       </div>
     </div>
 
-    <script>
-      // Browsers block ES module scripts on file:// (CORS, null origin), which
-      // would leave the page silently dead — explain instead of failing.
-      if (location.protocol === 'file:') {
-        document.addEventListener('DOMContentLoaded', function () {
-          var overlay = document.createElement('div');
-          overlay.style.cssText =
-            'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;' +
-            'background:#0a0f1c;color:#e6ecff;font-family:system-ui,sans-serif;padding:24px;text-align:center;';
-          overlay.innerHTML =
-            '<div style="max-width:560px;">' +
-            '<h1 style="color:#4af0c0;font-size:22px;margin:0 0 12px;">One more step to play</h1>' +
-            '<p style="line-height:1.6;margin:0 0 16px;">This game is built with JavaScript modules, which browsers ' +
-            'don’t load from <code>file://</code> pages. Serve the folder over HTTP instead — from the game ' +
-            'directory, run:</p>' +
-            '<pre style="background:#141c32;border:1px solid #2a3754;border-radius:8px;padding:14px 18px;' +
-            'text-align:left;overflow:auto;margin:0 0 16px;"><code>python3 -m http.server 8000</code></pre>' +
-            '<p style="line-height:1.6;margin:0;">then open <a href="http://localhost:8000" ' +
-            'style="color:#4af0c0;">http://localhost:8000</a> — or use any static server ' +
-            '(<code>npx serve</code>, <code>php -S localhost:8000</code>, …).</p>' +
-            '</div>';
-          document.body.appendChild(overlay);
-        });
-      }
-    </script>
-    <script type="module" src="src/main.js"></script>
+    <!-- Classic scripts (load order matters) so the game runs straight from
+         file:// — browsers block ES modules on file:// pages. -->
+    <script src="src/audio/synth-recipes.js"></script>
+    <script src="src/audio/audio-engine.js"></script>
+    <script src="src/audio/index.js"></script>
+    <script src="src/main.js"></script>
   </body>
 </html>
