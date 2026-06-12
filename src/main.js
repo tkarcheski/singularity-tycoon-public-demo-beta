@@ -115,7 +115,7 @@ const state = {
   effects: [],      // timed debuffs: { kind, x?, y?, until }
 
   // god-mode dev toggles (window.__god)
-  god: { freeBuild: false, noWear: false, noEntropy: false, pinSentiment: false, fast: false },
+  god: { freeBuild: false, noWear: false, entropyMult: 1, pinSentiment: false, fast: false },
 
   // tutorial & lifetime stats
   tutStep: 0,
@@ -536,12 +536,14 @@ function tick() {
   }
   const avgHeat = heatN ? heatSum / heatN : 0;
 
-  // Entropy rises with compute and floor temperature; it accelerates wear and rolls events
-  const entropy01 = state.god.noEntropy
-    ? 0
-    : Math.min(1, (1 - Math.exp(-computeAdj / ENTROPY_SCALE)) + HEAT_ENTROPY * avgHeat);
+  // Entropy rises with compute and floor temperature; it accelerates wear and
+  // rolls events. The dev dial (0×..25×) scales it for playtesting.
+  const entropy01 = Math.min(
+    1,
+    ((1 - Math.exp(-computeAdj / ENTROPY_SCALE)) + HEAT_ENTROPY * avgHeat) * state.god.entropyMult,
+  );
   state.entropy = entropy01 * 100;
-  if (!state.god.noEntropy) maybeEntropyEvent(entropy01, now);
+  if (entropy01 > 0) maybeEntropyEvent(entropy01, now);
 
   // Music reacts: tension follows entropy and spikes when the city turns on you
   setTension(Math.max(entropy01, mood === 'protest' ? 0.85 : mood === 'unrest' ? 0.45 : 0));
@@ -1141,10 +1143,14 @@ for (const box of devBody.querySelectorAll('input[data-god]')) {
   box.addEventListener('change', () => {
     state.god[box.dataset.god] = box.checked;
     pushTicker(`DEV: ${box.dataset.god} ${box.checked ? 'ON' : 'OFF'}`, 'warn');
-    if (box.dataset.god === 'noEntropy' && box.checked) {
-      state.effects = [];
-      state.entropy = 0;
-    }
+    updateHUD();
+  });
+}
+for (const radio of devBody.querySelectorAll('input[name="god-entropy"]')) {
+  radio.addEventListener('change', () => {
+    state.god.entropyMult = parseFloat(radio.value);
+    if (state.god.entropyMult === 0) { state.effects = []; state.entropy = 0; }
+    pushTicker(`DEV: entropy ×${radio.value}`, 'warn');
     updateHUD();
   });
 }

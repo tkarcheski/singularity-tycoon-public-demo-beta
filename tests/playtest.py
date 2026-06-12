@@ -149,9 +149,12 @@ def main():
             "window.__state.effects.length > 0 || [...window.__state.grid.flat()].some(c => c && c.cond < 100)"
         )
         check("entropy event fired", hit)
-        page.click('input[data-god="noEntropy"]')
+        page.click('input[name="god-entropy"][value="0"]')
         page.wait_for_timeout(700)
-        check("noEntropy zeroes meter", page.evaluate("window.__state.entropy") == 0)
+        check("entropy dial 0x zeroes meter", page.evaluate("window.__state.entropy") == 0)
+        page.click('input[name="god-entropy"][value="25"]')
+        page.wait_for_timeout(700)
+        check("entropy dial 25x maxes meter", page.evaluate("window.__state.entropy") > 80)
 
         check("zero console errors end-to-end", not errs, str(errs[:3]))
         browser.close()

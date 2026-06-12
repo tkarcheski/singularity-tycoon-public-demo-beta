@@ -598,3 +598,8 @@ body {
   cursor: pointer;
 }
 .dev-cash:hover { filter: brightness(1.2); }
+
+/* dev entropy dial */
+.dev-dial { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dev-dial-label { margin-right: 2px; }
+.dev-dial label { display: inline-flex; gap: 3px; }
