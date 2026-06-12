@@ -617,3 +617,17 @@ body {
 .fin-maint-label { color: var(--text); font-size: 12px; margin-right: 2px; }
 .fin-maint label { display: inline-flex; gap: 3px; align-items: center; cursor: pointer; }
 .fin-maint input { accent-color: var(--accent); }
+
+/* allocation sliders */
+.allocation { display: flex; flex-direction: column; gap: 5px; }
+.alloc-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.alloc-name { width: 76px; color: var(--text); font-size: 12px; }
+.alloc-row input[type="range"] { flex: 1; accent-color: var(--accent); height: 14px; }
+.alloc-pct {
+  width: 34px; text-align: right;
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-muted);
+}
+
+/* locked tools */
+.tool.locked { opacity: 0.65; border-style: dashed; }
+.tool.locked .cost { color: var(--warn); }

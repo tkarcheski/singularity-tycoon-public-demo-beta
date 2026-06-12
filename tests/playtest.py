@@ -44,7 +44,7 @@ def main():
 
         check("loads with 9 tools", page.eval_on_selector_all("#tools .tool", "els => els.length") == 9)
         check("no boot errors", not errs, str(errs[:2]))
-        check("tutorial visible with step 1", page.eval_on_selector("#tut-progress", "el => el.textContent") == "1 / 8")
+        check("tutorial visible with step 1", page.eval_on_selector("#tut-progress", "el => el.textContent") == "1 / 9")
         check("no blocking audio prompt", page.evaluate("!document.getElementById('audio-prompt')"))
 
         geo = page.evaluate(
@@ -71,6 +71,29 @@ def main():
         page.wait_for_timeout(1200)
         step = page.evaluate("window.__state.tutStep")
         check("tutorial advances with play", step >= 4, f"step {step}")
+
+        # Unlock gating: gpu2 is locked at minute zero; buying the unlock opens it
+        check("gpu2 starts locked", page.evaluate("!window.__state.unlocks.gpu2"))
+        page.click('.tool[data-tool="gpu2"]')  # can't afford -> stays locked
+        check("unlock refused without cash", page.evaluate("!window.__state.unlocks.gpu2"))
+        page.evaluate("window.__state.cash = 2000")
+        page.click('.tool[data-tool="gpu2"]')
+        check("gpu2 unlock purchased", page.evaluate("window.__state.unlocks.gpu2"))
+        check("auto-maintain hidden before ops unlock", page.evaluate("document.querySelector('.fin-maint').hidden"))
+
+        # Allocation: divert to research -> RP accrues; self -> multiplier grows
+        page.evaluate("const r = document.querySelector('input[data-alloc=\"research\"]'); r.value = 50; r.dispatchEvent(new Event('input'))")
+        page.wait_for_timeout(1600)
+        rp = page.evaluate("window.__state.rp")
+        check("research allocation earns RP", rp > 0, f"{rp:.2f} RP")
+        page.evaluate("const r = document.querySelector('input[data-alloc=\"self\"]'); r.value = 60; r.dispatchEvent(new Event('input'))")
+        page.wait_for_timeout(1600)
+        si = page.evaluate("window.__state.selfImprove")
+        check("self-improvement compounds", si > 0, f"+{si*100:.3f}%")
+        rev_split = page.evaluate("window.__state.alloc.sell")
+        check("allocation normalizes", abs(page.evaluate("window.__state.alloc.sell + window.__state.alloc.research + window.__state.alloc.self") - 1) < 1e-6, f"sell={rev_split:.2f}")
+        # reset allocation to pure sell for the rest of the suite
+        page.evaluate("for (const r of document.querySelectorAll('input[data-alloc]')) { r.value = r.dataset.alloc === 'sell' ? 100 : 0; r.dispatchEvent(new Event('input')) }")
 
         # God toggles
         page.click("#dev-toggle")
@@ -109,8 +132,8 @@ def main():
         healed = page.evaluate("window.__state.grid[4][2].cond")
         check("bot bay auto-repairs", healed > 30, f"30->{healed:.0f}")
 
-        # Research
-        page.click("#dev-cash")
+        # Research (costs RP now)
+        page.evaluate("window.__state.rp = 500")
         before = page.evaluate("window.__state.totalCompute")
         page.click('.research-row[data-track="compute"] [data-buy]')
         page.wait_for_timeout(1200)
