@@ -10,8 +10,13 @@
 //   - lofiTechHouse       (work music)
 //
 // Helpers at the bottom.
+//
+// Classic script (no modules) so the game runs straight from file:// —
+// exposes window.SynthRecipes.
 
-export function hopefulAmbient(ctx, out) {
+(() => {
+
+function hopefulAmbient(ctx, out) {
   // A minor pentatonic, slow random walk, generous reverb
   const SCALE = [220, 261.63, 329.63, 392, 440, 523.25, 659.25];
   const reverb = makeReverb(ctx, 4.0, 2.2);
@@ -47,7 +52,7 @@ export function hopefulAmbient(ctx, out) {
   };
 }
 
-export function darkHypnoticPulse(ctx, out) {
+function darkHypnoticPulse(ctx, out) {
   // Throbbing low sawtooth, gated by an LFO, no melody — pure menace
   const filt = ctx.createBiquadFilter();
   filt.type = 'lowpass';
@@ -92,7 +97,7 @@ export function darkHypnoticPulse(ctx, out) {
   };
 }
 
-export function sciFiCinematic(ctx, out) {
+function sciFiCinematic(ctx, out) {
   // Big detuned pad stack, slow chord changes
   const reverb = makeReverb(ctx, 6.0, 1.8);
   reverb.connect(out);
@@ -120,7 +125,7 @@ export function sciFiCinematic(ctx, out) {
   return () => clearInterval(scheduler);
 }
 
-export function lofiTechHouse(ctx, out) {
+function lofiTechHouse(ctx, out) {
   // Soft kick on beat, hat off, vinyl noise, light pad
   const reverb = makeReverb(ctx, 1.5, 1.6);
   reverb.connect(out);
@@ -241,9 +246,11 @@ function makeReverb(ctx, seconds, decay) {
   return node;
 }
 
-export const RECIPES = {
+window.SynthRecipes = {
   hopefulAmbient,
   darkHypnoticPulse,
   sciFiCinematic,
   lofiTechHouse,
 };
+
+})();

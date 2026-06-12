@@ -29,8 +29,11 @@
 //
 //   // From event:
 //   audio.playOneShot('victory');
+//
+// Classic script (no modules) so the game runs straight from file:// —
+// exposes window.GameAudio.
 
-export class GameAudio {
+window.GameAudio = class GameAudio {
   constructor(opts = {}) {
     this.basePath = opts.basePath ?? './';
     this.layerDefs = opts.layers ?? {};
@@ -221,4 +224,4 @@ export class GameAudio {
     if (this.ctx) this.ctx.close();
     this.isStarted = false;
   }
-}
+};

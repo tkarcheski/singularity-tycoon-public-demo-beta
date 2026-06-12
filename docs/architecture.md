@@ -18,7 +18,7 @@ audio/
 
 ## main.js layout
 
-One module, organized in commented sections:
+One script, organized in commented sections:
 
 | Section | What it does |
 |---|---|

@@ -1,7 +1,7 @@
 // Singularity Tycoon — Mini · vibes test
 // Place tiles on a grid. Power + cooling → compute → cash → bigger compute.
 
-import { startAudio, swapVibe, setMusicVolume, toggleMute, isAudioStarted } from './audio/index.js';
+const { startAudio, swapVibe, setMusicVolume, toggleMute, isAudioStarted } = window.GameMusic;
 
 // ---------- Constants ----------
 const COLS = 14;

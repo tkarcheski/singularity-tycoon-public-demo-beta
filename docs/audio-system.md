@@ -26,7 +26,7 @@ A small reusable adaptive-music engine, designed to outlive this prototype:
 
 ## Bootstrap (`src/audio/index.js`)
 
-Maps vibe names → recipes and exposes the five functions the game imports: `startAudio`, `swapVibe`, `setMusicVolume`, `toggleMute`, `isAudioStarted`. The game module never touches the engine directly.
+Maps vibe names → recipes and exposes `window.GameMusic` with the five functions the game uses: `startAudio`, `swapVibe`, `setMusicVolume`, `toggleMute`, `isAudioStarted`. The game script never touches the engine directly.
 
 ## Design brief
 
