@@ -87,7 +87,14 @@
           <div class="dev-body" id="dev-body" hidden>
             <label><input type="checkbox" data-god="freeBuild" /> Free build</label>
             <label><input type="checkbox" data-god="noWear" /> No wear</label>
-            <label><input type="checkbox" data-god="noEntropy" /> No entropy</label>
+            <div class="dev-dial">
+              <span class="dev-dial-label">Entropy</span>
+              <label><input type="radio" name="god-entropy" value="0" /> 0×</label>
+              <label><input type="radio" name="god-entropy" value="0.5" /> ½×</label>
+              <label><input type="radio" name="god-entropy" value="1" checked /> 1×</label>
+              <label><input type="radio" name="god-entropy" value="5" /> 5×</label>
+              <label><input type="radio" name="god-entropy" value="25" /> 25×</label>
+            </div>
             <label><input type="checkbox" data-god="pinSentiment" /> Pin sentiment 75</label>
             <label><input type="checkbox" data-god="fast" /> 5× speed</label>
             <button class="dev-cash" id="dev-cash">+$10k</button>
