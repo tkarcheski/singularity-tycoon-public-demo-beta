@@ -24,9 +24,9 @@ Every configuration reachable from the $500 starting cash has **negative net rev
 
 `state.cash += net` has no floor. Once negative, you can't build, can't recover, and nothing tells you the run is dead. Needs either a cash floor, a bankruptcy/game-over screen, or a restart button.
 
-## 3. GPU v2's "$5k unlock" is not enforced
+## 3. ~~GPU v2's "$5k unlock" is not enforced~~ (fixed in v0.3)
 
-The tooltip says *"Unlocks at $5k"* but the gate in `attemptPlace()` (`src/main.js:200`) is an empty `if` block. Either enforce it or drop the claim from the tooltip.
+The unenforceable claim was dropped from the tooltip and the dead gate removed; GPU v2 is simply gated by its $400 price.
 
 ## 4. Music overlay blocks the grid
 

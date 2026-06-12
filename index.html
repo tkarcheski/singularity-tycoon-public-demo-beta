@@ -33,12 +33,18 @@
           <div class="hud-cell"><span class="hud-label">Revenue</span><span class="hud-value pos" id="hud-revenue">+$0/s</span></div>
           <div class="hud-cell"><span class="hud-label">Jobs</span><span class="hud-value" id="hud-jobs">+0</span></div>
           <div class="hud-cell"><span class="hud-label">Public</span><span class="hud-value" id="hud-sentiment">60%</span></div>
+          <div class="hud-cell"><span class="hud-label">Debt</span><span class="hud-value" id="hud-debt">—</span></div>
+          <div class="hud-cell"><span class="hud-label">Entropy</span><span class="hud-value" id="hud-entropy">0%</span></div>
         </div>
       </header>
 
       <aside class="palette" id="palette">
         <h2 class="palette-title">Build</h2>
         <div class="tools" id="tools"></div>
+        <h2 class="palette-title">Research</h2>
+        <div class="research" id="research"></div>
+        <h2 class="palette-title">Finance</h2>
+        <div class="finance" id="finance"></div>
         <div class="palette-foot">
           <button class="ghost-btn" id="btn-help">How to play</button>
         </div>
@@ -69,6 +75,18 @@
 
         <div class="audio-prompt" id="audio-prompt">
           <button class="audio-start-btn" id="audio-start">♪ Click to enable music</button>
+        </div>
+
+        <div class="dev" id="dev">
+          <button class="dev-toggle" id="dev-toggle">⚙ DEV</button>
+          <div class="dev-body" id="dev-body" hidden>
+            <label><input type="checkbox" data-god="freeBuild" /> Free build</label>
+            <label><input type="checkbox" data-god="noWear" /> No wear</label>
+            <label><input type="checkbox" data-god="noEntropy" /> No entropy</label>
+            <label><input type="checkbox" data-god="pinSentiment" /> Pin sentiment 75</label>
+            <label><input type="checkbox" data-god="fast" /> 5× speed</label>
+            <button class="dev-cash" id="dev-cash">+$10k</button>
+          </div>
         </div>
       </main>
 
