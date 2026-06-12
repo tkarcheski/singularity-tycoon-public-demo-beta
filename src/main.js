@@ -111,6 +111,10 @@ const state = {
   tech: { power: 0, cooling: 0, compute: 0 }, // research levels 0..2
   debt: 0,          // outstanding loan repayment
   futuresOwed: 0,   // compute revenue still to deliver on sold futures
+  // Auto-maintenance: divert a slice of revenue into a repair pool. Simple
+  // first cut of the planned token-allocation system (sell vs maintain vs research).
+  maintainShare: 0,  // 0 | 0.10 | 0.25 of gross revenue
+  maintainPool: 0,   // accumulated maintenance budget ($)
   entropy: 0,       // 0..100, derived from compute
   effects: [],      // timed debuffs: { kind, x?, y?, until }
 
@@ -615,8 +619,37 @@ function tick() {
       pushTicker('Loan repaid in full — the bank sends a fruit basket', 'good');
     }
   }
+  // Auto-maintenance: diverted revenue accumulates into a repair pool…
+  if (state.maintainShare > 0) {
+    const diverted = gross * state.maintainShare;
+    state.maintainPool += diverted;
+    income -= diverted;
+  }
   const upkeepThisTick = upkeepAdj * dtS;
   state.cash += income - upkeepThisTick;
+
+  // …and the pool continuously heals the most-damaged tile it can afford
+  // (manual repair rate ×0.8 — bays at ×0.6 stay the better deal).
+  if (state.maintainPool > 0) {
+    let target = null;
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const c = state.grid[y][x];
+        if (c && c.cond < 100 && (!target || c.cond < target.c.cond)) target = { x, y, c };
+      }
+    }
+    if (target) {
+      const perPoint = TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * 0.01 * 0.8;
+      const points = Math.min(100 - target.c.cond, state.maintainPool / perPoint);
+      if (points > 0.1) {
+        target.c.cond += points;
+        state.maintainPool -= points * perPoint;
+        if (state.tick % 8 === 0) {
+          emitParticles(target.x, target.y, 2, '#7dffa8');
+        }
+      }
+    }
+  }
 
   // Particles on producing GPUs (small chance each tick)
   if (computeCells.length > 0 && Math.random() < 0.4) {
@@ -1074,7 +1107,24 @@ function buildFinance() {
       <span class="fin-sub" data-futures-sub></span>
     </button>
     <div class="fin-status" data-owed hidden></div>
+    <div class="fin-maint">
+      <span class="fin-maint-label" title="Divert revenue into an automatic repair pool">Auto-maintain</span>
+      <label><input type="radio" name="maintain" value="0" checked /> off</label>
+      <label><input type="radio" name="maintain" value="0.10" /> 10%</label>
+      <label><input type="radio" name="maintain" value="0.25" /> 25%</label>
+    </div>
   `;
+  for (const radio of financeEl.querySelectorAll('input[name="maintain"]')) {
+    radio.addEventListener('change', () => {
+      state.maintainShare = parseFloat(radio.value);
+      pushTicker(
+        state.maintainShare > 0
+          ? `Auto-maintenance: ${Math.round(state.maintainShare * 100)}% of revenue diverted to repairs`
+          : 'Auto-maintenance off',
+        'warn',
+      );
+    });
+  }
   const loansEl = financeEl.querySelector('.fin-loans');
   LOANS.forEach((loan, i) => {
     const btn = document.createElement('button');
