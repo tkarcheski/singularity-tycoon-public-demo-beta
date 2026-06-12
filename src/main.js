@@ -14,10 +14,10 @@ const TILE_TYPES = {
   power:   { name: 'Power Plant',     cost: 80,  power: 12,  cooling: 0,  compute: 0,    upkeep: 0.6,  jobs: 2, wear: 0.18, color: '#3a2b10', accent: '#ffd24a', desc: 'Supplies 12 MW. Adjacent tiles connect automatically.' },
   cooler:  { name: 'Coolant Loop',    cost: 50,  power: -1,  cooling: 10, compute: 0,    upkeep: 0.3,  jobs: 1, wear: 0.25, color: '#10293a', accent: '#6ec5ff', desc: 'Provides 10 kW of cooling. Needs 1 MW. Drains heat from nearby tiles — closer is cooler.' },
   gpu1:    { name: 'GPU Rack v1',     cost: 120, power: -4,  cooling: -3, compute: 6,    upkeep: 1.2,  jobs: 1, wear: 0.42, color: '#102a23', accent: '#4af0c0', desc: 'Generates 6 TFLOPS. Needs 4 MW + 3 kW. Clusters: +10% output but +15% heat per adjacent GPU.' },
-  gpu2:    { name: 'GPU Rack v2',     cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  jobs: 2, wear: 0.42, color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Same cluster bonus/heat as v1.' },
+  gpu2:    { name: 'GPU Rack v2',     cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  jobs: 2, wear: 0.42, gate: 'gpu2', color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Same cluster bonus/heat as v1.' },
   desk:    { name: 'Engineer Desk',   cost: 220, power: -1,  cooling: 0,  compute: 0,    upkeep: 0.5,  jobs: 2, wear: 0.08, multiplier: 1.15, color: '#231a30', accent: '#c89cff', desc: '+15% compute output. Stack up to 3.' },
   retrain: { name: 'Retraining Ctr.', cost: 150, power: -1,  cooling: 0,  compute: 0,    upkeep: 1.0,  jobs: 8, wear: 0.08, color: '#2d2410', accent: '#ffb86b', desc: 'Retrains workers your compute displaced. +8 jobs. Needs 1 MW.' },
-  botbay:  { name: 'Bot Bay',         cost: 350, power: -2,  cooling: 0,  compute: 0,    upkeep: 0.8,  jobs: 1, wear: 0.12, color: '#1d1d33', accent: '#9aa5ff', desc: 'A repair bot fixes the most-damaged tile every 4s at a 40% discount. Needs 2 MW.' },
+  botbay:  { name: 'Bot Bay',         cost: 350, power: -2,  cooling: 0,  compute: 0,    upkeep: 0.8,  jobs: 1, wear: 0.12, gate: 'ops', color: '#1d1d33', accent: '#9aa5ff', desc: 'A repair bot fixes the most-damaged tile every 4s at a 40% discount. Needs 2 MW.' },
   repair:  { name: 'Repair',          cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#13241c', accent: '#7dffa8', desc: 'Fix a damaged tile for 30% of its build cost, scaled by damage.' },
   bull:    { name: 'Bulldoze',        cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#2a1414', accent: '#ff4f6d', desc: 'Refund 50% of build cost.' },
 };
@@ -44,12 +44,27 @@ const HEAT_WEAR_MULT = 1.0;       // wear ×(1 + this × heat01)
 const HEAT_ENTROPY = 0.35;        // entropy01 contribution of average source-tile heat
 
 // Research — global tech tracks; each level: output ×1.4, wear ×1.6.
+// Costs are RESEARCH POINTS, earned by allocating compute to Research.
 const RESEARCH_OUTPUT = 1.4;
 const RESEARCH_WEAR = 1.6;
 const RESEARCH = {
-  power:   { name: 'Power',   costs: [600, 3000] },
-  cooling: { name: 'Cooling', costs: [500, 2500] },
-  compute: { name: 'Compute', costs: [800, 4000] },
+  power:   { name: 'Power',   costs: [30, 150] },
+  cooling: { name: 'Cooling', costs: [25, 125] },
+  compute: { name: 'Compute', costs: [40, 200] },
+};
+
+// Allocation — where the AI's tokens go. Selling pays now; research earns RP;
+// self-improvement compounds output but feeds the singularity (entropy).
+const RP_PER_TFLOPS = 0.05;        // RP/s per TFLOPS at 100% research
+const SELF_IMPROVE_RATE = 0.00004; // multiplier growth/s per TFLOPS at 100% self
+const SELF_IMPROVE_CAP = 1.0;      // self-improvement tops out at ×2 output
+const SELF_IMPROVE_ENTROPY = 0.3;  // entropy01 added per unit of self-improvement
+const ENTROPY_GRACE_TFLOPS = 30;   // entropy fades in as compute approaches this — gentle start
+
+// Unlocks — everything beyond the minute-zero kit is earned.
+const UNLOCKS = {
+  gpu2: { name: 'GPU Rack v2',    cash: 1500, blurb: 'license next-gen silicon' },
+  ops:  { name: 'Ops Automation', rp: 20,     blurb: 'Bot Bays + auto-maintenance' },
 };
 
 // Finance — leverage to escape the mid-game stall.
@@ -106,6 +121,12 @@ const state = {
 
   mood: 'neutral', // goodwill | neutral | unrest | protest
   permitReadyAt: 0,
+
+  // v0.5: token allocation, research points, self-improvement, unlocks
+  alloc: { sell: 1, research: 0, self: 0 }, // normalized shares of compute
+  rp: 0,             // research points
+  selfImprove: 0,    // compounding output bonus, 0..SELF_IMPROVE_CAP
+  unlocks: { gpu2: false, ops: false },
 
   // v0.3 systems
   tech: { power: 0, cooling: 0, compute: 0 }, // research levels 0..2
@@ -239,18 +260,27 @@ function buildToolbar() {
   toolsEl.innerHTML = '';
   for (const id of TOOL_ORDER) {
     const t = TILE_TYPES[id];
+    const locked = t.gate && !state.unlocks[t.gate] && !state.god.freeBuild;
     const btn = document.createElement('button');
-    btn.className = 'tool' + (id === state.selectedTool ? ' selected' : '');
+    btn.className = 'tool' + (id === state.selectedTool ? ' selected' : '') + (locked ? ' locked' : '');
     btn.dataset.tool = id;
+    const u = t.gate && UNLOCKS[t.gate];
+    const costLabel = locked
+      ? `🔒 ${u.cash != null ? '$' + u.cash.toLocaleString() : u.rp + ' RP'}`
+      : id === 'bull' ? '↶' : '$' + t.cost;
     btn.innerHTML = `
       <span class="icon">${iconSvg(id)}</span>
       <span class="meta">
         <span class="name">${t.name}</span>
-        <span class="sub">${toolStat(id)}</span>
+        <span class="sub">${locked ? `unlock: ${u.blurb}` : toolStat(id)}</span>
       </span>
-      <span class="cost">${id === 'bull' ? '↶' : '$' + t.cost}</span>
+      <span class="cost">${costLabel}</span>
     `;
     btn.addEventListener('click', () => {
+      if (t.gate && !state.unlocks[t.gate] && !state.god.freeBuild) {
+        tryUnlock(t.gate);
+        return;
+      }
       state.selectedTool = id;
       buildToolbar();
     });
@@ -259,6 +289,25 @@ function buildToolbar() {
     btn.addEventListener('mouseleave', hideTooltip);
     toolsEl.appendChild(btn);
   }
+}
+
+// Everything beyond the minute-zero kit is earned — hardware costs cash,
+// capabilities cost research points.
+function tryUnlock(key) {
+  const u = UNLOCKS[key];
+  if (state.unlocks[key]) return;
+  if (u.cash != null) {
+    if (state.cash < u.cash) { pushTicker(`Unlock ${u.name}: need $${u.cash.toLocaleString()}`, 'bad'); return; }
+    state.cash -= u.cash;
+  } else {
+    if (state.rp < u.rp) { pushTicker(`Unlock ${u.name}: need ${u.rp} RP — allocate compute to Research`, 'bad'); return; }
+    state.rp -= u.rp;
+  }
+  state.unlocks[key] = true;
+  pushTicker(`★ UNLOCKED: ${u.name}`, 'good');
+  playStinger('research');
+  buildToolbar();
+  updateFinance();
 }
 
 function toolStat(id) {
@@ -386,6 +435,10 @@ function attemptPlace(x, y) {
   }
 
   const def = TILE_TYPES[id];
+  if (def.gate && !state.unlocks[def.gate] && !state.god.freeBuild) {
+    pushTicker(`${def.name} is locked — unlock it in the Build panel`, 'bad');
+    return;
+  }
   if (existing) {
     pushTicker(`Cell occupied — bulldoze first (press 9)`, 'bad');
     return;
@@ -501,6 +554,19 @@ function tick() {
   const mult = Math.pow(TILE_TYPES.desk.multiplier, Math.min(deskCount, 3));
   let computeAdj = gpuTflops * mult;
 
+  // Self-improvement: compute allocated to the AI improving itself compounds
+  // output for ALL allocations — and feeds entropy below. The singularity dial.
+  if (state.alloc.self > 0 && state.selfImprove < SELF_IMPROVE_CAP) {
+    state.selfImprove = Math.min(
+      SELF_IMPROVE_CAP,
+      state.selfImprove + computeAdj * SELF_IMPROVE_RATE * state.alloc.self * dtS,
+    );
+  }
+  computeAdj *= 1 + state.selfImprove;
+
+  // Research allocation earns research points
+  state.rp += computeAdj * RP_PER_TFLOPS * state.alloc.research * dtS;
+
   // Jobs ledger: selling compute displaces outside jobs; tiles create them
   const jobsDisplaced = computeAdj * JOBS_DISPLACED_PER_TFLOPS;
   const netJobs = jobsCreated - jobsDisplaced;
@@ -540,11 +606,15 @@ function tick() {
   }
   const avgHeat = heatN ? heatSum / heatN : 0;
 
-  // Entropy rises with compute and floor temperature; it accelerates wear and
-  // rolls events. The dev dial (0×..25×) scales it for playtesting.
+  // Entropy rises with compute, floor temperature, and self-improvement; it
+  // accelerates wear and rolls events. Fades in gently below ~30 TFLOPS so the
+  // early game stays fun. The dev dial (0×..25×) scales it for playtesting.
+  const grace = Math.min(1, computeAdj / ENTROPY_GRACE_TFLOPS);
   const entropy01 = Math.min(
     1,
-    ((1 - Math.exp(-computeAdj / ENTROPY_SCALE)) + HEAT_ENTROPY * avgHeat) * state.god.entropyMult,
+    ((1 - Math.exp(-computeAdj / ENTROPY_SCALE)) * grace
+      + HEAT_ENTROPY * avgHeat * grace
+      + SELF_IMPROVE_ENTROPY * state.selfImprove) * state.god.entropyMult,
   );
   state.entropy = entropy01 * 100;
   if (entropy01 > 0) maybeEntropyEvent(entropy01, now);
@@ -597,8 +667,8 @@ function tick() {
     }
   }
 
-  // Revenue, then finance settlement: futures withholding, then debt service
-  const revPerSec = computeAdj * REVENUE_PER_TFLOPS;
+  // Revenue (only the SOLD share of compute), then finance settlement
+  const revPerSec = computeAdj * REVENUE_PER_TFLOPS * state.alloc.sell;
   const gross = revPerSec * dtS;
   let income = gross;
   if (state.futuresOwed > 0) {
@@ -763,6 +833,7 @@ function updateHUD() {
   goalBarFill.style.width = Math.min(100, (state.cash / GOAL) * 100) + '%';
   updateResearch();
   updateFinance();
+  updateAllocation();
 }
 
 setInterval(tick, TICK_MS);
@@ -1043,11 +1114,53 @@ function pushTicker(text, cls = '') {
   setTimeout(() => el.remove(), 5200);
 }
 
+// ---------- Allocation UI ----------
+// Three sliders, normalized to shares: where the AI's tokens go.
+const allocEl = document.getElementById('allocation');
+const ALLOC_LABELS = { sell: 'Sell tokens', research: 'Research', self: 'Self-improve' };
+
+function buildAllocation() {
+  allocEl.innerHTML = Object.keys(ALLOC_LABELS).map((k) => `
+    <div class="alloc-row">
+      <span class="alloc-name">${ALLOC_LABELS[k]}</span>
+      <input type="range" min="0" max="100" value="${k === 'sell' ? 100 : 0}" data-alloc="${k}" />
+      <span class="alloc-pct" data-pct="${k}">—</span>
+    </div>`).join('') + '<div class="fin-status" id="alloc-note" hidden></div>';
+  for (const r of allocEl.querySelectorAll('input[data-alloc]')) {
+    r.addEventListener('input', readAllocSliders);
+  }
+  readAllocSliders();
+}
+
+function readAllocSliders() {
+  const raw = {};
+  let sum = 0;
+  for (const r of allocEl.querySelectorAll('input[data-alloc]')) {
+    raw[r.dataset.alloc] = +r.value;
+    sum += +r.value;
+  }
+  for (const k of Object.keys(ALLOC_LABELS)) {
+    state.alloc[k] = sum > 0 ? raw[k] / sum : (k === 'sell' ? 1 : 0);
+  }
+  for (const el of allocEl.querySelectorAll('[data-pct]')) {
+    el.textContent = `${Math.round(state.alloc[el.dataset.pct] * 100)}%`;
+  }
+}
+
+function updateAllocation() {
+  const note = document.getElementById('alloc-note');
+  if (!note) return;
+  note.hidden = state.selfImprove <= 0;
+  if (state.selfImprove > 0) {
+    note.textContent = `Self-improvement: output ×${(1 + state.selfImprove).toFixed(2)}${state.selfImprove >= SELF_IMPROVE_CAP ? ' (MAX)' : ''}`;
+  }
+}
+
 // ---------- Research UI ----------
 const researchEl = document.getElementById('research');
 
 function buildResearch() {
-  researchEl.innerHTML = '';
+  researchEl.innerHTML = '<div class="fin-status" id="rp-line">Research points: 0</div>';
   for (const key of Object.keys(RESEARCH)) {
     const row = document.createElement('div');
     row.className = 'research-row';
@@ -1067,11 +1180,11 @@ function buyResearch(key) {
   const lvl = state.tech[key];
   if (lvl >= RESEARCH[key].costs.length) return;
   const cost = RESEARCH[key].costs[lvl];
-  if (!state.god.freeBuild && state.cash < cost) {
-    pushTicker(`Need $${cost.toLocaleString()} for ${RESEARCH[key].name} ${['II', 'III'][lvl]}`, 'bad');
+  if (!state.god.freeBuild && state.rp < cost) {
+    pushTicker(`Need ${cost} RP for ${RESEARCH[key].name} ${['II', 'III'][lvl]} — allocate compute to Research`, 'bad');
     return;
   }
-  if (!state.god.freeBuild) state.cash -= cost;
+  if (!state.god.freeBuild) state.rp -= cost;
   state.tech[key]++;
   pushTicker(`★ ${RESEARCH[key].name} ${['II', 'III'][lvl]} researched — output ×1.4, wear ×1.6`, 'good');
   playStinger('research');
@@ -1079,6 +1192,8 @@ function buyResearch(key) {
 }
 
 function updateResearch() {
+  const rpLine = document.getElementById('rp-line');
+  if (rpLine) rpLine.textContent = `Research points: ${state.rp.toFixed(1)}`;
   for (const row of researchEl.querySelectorAll('.research-row')) {
     const key = row.dataset.track;
     const lvl = state.tech[key];
@@ -1089,8 +1204,8 @@ function updateResearch() {
       btn.textContent = 'MAX';
       btn.disabled = true;
     } else {
-      btn.textContent = `$${RESEARCH[key].costs[lvl].toLocaleString()}`;
-      btn.disabled = !state.god.freeBuild && state.cash < RESEARCH[key].costs[lvl];
+      btn.textContent = `${RESEARCH[key].costs[lvl]} RP`;
+      btn.disabled = !state.god.freeBuild && state.rp < RESEARCH[key].costs[lvl];
     }
   }
 }
@@ -1182,6 +1297,9 @@ function updateFinance() {
     : `+$${advance.toLocaleString()} now`;
   owedEl.hidden = state.futuresOwed <= 0;
   if (state.futuresOwed > 0) owedEl.textContent = `Delivering: $${Math.ceil(state.futuresOwed).toLocaleString()} left`;
+  // Auto-maintenance is part of the Ops Automation unlock
+  const maint = financeEl.querySelector('.fin-maint');
+  if (maint) maint.hidden = !state.unlocks.ops && !state.god.freeBuild;
 }
 
 // ---------- God-mode dev panel ----------
@@ -1223,8 +1341,9 @@ const TUTORIAL = [
   { text: 'Cluster a second GPU against the first: +10% output, but watch the heat glow.', done: () => cellsOf('gpu1', 'gpu2').some((g) => neighborCells(g.x, g.y).some((n) => isGpu(n.c.t))) },
   { text: 'Cash trickles early. Take the $1,000 loan (Finance panel) and expand.', done: () => state.debt > 0 },
   { text: 'Watch Jobs & Public in the HUD — a Retraining Ctr. (6) keeps the city on your side.', done: () => has('retrain') || state.sentiment >= GOODWILL_AT },
-  { text: 'Equipment wears out — repair it (8) or build a Bot Bay (7) to automate.', done: () => state.stats.manualRepairs > 0 || has('botbay') },
-  { text: 'Buy a Research upgrade — more output, faster wear. Choose wisely.', done: () => state.tech.power + state.tech.cooling + state.tech.compute > 0 },
+  { text: 'Equipment wears out — repair damaged tiles by hand (8).', done: () => state.stats.manualRepairs > 0 },
+  { text: 'Divert tokens: slide some compute into Research (Allocation panel).', done: () => state.alloc.research > 0 },
+  { text: 'Spend research points on an upgrade — or save 20 RP to unlock Ops Automation.', done: () => state.tech.power + state.tech.cooling + state.tech.compute > 0 || state.unlocks.ops },
 ];
 
 function updateTutorial() {
@@ -1308,6 +1427,8 @@ modalBody.innerHTML = `
     <li><strong>Heat:</strong> GPUs and Power Plants run hot (tiles glow red); heat accelerates wear and feeds entropy. Coolant Loops drain heat with distance falloff — the closer the loop, the cooler the silicon.</li>
     <li><strong>Wear &amp; repair:</strong> everything degrades — GPU output fades with condition, broken tiles stop. Repair by hand (press <kbd>8</kbd>) or place <strong>Bot Bays</strong> to automate it. GPU clusters compute up to 30% more but need more cooling.</li>
     <li><strong>Research:</strong> upgrade Power, Cooling, or Compute — each level boosts output ×1.4 but the exotic tech wears ×1.6 faster.</li>
+    <li><strong>Allocation:</strong> decide where your AI's tokens go — <em>Sell</em> for cash, <em>Research</em> for research points (buys tech and unlocks), or <em>Self-improve</em> for compounding output that feeds entropy. The singularity dial is yours.</li>
+    <li><strong>Unlocks:</strong> anything marked 🔒 in the Build panel is earned — hardware costs cash, capabilities cost research points. Ops Automation opens Bot Bays and auto-maintenance.</li>
     <li><strong>Finance:</strong> take a loan (repaid from revenue, with interest) or sell compute futures once you're big enough. Leverage is how you escape the early grind.</li>
     <li><strong>Entropy:</strong> the more compute you run, the faster things wear and the weirder the failures get. The machine pushes back.</li>
     <li>Press <kbd>1</kbd>–<kbd>9</kbd> to pick tools. <kbd>M</kbd> to mute. Use the Music panel to swap vibes.</li>
@@ -1329,6 +1450,7 @@ function loop(now) {
 // ---------- Boot ----------
 resizeCanvas();
 buildToolbar();
+buildAllocation();
 buildResearch();
 buildFinance();
 updateHUD();
