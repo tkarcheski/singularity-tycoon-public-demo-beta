@@ -10,18 +10,27 @@ const TILE = 56; // px, base tile size
 const TICK_MS = 500; // sim tick
 
 const TILE_TYPES = {
-  empty:   { name: 'Empty',         cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    color: '#0e1320', desc: '' },
-  power:   { name: 'Power Plant',   cost: 80,  power: 12,  cooling: 0,  compute: 0,    upkeep: 0.6,  color: '#3a2b10', accent: '#ffd24a', desc: 'Supplies 12 MW. Adjacent tiles connect automatically.' },
-  cooler:  { name: 'Coolant Loop',  cost: 50,  power: -1,  cooling: 10, compute: 0,    upkeep: 0.3,  color: '#10293a', accent: '#6ec5ff', desc: 'Provides 10 kW of cooling. Needs 1 MW.' },
-  gpu1:    { name: 'GPU Rack v1',   cost: 120, power: -4,  cooling: -3, compute: 6,    upkeep: 1.2,  color: '#102a23', accent: '#4af0c0', desc: 'Generates 6 TFLOPS. Needs 4 MW power + 3 kW cooling.' },
-  gpu2:    { name: 'GPU Rack v2',   cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Unlocks at $5k.' },
-  desk:    { name: 'Engineer Desk', cost: 220, power: -1,  cooling: 0,  compute: 0,    upkeep: 0.5,  multiplier: 1.15, color: '#231a30', accent: '#c89cff', desc: '+15% compute output. Stack up to 3.' },
-  bull:    { name: 'Bulldoze',      cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    color: '#2a1414', accent: '#ff4f6d', desc: 'Refund 50% of build cost.' },
+  empty:   { name: 'Empty',           cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, color: '#0e1320', desc: '' },
+  power:   { name: 'Power Plant',     cost: 80,  power: 12,  cooling: 0,  compute: 0,    upkeep: 0.6,  jobs: 2, color: '#3a2b10', accent: '#ffd24a', desc: 'Supplies 12 MW. Adjacent tiles connect automatically.' },
+  cooler:  { name: 'Coolant Loop',    cost: 50,  power: -1,  cooling: 10, compute: 0,    upkeep: 0.3,  jobs: 1, color: '#10293a', accent: '#6ec5ff', desc: 'Provides 10 kW of cooling. Needs 1 MW.' },
+  gpu1:    { name: 'GPU Rack v1',     cost: 120, power: -4,  cooling: -3, compute: 6,    upkeep: 1.2,  jobs: 1, color: '#102a23', accent: '#4af0c0', desc: 'Generates 6 TFLOPS. Needs 4 MW power + 3 kW cooling.' },
+  gpu2:    { name: 'GPU Rack v2',     cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  jobs: 2, color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Unlocks at $5k.' },
+  desk:    { name: 'Engineer Desk',   cost: 220, power: -1,  cooling: 0,  compute: 0,    upkeep: 0.5,  jobs: 2, multiplier: 1.15, color: '#231a30', accent: '#c89cff', desc: '+15% compute output. Stack up to 3.' },
+  retrain: { name: 'Retraining Ctr.', cost: 150, power: -1,  cooling: 0,  compute: 0,    upkeep: 1.0,  jobs: 8, color: '#2d2410', accent: '#ffb86b', desc: 'Retrains workers your compute displaced. +8 jobs. Needs 1 MW.' },
+  bull:    { name: 'Bulldoze',        cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, color: '#2a1414', accent: '#ff4f6d', desc: 'Refund 50% of build cost.' },
 };
 
-const REVENUE_PER_TFLOPS = 0.18; // $/sec per TFLOPS
+const REVENUE_PER_TFLOPS = 0.30; // $/sec per TFLOPS
 
-const TOOL_ORDER = ['power', 'cooler', 'gpu1', 'gpu2', 'desk', 'bull'];
+// Jobs & public sentiment — selling compute displaces outside jobs; tiles create them.
+const JOBS_DISPLACED_PER_TFLOPS = 0.25; // jobs lost per TFLOPS sold
+const SENTIMENT_DRIFT = 1.5;            // points/sec toward target
+const GOODWILL_AT = 70;                 // ≥: upkeep −15% (community tax rebate)
+const UNREST_AT = 40;                   // <: upkeep +25% (power surcharge)
+const PROTEST_AT = 25;                  // <: compute halved + slow building permits
+const PERMIT_DELAY_MS = 4000;           // min gap between builds during protests
+
+const TOOL_ORDER = ['power', 'cooler', 'gpu1', 'gpu2', 'desk', 'retrain', 'bull'];
 
 const GOAL = 1_000_000;
 
@@ -40,10 +49,20 @@ const state = {
   totalCompute: 0,
   upkeep: 0,
   revenue: 0,
+  jobsCreated: 0,
+  jobsDisplaced: 0,
+  netJobs: 0,
+  sentiment: 60, // starts neutral, below the goodwill threshold
+
+  mood: 'neutral', // goodwill | neutral | unrest | protest
+  permitReadyAt: 0,
   particles: [],
   flashes: new Map(), // "x,y" -> flash strength
   goalUnlocked: false,
 };
+
+// Programmatic handle for tests and future agent players
+window.__state = state;
 
 // ---------- DOM refs ----------
 const canvas = document.getElementById('game');
@@ -59,6 +78,8 @@ const hudCompute = document.getElementById('hud-compute');
 const hudPower = document.getElementById('hud-power');
 const hudCooling = document.getElementById('hud-cooling');
 const hudRevenue = document.getElementById('hud-revenue');
+const hudJobs = document.getElementById('hud-jobs');
+const hudSentiment = document.getElementById('hud-sentiment');
 
 // ---------- Init ----------
 function buildToolbar() {
@@ -93,6 +114,7 @@ function toolStat(id) {
   if (id === 'cooler') return `+${t.cooling} kW`;
   if (id === 'gpu1' || id === 'gpu2') return `+${t.compute} TFLOPS`;
   if (id === 'desk') return `+15% compute`;
+  if (id === 'retrain') return `+${t.jobs} jobs`;
   if (id === 'bull') return `refund 50%`;
   return '';
 }
@@ -104,6 +126,7 @@ function iconSvg(id) {
   if (id === 'gpu1')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/></svg>`;
   if (id === 'gpu2')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><circle cx="8" cy="7.5" r="1.4"/><circle cx="16" cy="7.5" r="1.4"/><circle cx="8" cy="16.5" r="1.4"/><circle cx="16" cy="16.5" r="1.4"/></svg>`;
   if (id === 'desk')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="12" cy="7" r="3"/><path d="M5 21v-2a4 4 0 014-4h6a4 4 0 014 4v2" stroke-linecap="round"/></svg>`;
+  if (id === 'retrain') return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M12 4L2 9l10 5 10-5-10-5z" stroke-linejoin="round"/><path d="M6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5" stroke-linecap="round"/></svg>`;
   if (id === 'bull')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M4 7l16 0M7 7v12a2 2 0 002 2h6a2 2 0 002-2V7M10 11v6M14 11v6M9 7l1-3h4l1 3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   return '';
 }
@@ -165,7 +188,7 @@ canvas.addEventListener('click', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  const keys = ['1','2','3','4','5','6'];
+  const keys = ['1','2','3','4','5','6','7'];
   const idx = keys.indexOf(e.key);
   if (idx >= 0) {
     state.selectedTool = TOOL_ORDER[idx];
@@ -190,12 +213,21 @@ function attemptPlace(x, y) {
 
   const def = TILE_TYPES[id];
   if (existing !== 'empty') {
-    pushTicker(`Cell occupied — bulldoze first (press 6)`, 'bad');
+    pushTicker(`Cell occupied — bulldoze first (press 7)`, 'bad');
     return;
   }
   if (state.cash < def.cost) {
     pushTicker(`Need $${def.cost} for ${def.name}`, 'bad');
     return;
+  }
+  if (state.mood === 'protest') {
+    const now = performance.now();
+    if (now < state.permitReadyAt) {
+      const wait = Math.ceil((state.permitReadyAt - now) / 1000);
+      pushTicker(`Permit office is slow-walking you — protests outside (${wait}s)`, 'bad');
+      return;
+    }
+    state.permitReadyAt = now + PERMIT_DELAY_MS;
   }
   if (id === 'gpu2' && state.cash < 5000 && !state.goalUnlocked) {
     // soft gate: still allow if they have enough cash; visual hint elsewhere
@@ -230,7 +262,7 @@ function tick() {
   state.tick++;
 
   // Tally power, cooling, compute
-  let power = 0, cooling = 0, gpuTflops = 0, deskCount = 0, upkeep = 0;
+  let power = 0, cooling = 0, gpuTflops = 0, deskCount = 0, upkeep = 0, jobsCreated = 0;
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
       const id = state.grid[y][x];
@@ -240,6 +272,7 @@ function tick() {
       if (t.cooling > 0) cooling += t.cooling;
       if (id === 'desk') deskCount++;
       upkeep += t.upkeep || 0;
+      jobsCreated += t.jobs || 0;
     }
   }
 
@@ -272,12 +305,35 @@ function tick() {
 
   // Engineer multiplier (cap at 3 desks)
   const mult = Math.pow(1.15, Math.min(deskCount, 3));
-  const computeAdj = gpuTflops * mult;
+  let computeAdj = gpuTflops * mult;
+
+  // Jobs ledger: selling compute displaces outside jobs; tiles create them
+  const jobsDisplaced = computeAdj * JOBS_DISPLACED_PER_TFLOPS;
+  const netJobs = jobsCreated - jobsDisplaced;
+
+  // Sentiment drifts toward a target set by the jobs balance
+  const target = Math.max(0, Math.min(100, 50 + netJobs));
+  const drift = SENTIMENT_DRIFT * (TICK_MS / 1000);
+  if (state.sentiment < target) state.sentiment = Math.min(target, state.sentiment + drift);
+  else if (state.sentiment > target) state.sentiment = Math.max(target, state.sentiment - drift);
+
+  // Mood thresholds and their consequences
+  const mood =
+    state.sentiment >= GOODWILL_AT ? 'goodwill' :
+    state.sentiment < PROTEST_AT ? 'protest' :
+    state.sentiment < UNREST_AT ? 'unrest' : 'neutral';
+  if (mood !== state.mood) announceMood(mood);
+  state.mood = mood;
+
+  let upkeepAdj = upkeep;
+  if (mood === 'goodwill') upkeepAdj *= 0.85;
+  if (mood === 'unrest' || mood === 'protest') upkeepAdj *= 1.25;
+  if (mood === 'protest') computeAdj *= 0.5;
 
   // Revenue per tick
   const revPerSec = computeAdj * REVENUE_PER_TFLOPS;
   const revThisTick = revPerSec * (TICK_MS / 1000);
-  const upkeepThisTick = upkeep * (TICK_MS / 1000);
+  const upkeepThisTick = upkeepAdj * (TICK_MS / 1000);
   const net = revThisTick - upkeepThisTick;
   state.cash += net;
 
@@ -293,8 +349,11 @@ function tick() {
   state.powerUsed = powerUsed;
   state.coolingUsed = coolingUsed;
   state.totalCompute = computeAdj;
-  state.upkeep = upkeep;
-  state.revenue = revPerSec - upkeep;
+  state.upkeep = upkeepAdj;
+  state.revenue = revPerSec - upkeepAdj;
+  state.jobsCreated = jobsCreated;
+  state.jobsDisplaced = jobsDisplaced;
+  state.netJobs = netJobs;
 
   if (!state.goalUnlocked && state.cash >= GOAL) {
     state.goalUnlocked = true;
@@ -311,6 +370,13 @@ function tick() {
   updateHUD();
 }
 
+function announceMood(mood) {
+  if (mood === 'goodwill') pushTicker('Community praises your jobs program — utility rebate granted (−15% upkeep)', 'good');
+  if (mood === 'neutral') pushTicker('Public mood is neutral — the city is watching', '');
+  if (mood === 'unrest') pushTicker('Layoff headlines spread — power surcharge imposed (+25% upkeep)', 'warn');
+  if (mood === 'protest') pushTicker('PROTESTS outside the datacenter — output halved, permits delayed', 'bad');
+}
+
 function updateHUD() {
   hudCash.textContent = `$${Math.floor(state.cash).toLocaleString()}`;
   hudCompute.textContent = `${state.totalCompute.toFixed(1)} TFLOPS`;
@@ -320,6 +386,13 @@ function updateHUD() {
   hudRevenue.textContent = `${r >= 0 ? '+' : ''}$${r.toFixed(1)}/s`;
   hudRevenue.classList.toggle('pos', r >= 0);
   hudRevenue.classList.toggle('neg', r < 0);
+  const nj = state.netJobs;
+  hudJobs.textContent = `${nj >= 0 ? '+' : ''}${Math.round(nj)}`;
+  hudJobs.classList.toggle('pos', nj >= 0);
+  hudJobs.classList.toggle('neg', nj < 0);
+  hudSentiment.textContent = `${Math.round(state.sentiment)}%`;
+  hudSentiment.classList.toggle('pos', state.sentiment >= GOODWILL_AT);
+  hudSentiment.classList.toggle('neg', state.sentiment < UNREST_AT);
   goalBarFill.style.width = Math.min(100, (state.cash / GOAL) * 100) + '%';
 }
 
@@ -479,6 +552,23 @@ function drawGlyph(ctx, cx, cy, id, color) {
     ctx.moveTo(cx - s, cy + s - 1);
     ctx.quadraticCurveTo(cx, cy - 1, cx + s, cy + s - 1);
     ctx.stroke();
+  } else if (id === 'retrain') {
+    // graduation cap: diamond + tassel line
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 7);
+    ctx.lineTo(cx - s, cy - 2);
+    ctx.lineTo(cx, cy + 3);
+    ctx.lineTo(cx + s, cy - 2);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - 6, cy + 1);
+    ctx.lineTo(cx - 6, cy + 7);
+    ctx.moveTo(cx + 6, cy + 1);
+    ctx.lineTo(cx + 6, cy + 7);
+    ctx.moveTo(cx - 6, cy + 7);
+    ctx.quadraticCurveTo(cx, cy + 10, cx + 6, cy + 7);
+    ctx.stroke();
   }
   ctx.restore();
 }
@@ -493,6 +583,7 @@ function showTooltip(e, title, desc, def) {
   if (def?.cooling) rows += `<div class="tip-row"><span>Cooling</span><span class="v">${def.cooling > 0 ? '+' : ''}${def.cooling} kW</span></div>`;
   if (def?.compute) rows += `<div class="tip-row"><span>Compute</span><span class="v">${def.compute} TFLOPS</span></div>`;
   if (def?.upkeep) rows += `<div class="tip-row"><span>Upkeep</span><span class="v">$${def.upkeep.toFixed(2)}/s</span></div>`;
+  if (def?.jobs) rows += `<div class="tip-row"><span>Jobs</span><span class="v">+${def.jobs}</span></div>`;
   tooltipEl.innerHTML = `<div class="tip-title">${title}</div><div style="color:var(--text-muted);font-size:11px;margin-top:4px;">${desc}</div>${rows}`;
   moveTooltip(e);
 }
@@ -568,7 +659,8 @@ modalBody.innerHTML = `
     <li><strong>Coolant Loops</strong> supply cooling. GPUs need both.</li>
     <li><strong>GPU Racks</strong> produce TFLOPS, which auto-sell as compute contracts.</li>
     <li><strong>Engineer Desks</strong> boost compute output by 15% each (max 3).</li>
-    <li>Press <kbd>1</kbd>–<kbd>6</kbd> to pick tools. <kbd>M</kbd> to mute. Use the Music panel to swap vibes.</li>
+    <li><strong>Jobs &amp; Public mood:</strong> selling compute displaces jobs in the city; your buildings (especially <strong>Retraining Centers</strong>) create them. Keep the public happy for a tax rebate — let it slide and you'll face surcharges, halved output, and permit delays.</li>
+    <li>Press <kbd>1</kbd>–<kbd>7</kbd> to pick tools. <kbd>M</kbd> to mute. Use the Music panel to swap vibes.</li>
   </ul>
   <p>Reach <strong>$1,000,000</strong> to unlock the Dyson Sphere blueprint — the prologue to the full game.</p>
 `;

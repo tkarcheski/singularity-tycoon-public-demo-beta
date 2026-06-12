@@ -2,7 +2,11 @@
 
 Findings from a code + runtime audit of v0.1 (commit `9b5ab1a`, 2026-06-12). The game loads and plays with **zero console errors** — these are design/balance issues, not crashes.
 
-## 1. The economy is unwinnable (major)
+## 1. ~~The economy is unwinnable~~ (fixed in v0.2)
+
+**Fixed:** `REVENUE_PER_TFLOPS` raised from 0.18 to **0.30** — a starter cluster (1 plant + 1 cooler + 2× GPU v1) now nets ≈ +$0.30/s from the $500 starting cash. Original finding kept below for the record.
+
+### Original finding (v0.1)
 
 Every configuration reachable from the $500 starting cash has **negative net revenue**:
 

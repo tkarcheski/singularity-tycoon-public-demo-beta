@@ -1,6 +1,6 @@
 # Singularity Tycoon — Mini
 
-A tiny browser tycoon game: run an AI data center, turn **power + cooling** into **compute**, and sell compute for cash. Reach **$1,000,000** to unlock the Dyson Sphere blueprint — the prologue to the full *Singularity, Inc.* game.
+A tiny browser tycoon game: run an AI data center, turn **power + cooling** into **compute**, and sell compute for cash — while balancing the **jobs your automation displaces** against the public mood. Reach **$1,000,000** to unlock the Dyson Sphere blueprint — the prologue to the full *Singularity, Inc.* game.
 
 ![Gameplay demo](docs/images/gameplay.gif)
 
@@ -34,4 +34,4 @@ python3 -m http.server 8000
 - **Stack:** vanilla JavaScript (ES modules), Canvas 2D, Web Audio — zero dependencies, zero build step
 - **Size:** ~21 KB game logic + ~12 KB procedural audio
 - **Music:** four player-selectable generative vibes synthesized at runtime (no audio files)
-- **Status:** playable prototype / vibes test (`v0.1`)
+- **Status:** playable prototype / vibes test (`v0.2` — adds the jobs & public-sentiment dial)
