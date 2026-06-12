@@ -11,7 +11,9 @@ const TICK_MS = 500; // sim tick
 
 const TILE_TYPES = {
   empty:   { name: 'Empty',           cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#0e1320', desc: '' },
+  solar:   { name: 'Solar Array',     cost: 40,  power: 4,   cooling: 0,  compute: 0,    upkeep: 0.1,  jobs: 1, wear: 0.06, color: '#2e2a0e', accent: '#ffe98a', desc: 'Up to 4 MW that ebbs with the sky. Cheap and low-maintenance, but big footprint per MW.' },
   power:   { name: 'Power Plant',     cost: 80,  power: 12,  cooling: 0,  compute: 0,    upkeep: 0.6,  jobs: 2, wear: 0.18, color: '#3a2b10', accent: '#ffd24a', desc: 'Supplies 12 MW. Adjacent tiles connect automatically.' },
+  fan:     { name: 'Fan Wall',        cost: 25,  power: 0,   cooling: 4,  compute: 0,    upkeep: 0.15, jobs: 0, wear: 0.35, color: '#15202b', accent: '#9adcff', desc: 'Air cooling: 4 kW, but only drains heat up close (range 1). Cheap, wears fast.' },
   cooler:  { name: 'Coolant Loop',    cost: 50,  power: -1,  cooling: 10, compute: 0,    upkeep: 0.3,  jobs: 1, wear: 0.25, color: '#10293a', accent: '#6ec5ff', desc: 'Provides 10 kW of cooling. Needs 1 MW. Drains heat from nearby tiles — closer is cooler.' },
   gpu1:    { name: 'GPU Rack v1',     cost: 120, power: -4,  cooling: -3, compute: 6,    upkeep: 1.2,  jobs: 1, wear: 0.42, color: '#102a23', accent: '#4af0c0', desc: 'Generates 6 TFLOPS. Needs 4 MW + 3 kW. Clusters: +10% output but +15% heat per adjacent GPU.' },
   gpu2:    { name: 'GPU Rack v2',     cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  jobs: 2, wear: 0.42, gate: 'gpu2', color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Same cluster bonus/heat as v1.' },
@@ -48,6 +50,7 @@ const GPU_ADJ_HEAT = 0.15;       // +cooling need per adjacent working GPU — c
 const HEAT_SOURCE = { gpu1: 3, gpu2: 8, power: 4 }; // heat emitted by a working tile
 const HEAT_SPREAD = 0.5;          // fraction of neighbor source heat that bleeds over
 const COOLER_DRAIN = [8, 5, 2.5]; // heat removed at Manhattan distance 0/1/2
+const FAN_DRAIN = [4, 2];         // fans only reach distance 0/1 — air doesn't travel
 const HEAT_CAP = 10;              // net heat that maps to heat01 = 1.0
 const HEAT_WEAR_MULT = 1.0;       // wear ×(1 + this × heat01)
 const HEAT_ENTROPY = 0.35;        // entropy01 contribution of average source-tile heat
@@ -103,7 +106,11 @@ const UNREST_AT = 40;                   // <: upkeep +25% (power surcharge)
 const PROTEST_AT = 25;                  // <: compute halved + slow building permits
 const PERMIT_DELAY_MS = 4000;           // min gap between builds during protests
 
-const TOOL_ORDER = ['power', 'cooler', 'gpu1', 'gpu2', 'desk', 'retrain', 'botbay', 'repair', 'bull'];
+const TOOL_ORDER = ['solar', 'power', 'fan', 'cooler', 'gpu1', 'gpu2', 'desk', 'retrain', 'botbay', 'repair', 'bull'];
+const TOOL_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-'];
+
+// Solar output cycle — the sky has moods (0.2..1.0, ~90s period)
+const SOLAR_PERIOD_S = 90;
 
 const GOAL = 1_000_000;
 
@@ -133,6 +140,7 @@ const state = {
 
   // token market
   market: 1,      // mean-reverting wobble around 1.0
+  sun: 1,         // solar output factor, 0.2..1.0 over ~90s
   tokenPrice: REVENUE_PER_TFLOPS, // effective $/TFLOPS after demand × market
 
   // v0.5: token allocation, research points, self-improvement, unlocks
@@ -153,7 +161,7 @@ const state = {
   effects: [],      // timed debuffs: { kind, x?, y?, until }
 
   // god-mode dev toggles (window.__god)
-  god: { freeBuild: false, noWear: false, entropyMult: 1, pinSentiment: false, fast: false },
+  god: { freeBuild: false, noWear: false, entropyMult: 1, revenueMult: 1, pinSentiment: false, fast: false },
 
   // tutorial & lifetime stats
   tutStep: 0,
@@ -202,8 +210,8 @@ function gpuCondScale(c) { return c.cond <= 0 ? 0 : 0.4 + 0.6 * (c.cond / 100); 
 function techMult(track) { return Math.pow(RESEARCH_OUTPUT, state.tech[track]); }
 function isGpu(t) { return t === 'gpu1' || t === 'gpu2'; }
 function trackOf(t) {
-  if (t === 'power') return 'power';
-  if (t === 'cooler') return 'cooling';
+  if (t === 'power' || t === 'solar') return 'power';
+  if (t === 'cooler' || t === 'fan') return 'cooling';
   if (isGpu(t)) return 'compute';
   return null;
 }
@@ -223,6 +231,7 @@ function computeHeatMap() {
     }
   }
   const coolers = cellsOf('cooler').filter((cl) => cl.c.cond > 0);
+  const fans = cellsOf('fan').filter((f) => f.c.cond > 0);
   const coolMult = techMult('cooling');
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
@@ -235,6 +244,10 @@ function computeHeatMap() {
       for (const cl of coolers) {
         const d = Math.abs(cl.x - x) + Math.abs(cl.y - y);
         if (d < COOLER_DRAIN.length) h -= COOLER_DRAIN[d] * coolMult;
+      }
+      for (const f of fans) {
+        const d = Math.abs(f.x - x) + Math.abs(f.y - y);
+        if (d < FAN_DRAIN.length) h -= FAN_DRAIN[d] * coolMult;
       }
       heat[y][x] = Math.max(0, Math.min(1, h / HEAT_CAP));
     }
@@ -326,7 +339,9 @@ function tryUnlock(key) {
 
 function toolStat(id) {
   const t = TILE_TYPES[id];
+  if (id === 'solar') return `≤${t.power} MW ☀`;
   if (id === 'power') return `+${t.power} MW`;
+  if (id === 'fan') return `+${t.cooling} kW air`;
   if (id === 'cooler') return `+${t.cooling} kW`;
   if (id === 'gpu1' || id === 'gpu2') return `+${t.compute} TFLOPS`;
   if (id === 'desk') return `+15% compute`;
@@ -339,7 +354,9 @@ function toolStat(id) {
 
 function iconSvg(id) {
   const c = TILE_TYPES[id].accent || '#888';
+  if (id === 'solar')   return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="12" cy="12" r="4"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" stroke-linecap="round"/></svg>`;
   if (id === 'power')   return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.8"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" stroke-linejoin="round"/></svg>`;
+  if (id === 'fan')     return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="12" cy="12" r="2"/><path d="M12 10c0-4 -1.5-6 -4-6 0 3 1.5 5 4 6zM14 12c4 0 6-1.5 6-4-3 0-5 1.5-6 4zM12 14c0 4 1.5 6 4 6 0-3-1.5-5-4-6zM10 12c-4 0-6 1.5-6 4 3 0 5-1.5 6-4z" stroke-linejoin="round"/></svg>`;
   if (id === 'cooler')  return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M12 3v18M3 12h18M5 5l14 14M19 5L5 19" stroke-linecap="round"/></svg>`;
   if (id === 'gpu1')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/></svg>`;
   if (id === 'gpu2')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><circle cx="8" cy="7.5" r="1.4"/><circle cx="16" cy="7.5" r="1.4"/><circle cx="8" cy="16.5" r="1.4"/><circle cx="16" cy="16.5" r="1.4"/></svg>`;
@@ -407,8 +424,7 @@ canvas.addEventListener('click', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  const keys = ['1','2','3','4','5','6','7','8','9'];
-  const idx = keys.indexOf(e.key);
+  const idx = TOOL_KEYS.indexOf(e.key);
   if (idx >= 0) {
     state.selectedTool = TOOL_ORDER[idx];
     buildToolbar();
@@ -454,7 +470,7 @@ function attemptPlace(x, y) {
     return;
   }
   if (existing) {
-    pushTicker(`Cell occupied — bulldoze first (press 9)`, 'bad');
+    pushTicker(`Cell occupied — bulldoze first (press -)`, 'bad');
     return;
   }
   if (!state.god.freeBuild && state.cash < def.cost) {
@@ -498,6 +514,8 @@ function emitParticles(gx, gy, count, color) {
 // ---------- Sim ----------
 function tick() {
   state.tick++;
+  // The sky has moods: solar output ebbs on a ~90s cycle
+  state.sun = 0.6 + 0.4 * Math.sin((state.tick * TICK_MS / 1000) * 2 * Math.PI / SOLAR_PERIOD_S);
   const dtS = (TICK_MS / 1000) * (state.god.fast ? 5 : 1);
   const now = performance.now();
 
@@ -521,7 +539,8 @@ function tick() {
       jobsCreated += t.jobs || 0;
       if (broken) continue;
       const s = condScale(c);
-      if (t.power > 0) power += t.power * techMult('power') * s;
+      if (c.t === 'solar') power += t.power * techMult('power') * s * state.sun;
+      else if (t.power > 0) power += t.power * techMult('power') * s;
       if (t.cooling > 0) cooling += t.cooling * techMult('cooling') * s;
       if (c.t === 'desk') deskCount++;
     }
@@ -650,7 +669,7 @@ function tick() {
         const before = c.cond;
         c.cond = Math.max(0, c.cond - rate * dtS);
         if (before > 0 && c.cond <= 0) {
-          pushTicker(`${TILE_TYPES[c.t].name} BROKE DOWN — repair it (press 8)`, 'bad');
+          pushTicker(`${TILE_TYPES[c.t].name} BROKE DOWN — repair it (press 0)`, 'bad');
           flashCell(x, y, 1.2);
           emitParticles(x, y, 8, '#ff4f6d');
           playStinger('breakdown');
@@ -686,7 +705,7 @@ function tick() {
   state.market = Math.max(MARKET_MIN, Math.min(MARKET_MAX,
     state.market + (Math.random() - 0.5) * MARKET_WOBBLE + (1 - state.market) * MARKET_REVERT));
   const demand = DEMAND_BASE + DEMAND_PER_SENTIMENT * state.sentiment;
-  state.tokenPrice = REVENUE_PER_TFLOPS * demand * state.market;
+  state.tokenPrice = REVENUE_PER_TFLOPS * demand * state.market * state.god.revenueMult;
 
   // Revenue (only the SOLD share of compute, at the live token price)
   const revPerSec = computeAdj * state.tokenPrice * state.alloc.sell;
@@ -1069,6 +1088,31 @@ function drawGlyph(ctx, cx, cy, id, color) {
     ctx.moveTo(cx - s, cy + s - 1);
     ctx.quadraticCurveTo(cx, cy - 1, cx + s, cy + s - 1);
     ctx.stroke();
+  } else if (id === 'solar') {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 4.5, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * 7.5, cy + Math.sin(a) * 7.5);
+      ctx.lineTo(cx + Math.cos(a) * s, cy + Math.sin(a) * s);
+      ctx.stroke();
+    }
+  } else if (id === 'fan') {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + 0.4;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * 4, cy + Math.sin(a) * 4);
+      ctx.quadraticCurveTo(
+        cx + Math.cos(a + 0.5) * s, cy + Math.sin(a + 0.5) * s,
+        cx + Math.cos(a + 0.9) * 6, cy + Math.sin(a + 0.9) * 6,
+      );
+      ctx.stroke();
+    }
   } else if (id === 'retrain') {
     // graduation cap: diamond + tassel line
     ctx.beginPath();
@@ -1110,6 +1154,9 @@ function showCellTooltip(e, x, y, cell) {
   let rows = `<div class="tip-row"><span>Condition</span><span class="v">${Math.round(cell.cond)}%${cell.cond <= 0 ? ' · BROKEN' : cell.cond < WORN_AT ? ' · worn' : ''}</span></div>`;
   if (cell.cond < 100) rows += `<div class="tip-row"><span>Repair</span><span class="v">$${repairPrice(cell)}</span></div>`;
   const h = state.heatMap ? state.heatMap[y][x] : 0;
+  if (cell.t === 'solar') {
+    rows += `<div class="tip-row"><span>Sun</span><span class="v">${Math.round(state.sun * 100)}% (${(TILE_TYPES.solar.power * state.sun).toFixed(1)} MW now)</span></div>`;
+  }
   const hLabel = h < 0.15 ? 'cool' : h < 0.4 ? 'warm' : h < 0.7 ? 'HOT' : 'OVERHEATING';
   rows += `<div class="tip-row"><span>Heat</span><span class="v">${Math.round(h * 100)}% · ${hLabel} (wear +${Math.round(h * 100)}%)</span></div>`;
   if (isGpu(cell.t)) {
@@ -1346,6 +1393,13 @@ for (const radio of devBody.querySelectorAll('input[name="god-entropy"]')) {
     updateHUD();
   });
 }
+for (const radio of devBody.querySelectorAll('input[name="god-revenue"]')) {
+  radio.addEventListener('change', () => {
+    state.god.revenueMult = parseFloat(radio.value);
+    pushTicker(`DEV: revenue ×${radio.value}`, 'warn');
+    updateHUD();
+  });
+}
 document.getElementById('dev-cash').addEventListener('click', () => {
   state.cash += 10000;
   pushTicker('DEV: +$10,000', 'warn');
@@ -1359,13 +1413,13 @@ const tutProgressEl = document.getElementById('tut-progress');
 const has = (...types) => cellsOf(...types).length > 0;
 
 const TUTORIAL = [
-  { text: 'Build a Power Plant (1) — everything needs MW.', done: () => has('power') },
-  { text: 'Add a Coolant Loop (2) — heat is the enemy here.', done: () => has('cooler') },
-  { text: 'Place a GPU Rack (3) close to the loop — cooler tiles wear slower.', done: () => has('gpu1', 'gpu2') },
+  { text: 'Power first: a cheap Solar Array (1) or a steady Power Plant (2).', done: () => has('power', 'solar') },
+  { text: 'Add cooling: a Fan Wall (3) is cheap, a Coolant Loop (4) reaches farther.', done: () => has('cooler', 'fan') },
+  { text: 'Place a GPU Rack (5) close to your cooling — cooler tiles wear slower.', done: () => has('gpu1', 'gpu2') },
   { text: 'Cluster a second GPU against the first: +10% output, but watch the heat glow.', done: () => cellsOf('gpu1', 'gpu2').some((g) => neighborCells(g.x, g.y).some((n) => isGpu(n.c.t))) },
   { text: 'Cash trickles early. Take the $1,000 loan (Finance panel) and expand.', done: () => state.debt > 0 },
-  { text: 'Watch Jobs & Public in the HUD — a Retraining Ctr. (6) keeps the city on your side.', done: () => has('retrain') || state.sentiment >= GOODWILL_AT },
-  { text: 'Equipment wears out — repair damaged tiles by hand (8).', done: () => state.stats.manualRepairs > 0 },
+  { text: 'Watch Jobs & Public in the HUD — a Retraining Ctr. (8) keeps the city on your side, and a happy city pays more per token.', done: () => has('retrain') || state.sentiment >= GOODWILL_AT },
+  { text: 'Equipment wears out — repair damaged tiles by hand (0).', done: () => state.stats.manualRepairs > 0 },
   { text: 'Divert tokens: slide some compute into Research (Allocation panel).', done: () => state.alloc.research > 0 },
   { text: 'Spend research points on an upgrade — or save 20 RP to unlock Ops Automation.', done: () => state.tech.power + state.tech.cooling + state.tech.compute > 0 || state.unlocks.ops },
 ];
@@ -1455,7 +1509,7 @@ modalBody.innerHTML = `
     <li><strong>Unlocks:</strong> anything marked 🔒 in the Build panel is earned — hardware costs cash, capabilities cost research points. Ops Automation opens Bot Bays and auto-maintenance.</li>
     <li><strong>Finance:</strong> take a loan (repaid from revenue, with interest) or sell compute futures once you're big enough. Leverage is how you escape the early grind.</li>
     <li><strong>Entropy:</strong> the more compute you run, the faster things wear and the weirder the failures get. The machine pushes back.</li>
-    <li>Press <kbd>1</kbd>–<kbd>9</kbd> to pick tools. <kbd>M</kbd> to mute. Use the Music panel to swap vibes.</li>
+    <li>Press <kbd>1</kbd>–<kbd>9</kbd>, <kbd>0</kbd> (repair), <kbd>-</kbd> (bulldoze) to pick tools. <kbd>M</kbd> to mute. Use the Music panel to swap vibes.</li>
   </ul>
   <p>Reach <strong>$1,000,000</strong> to unlock the Dyson Sphere blueprint — the prologue to the full game.</p>
 `;
