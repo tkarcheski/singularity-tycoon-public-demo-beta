@@ -231,6 +231,83 @@ function playHat(ctx, out, when) {
   src.start(when);
 }
 
+// --- adaptive tension layer ---
+// Runs continuously but silent; the game drives its gain from entropy/mood.
+// Dissonant high shimmer over an uneasy low pulse — dread, not melody.
+function tensionLayer(ctx, out) {
+  const filt = ctx.createBiquadFilter();
+  filt.type = 'bandpass';
+  filt.frequency.value = 1800;
+  filt.Q.value = 8;
+  filt.connect(out);
+
+  // Shimmer: two detuned high sines beating against each other
+  const oscA = ctx.createOscillator();
+  const oscB = ctx.createOscillator();
+  const shimmerG = ctx.createGain();
+  oscA.frequency.value = 1244; // D#6-ish
+  oscB.frequency.value = 1251; // ~7 Hz beat
+  shimmerG.gain.value = 0.05;
+  oscA.connect(shimmerG); oscB.connect(shimmerG);
+  shimmerG.connect(filt);
+  oscA.start(); oscB.start();
+
+  // Uneasy low pulse on a tritone
+  const pulse = ctx.createOscillator();
+  const pulseG = ctx.createGain();
+  const lfo = ctx.createOscillator();
+  const lfoG = ctx.createGain();
+  pulse.type = 'triangle';
+  pulse.frequency.value = 92.5; // F#2 — tritone vs C
+  pulseG.gain.value = 0;
+  lfo.frequency.value = 1.1;
+  lfoG.gain.value = 0.12;
+  lfo.connect(lfoG).connect(pulseG.gain);
+  pulse.connect(pulseG).connect(out);
+  pulse.start(); lfo.start();
+
+  return () => { oscA.stop(); oscB.stop(); pulse.stop(); lfo.stop(); };
+}
+
+// --- stingers ---
+// Short procedural one-shots: function(ctx, out) fires immediately.
+const STINGERS = {
+  breakdown(ctx, out) { // falling saw thud — something just died
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    const t = ctx.currentTime;
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(220, t);
+    osc.frequency.exponentialRampToValueAtTime(55, t + 0.35);
+    g.gain.setValueAtTime(0.18, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    osc.connect(g).connect(out);
+    osc.start(t); osc.stop(t + 0.55);
+  },
+  repair(ctx, out) { // two-note chime up — fixed
+    playPing(ctx, out, 523.25, ctx.currentTime, 0.4, 0.1);
+    playPing(ctx, out, 783.99, ctx.currentTime + 0.12, 0.5, 0.1);
+  },
+  cash(ctx, out) { // bright coin blips — money moved
+    playPing(ctx, out, 987.77, ctx.currentTime, 0.15, 0.09);
+    playPing(ctx, out, 1318.5, ctx.currentTime + 0.08, 0.25, 0.09);
+  },
+  research(ctx, out) { // rising arpeggio — tech unlocked
+    const t = ctx.currentTime;
+    [440, 554.37, 659.25, 880].forEach((f, i) => playPing(ctx, out, f, t + i * 0.09, 0.35, 0.08));
+  },
+  alarm(ctx, out) { // dissonant double blip — entropy strikes
+    const t = ctx.currentTime;
+    playPing(ctx, out, 622.25, t, 0.18, 0.1);
+    playPing(ctx, out, 587.33, t + 0.1, 0.25, 0.1);
+  },
+  goal(ctx, out) { // major fanfare — Dyson Sphere unlocked
+    const t = ctx.currentTime;
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => playPing(ctx, out, f, t + i * 0.13, 0.9, 0.11));
+    playPing(ctx, out, 1318.5, t + 0.55, 1.4, 0.09);
+  },
+};
+
 function makeReverb(ctx, seconds, decay) {
   const rate = ctx.sampleRate;
   const length = Math.floor(rate * seconds);
@@ -251,6 +328,8 @@ window.SynthRecipes = {
   darkHypnoticPulse,
   sciFiCinematic,
   lofiTechHouse,
+  tensionLayer,
+  STINGERS,
 };
 
 })();

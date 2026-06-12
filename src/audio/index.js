@@ -25,14 +25,31 @@ async function startAudio(initialVibe = 'hopeful') {
 
   const startFactory = VIBES[initialVibe] ?? VIBES.hopeful;
   audio = new GameAudio({
-    proceduralLayers: { base: startFactory },
+    proceduralLayers: { base: startFactory, tension: RECIPES.tensionLayer },
     masterGain: 0.7,
   });
   await audio.start();
-  // Bring the base layer up to full
+  // Bring the base layer up to full; tension stays silent until the game raises it
   audio.setLayerGain('base', 1.0, 1200);
   currentVibe = initialVibe;
   return audio;
+}
+
+// Adaptive intensity 0..1 — driven by entropy/mood each sim tick
+function setTension(v01) {
+  if (!audio?.isStarted) return;
+  audio.setLayerGain('tension', Math.max(0, Math.min(1, v01)) * 0.6, 900);
+}
+
+// Procedural one-shots: breakdown, repair, cash, research, alarm, goal
+function playStinger(name) {
+  if (!audio?.isStarted) return;
+  const fire = RECIPES.STINGERS[name];
+  if (!fire) return;
+  const g = audio.ctx.createGain();
+  g.gain.value = 0.9;
+  g.connect(audio.masterGain);
+  fire(audio.ctx, g);
 }
 
 async function swapVibe(name, crossfadeMs = 1600) {
@@ -62,6 +79,8 @@ window.GameMusic = {
   toggleMute,
   getCurrentVibe,
   isAudioStarted,
+  setTension,
+  playStinger,
 };
 
 })();

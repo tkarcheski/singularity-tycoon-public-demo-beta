@@ -2,7 +2,11 @@
 
 Findings from a code + runtime audit of v0.1 (commit `9b5ab1a`, 2026-06-12). The game loads and plays with **zero console errors** — these are design/balance issues, not crashes.
 
-## 1. The economy is unwinnable (major)
+## 1. ~~The economy is unwinnable~~ (fixed in v0.2)
+
+**Fixed:** `REVENUE_PER_TFLOPS` raised from 0.18 to **0.30** — a starter cluster (1 plant + 1 cooler + 2× GPU v1) now nets ≈ +$0.30/s from the $500 starting cash. Original finding kept below for the record.
+
+### Original finding (v0.1)
 
 Every configuration reachable from the $500 starting cash has **negative net revenue**:
 
@@ -20,9 +24,9 @@ Every configuration reachable from the $500 starting cash has **negative net rev
 
 `state.cash += net` has no floor. Once negative, you can't build, can't recover, and nothing tells you the run is dead. Needs either a cash floor, a bankruptcy/game-over screen, or a restart button.
 
-## 3. GPU v2's "$5k unlock" is not enforced
+## 3. ~~GPU v2's "$5k unlock" is not enforced~~ (fixed in v0.3)
 
-The tooltip says *"Unlocks at $5k"* but the gate in `attemptPlace()` (`src/main.js:200`) is an empty `if` block. Either enforce it or drop the claim from the tooltip.
+The unenforceable claim was dropped from the tooltip and the dead gate removed; GPU v2 is simply gated by its $400 price.
 
 ## 4. Music overlay blocks the grid
 

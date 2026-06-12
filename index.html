@@ -31,12 +31,20 @@
           <div class="hud-cell"><span class="hud-label">Power</span><span class="hud-value" id="hud-power">0 / 0 MW</span></div>
           <div class="hud-cell"><span class="hud-label">Cooling</span><span class="hud-value" id="hud-cooling">0 / 0 kW</span></div>
           <div class="hud-cell"><span class="hud-label">Revenue</span><span class="hud-value pos" id="hud-revenue">+$0/s</span></div>
+          <div class="hud-cell"><span class="hud-label">Jobs</span><span class="hud-value" id="hud-jobs">+0</span></div>
+          <div class="hud-cell"><span class="hud-label">Public</span><span class="hud-value" id="hud-sentiment">60%</span></div>
+          <div class="hud-cell"><span class="hud-label">Debt</span><span class="hud-value" id="hud-debt">—</span></div>
+          <div class="hud-cell"><span class="hud-label">Entropy</span><span class="hud-value" id="hud-entropy">0%</span></div>
         </div>
       </header>
 
       <aside class="palette" id="palette">
         <h2 class="palette-title">Build</h2>
         <div class="tools" id="tools"></div>
+        <h2 class="palette-title">Research</h2>
+        <div class="research" id="research"></div>
+        <h2 class="palette-title">Finance</h2>
+        <div class="finance" id="finance"></div>
         <div class="palette-foot">
           <button class="ghost-btn" id="btn-help">How to play</button>
         </div>
@@ -65,8 +73,32 @@
           <input class="music-volume" id="music-volume" type="range" min="0" max="100" value="70" aria-label="Music volume" />
         </div>
 
-        <div class="audio-prompt" id="audio-prompt">
-          <button class="audio-start-btn" id="audio-start">♪ Click to enable music</button>
+        <div class="tutorial" id="tutorial">
+          <div class="tut-head">
+            <span class="tut-label">Tutorial</span>
+            <span class="tut-progress" id="tut-progress"></span>
+            <button class="tut-skip" id="tut-skip">skip</button>
+          </div>
+          <div class="tut-step" id="tut-text"></div>
+        </div>
+
+        <div class="dev" id="dev">
+          <button class="dev-toggle" id="dev-toggle">⚙ DEV</button>
+          <div class="dev-body" id="dev-body" hidden>
+            <label><input type="checkbox" data-god="freeBuild" /> Free build</label>
+            <label><input type="checkbox" data-god="noWear" /> No wear</label>
+            <div class="dev-dial">
+              <span class="dev-dial-label">Entropy</span>
+              <label><input type="radio" name="god-entropy" value="0" /> 0×</label>
+              <label><input type="radio" name="god-entropy" value="0.5" /> ½×</label>
+              <label><input type="radio" name="god-entropy" value="1" checked /> 1×</label>
+              <label><input type="radio" name="god-entropy" value="5" /> 5×</label>
+              <label><input type="radio" name="god-entropy" value="25" /> 25×</label>
+            </div>
+            <label><input type="checkbox" data-god="pinSentiment" /> Pin sentiment 75</label>
+            <label><input type="checkbox" data-god="fast" /> 5× speed</label>
+            <button class="dev-cash" id="dev-cash">+$10k</button>
+          </div>
         </div>
       </main>
 
