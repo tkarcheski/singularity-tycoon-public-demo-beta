@@ -34,6 +34,18 @@ Upkeep is charged for every placed tile **whether or not it is running** (half, 
 
 Condition < 40: output ×0.6 (worn). Condition 0: broken — inert until repaired. Manual repair (`8`): `30% × build cost × damage`. Bot bays pay 60% of that rate.
 
+## Heat (v0.4)
+
+Per-tile temperature, recomputed each tick. Working GPUs emit 3/8 (v1/v2) and
+plants 4; half of a neighbor's emission bleeds over. Coolant Loops drain 8/5/2.5
+at Manhattan distance 0/1/2 (scaled by Cooling research) — **the closer the
+loop, the cooler the tile**. Net heat caps at 10 → `heat01`.
+
+Effects: wear ×(1 + heat01); average source-tile heat adds `0.35 × avgHeat` to
+entropy01; tiles are tinted red-orange by temperature. GPU clusters also need
++15% cooling per adjacent GPU. GPU token output scales continuously with
+condition (`0.4 + 0.6 × cond/100`); supply tiles keep stepped output.
+
 ## Research (v0.3)
 
 | Track | Level II | Level III | Effect per level |
