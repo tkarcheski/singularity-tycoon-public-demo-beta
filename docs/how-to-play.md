@@ -38,6 +38,12 @@ You run a tiny AI data center on a 14×10 grid. Build the right tiles to turn po
 
 Compute sells automatically at **$0.30/s per TFLOPS**.
 
+## Allocation & unlocks (new in v0.5)
+
+- **Allocation sliders** (left panel): split your AI's tokens between **Sell** (cash, the default), **Research** (earns research points), and **Self-improve** (compounding output multiplier… that feeds entropy — the singularity dial).
+- **Everything beyond the minute-zero kit is earned.** 🔒 tools in the Build panel are unlocks: GPU Rack v2 costs $1,500; **Ops Automation** (Bot Bays + auto-maintenance) costs 20 RP. Research upgrades now cost RP, not cash.
+- Entropy fades in gently below ~30 TFLOPS — the early game is calm; scale is what wakes the machine.
+
 ## Wear, research, finance & entropy (new in v0.3)
 
 - **Heat & wear.** GPUs and plants run hot (red tint); Coolant Loops drain heat with distance falloff. Hot tiles wear faster and feed entropy. GPU output fades continuously with condition; at 0% a tile is *broken* (dead until repaired, still bleeding half upkeep). Repair by hand (`8`) or automate with **Bot Bays**.
