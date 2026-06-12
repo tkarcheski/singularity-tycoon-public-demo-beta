@@ -34,6 +34,13 @@ Upkeep is charged for every placed tile **whether or not it is running** (half, 
 
 Condition < 40: output ×0.6 (worn). Condition 0: broken — inert until repaired. Manual repair (`8`): `30% × build cost × damage`. Bot bays pay 60% of that rate.
 
+## Token market (v0.5)
+
+`tokenPrice = 0.30 × demand × market` where `demand = 0.6 + 0.008 × sentiment`
+(×1.0 at sentiment 50, ×1.4 at 100, ×0.6 at 0) and `market` is a mean-reverting
+random walk clamped to 0.85–1.15. A happy city buys more tokens — jobs are the
+engine of demand. Futures advances also price at the live token price.
+
 ## Heat (v0.4)
 
 Per-tile temperature, recomputed each tick. Working GPUs emit 3/8 (v1/v2) and

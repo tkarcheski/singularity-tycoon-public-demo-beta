@@ -185,6 +185,16 @@ def main():
         page.wait_for_timeout(2500)
         check("auto-maintenance heals from revenue", page.evaluate("window.__state.grid[2][2].cond") > 50)
 
+        # Token demand: happy city pays more, angry city pays less
+        page.evaluate("window.__state.sentiment = 95")
+        page.wait_for_timeout(700)
+        hi = page.evaluate("window.__state.tokenPrice")
+        page.evaluate("window.__state.god.pinSentiment = false; window.__state.sentiment = 5")
+        page.wait_for_timeout(700)
+        lo = page.evaluate("window.__state.tokenPrice")
+        check("token demand follows sentiment", hi > 0.36 and lo < 0.24, f"hi={hi:.3f} lo={lo:.3f}")
+        page.evaluate("window.__state.sentiment = 60")
+
         check("zero console errors end-to-end", not errs, str(errs[:3]))
         browser.close()
 
