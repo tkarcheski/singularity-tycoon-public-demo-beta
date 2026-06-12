@@ -156,6 +156,12 @@ def main():
         page.wait_for_timeout(700)
         check("entropy dial 25x maxes meter", page.evaluate("window.__state.entropy") > 80)
 
+        # Auto-maintenance: divert 25% of revenue, pool heals damage without clicks
+        page.click('input[name="maintain"][value="0.25"]')
+        page.evaluate("window.__state.grid[2][2].cond = 50")
+        page.wait_for_timeout(2500)
+        check("auto-maintenance heals from revenue", page.evaluate("window.__state.grid[2][2].cond") > 50)
+
         check("zero console errors end-to-end", not errs, str(errs[:3]))
         browser.close()
 

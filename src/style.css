@@ -603,3 +603,17 @@ body {
 .dev-dial { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .dev-dial-label { margin-right: 2px; }
 .dev-dial label { display: inline-flex; gap: 3px; }
+
+/* auto-maintenance selector */
+.fin-maint {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  padding: 6px 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.fin-maint-label { color: var(--text); font-size: 12px; margin-right: 2px; }
+.fin-maint label { display: inline-flex; gap: 3px; align-items: center; cursor: pointer; }
+.fin-maint input { accent-color: var(--accent); }
