@@ -1,7 +1,7 @@
 // Singularity Tycoon — Mini · vibes test
 // Place tiles on a grid. Power + cooling → compute → cash → bigger compute.
 
-const { startAudio, swapVibe, setMusicVolume, toggleMute, isAudioStarted } = window.GameMusic;
+const { startAudio, swapVibe, setMusicVolume, toggleMute, isAudioStarted, setTension, playStinger } = window.GameMusic;
 
 // ---------- Constants ----------
 const COLS = 14;
@@ -12,9 +12,9 @@ const TICK_MS = 500; // sim tick
 const TILE_TYPES = {
   empty:   { name: 'Empty',           cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#0e1320', desc: '' },
   power:   { name: 'Power Plant',     cost: 80,  power: 12,  cooling: 0,  compute: 0,    upkeep: 0.6,  jobs: 2, wear: 0.18, color: '#3a2b10', accent: '#ffd24a', desc: 'Supplies 12 MW. Adjacent tiles connect automatically.' },
-  cooler:  { name: 'Coolant Loop',    cost: 50,  power: -1,  cooling: 10, compute: 0,    upkeep: 0.3,  jobs: 1, wear: 0.25, color: '#10293a', accent: '#6ec5ff', desc: 'Provides 10 kW of cooling. Needs 1 MW. Adjacent GPUs wear 50% slower.' },
-  gpu1:    { name: 'GPU Rack v1',     cost: 120, power: -4,  cooling: -3, compute: 6,    upkeep: 1.2,  jobs: 1, wear: 0.42, color: '#102a23', accent: '#4af0c0', desc: 'Generates 6 TFLOPS. Needs 4 MW power + 3 kW cooling. +10% per adjacent GPU (max +30%).' },
-  gpu2:    { name: 'GPU Rack v2',     cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  jobs: 2, wear: 0.42, color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Same cluster bonus as v1.' },
+  cooler:  { name: 'Coolant Loop',    cost: 50,  power: -1,  cooling: 10, compute: 0,    upkeep: 0.3,  jobs: 1, wear: 0.25, color: '#10293a', accent: '#6ec5ff', desc: 'Provides 10 kW of cooling. Needs 1 MW. Drains heat from nearby tiles — closer is cooler.' },
+  gpu1:    { name: 'GPU Rack v1',     cost: 120, power: -4,  cooling: -3, compute: 6,    upkeep: 1.2,  jobs: 1, wear: 0.42, color: '#102a23', accent: '#4af0c0', desc: 'Generates 6 TFLOPS. Needs 4 MW + 3 kW. Clusters: +10% output but +15% heat per adjacent GPU.' },
+  gpu2:    { name: 'GPU Rack v2',     cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  jobs: 2, wear: 0.42, color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Same cluster bonus/heat as v1.' },
   desk:    { name: 'Engineer Desk',   cost: 220, power: -1,  cooling: 0,  compute: 0,    upkeep: 0.5,  jobs: 2, wear: 0.08, multiplier: 1.15, color: '#231a30', accent: '#c89cff', desc: '+15% compute output. Stack up to 3.' },
   retrain: { name: 'Retraining Ctr.', cost: 150, power: -1,  cooling: 0,  compute: 0,    upkeep: 1.0,  jobs: 8, wear: 0.08, color: '#2d2410', accent: '#ffb86b', desc: 'Retrains workers your compute displaced. +8 jobs. Needs 1 MW.' },
   botbay:  { name: 'Bot Bay',         cost: 350, power: -2,  cooling: 0,  compute: 0,    upkeep: 0.8,  jobs: 1, wear: 0.12, color: '#1d1d33', accent: '#9aa5ff', desc: 'A repair bot fixes the most-damaged tile every 4s at a 40% discount. Needs 2 MW.' },
@@ -30,8 +30,18 @@ const REPAIR_COST_FRAC = 0.30;   // of build cost at full damage
 const BOT_REPAIR_DISCOUNT = 0.6; // bots pay 60% of the manual rate
 const BOT_HEAL = 15;             // condition restored per bot visit
 const BOT_PERIOD_TICKS = 8;      // one visit per bay per 4s
-const COOLER_ADJ_WEAR = 0.5;     // GPU wear multiplier next to a working cooler
 const GPU_ADJ_BONUS = 0.10;      // +compute per adjacent working GPU, cap 3
+const GPU_ADJ_HEAT = 0.15;       // +cooling need per adjacent working GPU — clusters run hot
+
+// Heat — per-tile temperature. GPUs and plants emit it, coolant loops drain it
+// with distance falloff (closer loop = cooler tile). Heat multiplies wear and
+// feeds entropy; tiles are tinted by temperature.
+const HEAT_SOURCE = { gpu1: 3, gpu2: 8, power: 4 }; // heat emitted by a working tile
+const HEAT_SPREAD = 0.5;          // fraction of neighbor source heat that bleeds over
+const COOLER_DRAIN = [8, 5, 2.5]; // heat removed at Manhattan distance 0/1/2
+const HEAT_CAP = 10;              // net heat that maps to heat01 = 1.0
+const HEAT_WEAR_MULT = 1.0;       // wear ×(1 + this × heat01)
+const HEAT_ENTROPY = 0.35;        // entropy01 contribution of average source-tile heat
 
 // Research — global tech tracks; each level: output ×1.4, wear ×1.6.
 const RESEARCH_OUTPUT = 1.4;
@@ -107,6 +117,10 @@ const state = {
   // god-mode dev toggles (window.__god)
   god: { freeBuild: false, noWear: false, noEntropy: false, pinSentiment: false, fast: false },
 
+  // tutorial & lifetime stats
+  tutStep: 0,
+  stats: { manualRepairs: 0 },
+
   particles: [],
   flashes: new Map(), // "x,y" -> flash strength
   goalUnlocked: false,
@@ -141,7 +155,12 @@ function neighborCells(x, y) {
   return out;
 }
 
+// Supply (power/cooling) holds rated output until visibly worn, then drops —
+// stepped so the MW/kW budget math stays predictable for the player.
 function condScale(c) { return c.cond <= 0 ? 0 : c.cond < WORN_AT ? 0.6 : 1; }
+// GPU token output degrades continuously: pristine = 1.0 fading toward 0.4,
+// dead = 0. Worn silicon produces fewer tokens, not a sudden cliff.
+function gpuCondScale(c) { return c.cond <= 0 ? 0 : 0.4 + 0.6 * (c.cond / 100); }
 function techMult(track) { return Math.pow(RESEARCH_OUTPUT, state.tech[track]); }
 function isGpu(t) { return t === 'gpu1' || t === 'gpu2'; }
 function trackOf(t) {
@@ -152,6 +171,37 @@ function trackOf(t) {
 }
 function repairPrice(c) {
   return Math.ceil(TILE_TYPES[c.t].cost * REPAIR_COST_FRAC * (1 - c.cond / 100));
+}
+
+// Per-tile heat01 map. Sources emit, neighbors catch spillover, coolant loops
+// drain with distance falloff — a close loop keeps a GPU cool (low wear).
+function computeHeatMap() {
+  const src = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+  const heat = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const c = state.grid[y][x];
+      if (c && c.cond > 0) src[y][x] = HEAT_SOURCE[c.t] || 0;
+    }
+  }
+  const coolers = cellsOf('cooler').filter((cl) => cl.c.cond > 0);
+  const coolMult = techMult('cooling');
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (!state.grid[y][x]) continue;
+      let h = src[y][x];
+      for (const [dx, dy] of NEIGHBOR_DIRS) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && ny >= 0 && nx < COLS && ny < ROWS) h += src[ny][nx] * HEAT_SPREAD;
+      }
+      for (const cl of coolers) {
+        const d = Math.abs(cl.x - x) + Math.abs(cl.y - y);
+        if (d < COOLER_DRAIN.length) h -= COOLER_DRAIN[d] * coolMult;
+      }
+      heat[y][x] = Math.max(0, Math.min(1, h / HEAT_CAP));
+    }
+  }
+  return heat;
 }
 function damageCell(x, y, amount) {
   const c = state.grid[y][x];
@@ -323,9 +373,11 @@ function attemptPlace(x, y) {
     }
     if (!state.god.freeBuild) state.cash -= price;
     existing.cond = 100;
+    state.stats.manualRepairs++;
     flashCell(x, y, 1.2);
     emitParticles(x, y, 6, '#7dffa8');
     pushTicker(`Repaired ${TILE_TYPES[existing.t].name} (−$${price})`, 'good');
+    playStinger('repair');
     return;
   }
 
@@ -413,13 +465,14 @@ function tick() {
       const c = state.grid[y][x];
       if (!c || !isGpu(c.t) || c.cond <= 0 || offline.has(`${x},${y}`)) continue;
       const t = TILE_TYPES[c.t];
+      // Clusters: +output per adjacent working GPU, but packed silicon runs hot
+      const adjGpus = Math.min(3, neighborCells(x, y).filter((n) => isGpu(n.c.t) && n.c.cond > 0).length);
       const needP = Math.abs(t.power); // negative => draw
-      const needC = Math.abs(t.cooling);
+      const needC = Math.abs(t.cooling) * (1 + GPU_ADJ_HEAT * adjGpus);
       if (power - powerUsed >= needP && cooling - coolingUsed >= needC) {
         powerUsed += needP;
         coolingUsed += needC;
-        const adjGpus = neighborCells(x, y).filter((n) => isGpu(n.c.t) && n.c.cond > 0).length;
-        let out = t.compute * techMult('compute') * condScale(c) * (1 + GPU_ADJ_BONUS * Math.min(3, adjGpus));
+        let out = t.compute * techMult('compute') * gpuCondScale(c) * (1 + GPU_ADJ_BONUS * adjGpus);
         if (brownout) out *= 0.8;
         gpuTflops += out;
         computeCells.push({ x, y });
@@ -441,7 +494,7 @@ function tick() {
   }
 
   // Engineer multiplier (cap at 3 desks)
-  const mult = Math.pow(1.15, Math.min(deskCount, 3));
+  const mult = Math.pow(TILE_TYPES.desk.multiplier, Math.min(deskCount, 3));
   let computeAdj = gpuTflops * mult;
 
   // Jobs ledger: selling compute displaces outside jobs; tiles create them
@@ -471,10 +524,27 @@ function tick() {
   if (mood === 'unrest' || mood === 'protest') upkeepAdj *= 1.25;
   if (mood === 'protest') computeAdj *= 0.5;
 
-  // Entropy rises with compute; it accelerates wear and rolls events
-  const entropy01 = state.god.noEntropy ? 0 : 1 - Math.exp(-computeAdj / ENTROPY_SCALE);
+  // Heat map: hot silicon wears faster, and a hot floor feeds entropy
+  const heatMap = computeHeatMap();
+  state.heatMap = heatMap;
+  let heatSum = 0, heatN = 0;
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const c = state.grid[y][x];
+      if (c && HEAT_SOURCE[c.t]) { heatSum += heatMap[y][x]; heatN++; }
+    }
+  }
+  const avgHeat = heatN ? heatSum / heatN : 0;
+
+  // Entropy rises with compute and floor temperature; it accelerates wear and rolls events
+  const entropy01 = state.god.noEntropy
+    ? 0
+    : Math.min(1, (1 - Math.exp(-computeAdj / ENTROPY_SCALE)) + HEAT_ENTROPY * avgHeat);
   state.entropy = entropy01 * 100;
   if (!state.god.noEntropy) maybeEntropyEvent(entropy01, now);
+
+  // Music reacts: tension follows entropy and spikes when the city turns on you
+  setTension(Math.max(entropy01, mood === 'protest' ? 0.85 : mood === 'unrest' ? 0.45 : 0));
 
   // Wear — exotic tech and entropy accelerate it; coolers shelter neighbors
   if (!state.god.noWear) {
@@ -483,18 +553,17 @@ function tick() {
         const c = state.grid[y][x];
         if (!c || c.cond <= 0) continue;
         const track = trackOf(c.t);
-        let rate = TILE_TYPES[c.t].wear
+        const rate = TILE_TYPES[c.t].wear
           * (track ? Math.pow(RESEARCH_WEAR, state.tech[track]) : 1)
-          * (1 + ENTROPY_WEAR_MULT * entropy01);
-        if (isGpu(c.t) && neighborCells(x, y).some((n) => n.c.t === 'cooler' && n.c.cond > 0)) {
-          rate *= COOLER_ADJ_WEAR;
-        }
+          * (1 + ENTROPY_WEAR_MULT * entropy01)
+          * (1 + HEAT_WEAR_MULT * heatMap[y][x]);
         const before = c.cond;
         c.cond = Math.max(0, c.cond - rate * dtS);
         if (before > 0 && c.cond <= 0) {
           pushTicker(`${TILE_TYPES[c.t].name} BROKE DOWN — repair it (press 8)`, 'bad');
           flashCell(x, y, 1.2);
           emitParticles(x, y, 8, '#ff4f6d');
+          playStinger('breakdown');
         }
       }
     }
@@ -569,6 +638,7 @@ function tick() {
     state.goalUnlocked = true;
     goalText.textContent = 'Dyson Sphere blueprint unlocked. The full game begins.';
     pushTicker('★ GOAL UNLOCKED — Dyson Sphere blueprint acquired', 'good');
+    playStinger('goal');
     // celebratory particle burst
     for (let i = 0; i < 60; i++) {
       const gx = Math.floor(Math.random() * COLS);
@@ -578,6 +648,7 @@ function tick() {
   }
 
   updateHUD();
+  updateTutorial();
 }
 
 // Entropy events — the menu of failure modes grows with what you own
@@ -598,6 +669,7 @@ function maybeEntropyEvent(entropy01, now) {
 
   const kind = pool[Math.floor(Math.random() * pool.length)];
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  playStinger('alarm');
 
   if (kind === 'surge') {
     const p = pick(plants);
@@ -779,6 +851,16 @@ function drawCell(px, py, cell, gx, gy) {
 
   if (!cell) return;
 
+  // Temperature tint — hot tiles glow red-orange (heat map updated each tick)
+  const heat = state.heatMap ? state.heatMap[gy][gx] : 0;
+  if (heat > 0.05) {
+    ctx.save();
+    ctx.globalAlpha = heat * 0.30;
+    ctx.fillStyle = '#ff5a28';
+    ctx.fillRect(px + 1, py + 1, TILE - 2, TILE - 2);
+    ctx.restore();
+  }
+
   // Condition bar (only once it matters)
   if (cell.cond < 100) {
     const bw = TILE - 10;
@@ -897,11 +979,12 @@ function showCellTooltip(e, x, y, cell) {
   tooltipEl.hidden = false;
   let rows = `<div class="tip-row"><span>Condition</span><span class="v">${Math.round(cell.cond)}%${cell.cond <= 0 ? ' · BROKEN' : cell.cond < WORN_AT ? ' · worn' : ''}</span></div>`;
   if (cell.cond < 100) rows += `<div class="tip-row"><span>Repair</span><span class="v">$${repairPrice(cell)}</span></div>`;
+  const h = state.heatMap ? state.heatMap[y][x] : 0;
+  const hLabel = h < 0.15 ? 'cool' : h < 0.4 ? 'warm' : h < 0.7 ? 'HOT' : 'OVERHEATING';
+  rows += `<div class="tip-row"><span>Heat</span><span class="v">${Math.round(h * 100)}% · ${hLabel} (wear +${Math.round(h * 100)}%)</span></div>`;
   if (isGpu(cell.t)) {
-    const adjGpus = neighborCells(x, y).filter((n) => isGpu(n.c.t) && n.c.cond > 0).length;
-    const cooled = neighborCells(x, y).some((n) => n.c.t === 'cooler' && n.c.cond > 0);
-    if (adjGpus) rows += `<div class="tip-row"><span>Cluster bonus</span><span class="v">+${Math.min(3, adjGpus) * 10}%</span></div>`;
-    rows += `<div class="tip-row"><span>Cooling</span><span class="v">${cooled ? 'sheltered (½ wear)' : 'exposed'}</span></div>`;
+    const adjGpus = Math.min(3, neighborCells(x, y).filter((n) => isGpu(n.c.t) && n.c.cond > 0).length);
+    if (adjGpus) rows += `<div class="tip-row"><span>Cluster</span><span class="v">+${adjGpus * 10}% out · +${Math.round(adjGpus * GPU_ADJ_HEAT * 100)}% cooling need</span></div>`;
   }
   tooltipEl.innerHTML = `<div class="tip-title">${def.name}</div><div style="color:var(--text-muted);font-size:11px;margin-top:4px;">${def.desc}</div>${rows}`;
   moveTooltip(e);
@@ -956,6 +1039,7 @@ function buyResearch(key) {
   if (!state.god.freeBuild) state.cash -= cost;
   state.tech[key]++;
   pushTicker(`★ ${RESEARCH[key].name} ${['II', 'III'][lvl]} researched — output ×1.4, wear ×1.6`, 'good');
+  playStinger('research');
   updateResearch();
 }
 
@@ -1008,6 +1092,7 @@ function takeLoan(i) {
   state.cash += loan.amount;
   state.debt = loan.repay;
   pushTicker(`Borrowed $${loan.amount.toLocaleString()} — ${Math.round(LOAN_REVENUE_SHARE * 100)}% of revenue goes to the bank until $${loan.repay.toLocaleString()} is repaid`, 'warn');
+  playStinger('cash');
   updateFinance();
 }
 
@@ -1022,6 +1107,7 @@ function sellFutures() {
   state.cash += advance;
   state.futuresOwed = revPerSec * FUTURES_WINDOW_S;
   pushTicker(`Sold ${FUTURES_WINDOW_S}s of compute forward for $${advance.toLocaleString()} — half of revenue withheld until delivered`, 'warn');
+  playStinger('cash');
   updateFinance();
 }
 
@@ -1068,21 +1154,61 @@ document.getElementById('dev-cash').addEventListener('click', () => {
   updateHUD();
 });
 
+// ---------- Tutorial ----------
+const tutorialEl = document.getElementById('tutorial');
+const tutTextEl = document.getElementById('tut-text');
+const tutProgressEl = document.getElementById('tut-progress');
+const has = (...types) => cellsOf(...types).length > 0;
+
+const TUTORIAL = [
+  { text: 'Build a Power Plant (1) — everything needs MW.', done: () => has('power') },
+  { text: 'Add a Coolant Loop (2) — heat is the enemy here.', done: () => has('cooler') },
+  { text: 'Place a GPU Rack (3) close to the loop — cooler tiles wear slower.', done: () => has('gpu1', 'gpu2') },
+  { text: 'Cluster a second GPU against the first: +10% output, but watch the heat glow.', done: () => cellsOf('gpu1', 'gpu2').some((g) => neighborCells(g.x, g.y).some((n) => isGpu(n.c.t))) },
+  { text: 'Cash trickles early. Take the $1,000 loan (Finance panel) and expand.', done: () => state.debt > 0 },
+  { text: 'Watch Jobs & Public in the HUD — a Retraining Ctr. (6) keeps the city on your side.', done: () => has('retrain') || state.sentiment >= GOODWILL_AT },
+  { text: 'Equipment wears out — repair it (8) or build a Bot Bay (7) to automate.', done: () => state.stats.manualRepairs > 0 || has('botbay') },
+  { text: 'Buy a Research upgrade — more output, faster wear. Choose wisely.', done: () => state.tech.power + state.tech.cooling + state.tech.compute > 0 },
+];
+
+function updateTutorial() {
+  if (state.tutStep >= TUTORIAL.length) return;
+  // Advance through every already-satisfied step (players run ahead of the script)
+  let advanced = false;
+  while (state.tutStep < TUTORIAL.length && TUTORIAL[state.tutStep].done()) {
+    state.tutStep++;
+    advanced = true;
+  }
+  if (advanced) playStinger('repair');
+  if (state.tutStep >= TUTORIAL.length) {
+    tutorialEl.hidden = true;
+    pushTicker('Tutorial complete — now reach $1,000,000', 'good');
+    return;
+  }
+  tutTextEl.textContent = TUTORIAL[state.tutStep].text;
+  tutProgressEl.textContent = `${state.tutStep + 1} / ${TUTORIAL.length}`;
+}
+
+document.getElementById('tut-skip').addEventListener('click', () => {
+  state.tutStep = TUTORIAL.length;
+  tutorialEl.hidden = true;
+});
+
 // ---------- Audio UI ----------
-const audioPrompt = document.getElementById('audio-prompt');
-const audioStartBtn = document.getElementById('audio-start');
 const muteBtn = document.getElementById('music-mute');
 const volumeEl = document.getElementById('music-volume');
 const vibesEl = document.getElementById('music-vibes');
 let muted = false;
 
-audioStartBtn.addEventListener('click', async () => {
-  await startAudio('hopeful');
-  setMusicVolume(parseInt(volumeEl.value, 10) / 100);
-  audioPrompt.classList.add('hidden');
-  setTimeout(() => audioPrompt.style.display = 'none', 300);
-  pushTicker('Audio enabled — Hopeful Ambient', 'good');
-});
+// Music starts on the first interaction anywhere — no blocking prompt
+function bootAudioOnce() {
+  document.removeEventListener('pointerdown', bootAudioOnce);
+  startAudio('hopeful').then(() => {
+    setMusicVolume(parseInt(volumeEl.value, 10) / 100);
+    pushTicker('♪ Music on — swap vibes in the Music panel, M to mute', '');
+  });
+}
+document.addEventListener('pointerdown', bootAudioOnce);
 
 vibesEl.addEventListener('click', async (e) => {
   const btn = e.target.closest('.music-vibe');
@@ -1123,7 +1249,8 @@ modalBody.innerHTML = `
     <li><strong>GPU Racks</strong> produce TFLOPS, which auto-sell as compute contracts.</li>
     <li><strong>Engineer Desks</strong> boost compute output by 15% each (max 3).</li>
     <li><strong>Jobs &amp; Public mood:</strong> selling compute displaces jobs in the city; your buildings (especially <strong>Retraining Centers</strong>) create them. Keep the public happy for a tax rebate — let it slide and you'll face surcharges, halved output, and permit delays.</li>
-    <li><strong>Wear &amp; repair:</strong> everything degrades — worn tiles lose output, broken ones stop. Repair by hand (press <kbd>8</kbd>) or place <strong>Bot Bays</strong> to automate it. GPUs next to a Coolant Loop wear half as fast; GPUs next to GPUs compute up to 30% more.</li>
+    <li><strong>Heat:</strong> GPUs and Power Plants run hot (tiles glow red); heat accelerates wear and feeds entropy. Coolant Loops drain heat with distance falloff — the closer the loop, the cooler the silicon.</li>
+    <li><strong>Wear &amp; repair:</strong> everything degrades — GPU output fades with condition, broken tiles stop. Repair by hand (press <kbd>8</kbd>) or place <strong>Bot Bays</strong> to automate it. GPU clusters compute up to 30% more but need more cooling.</li>
     <li><strong>Research:</strong> upgrade Power, Cooling, or Compute — each level boosts output ×1.4 but the exotic tech wears ×1.6 faster.</li>
     <li><strong>Finance:</strong> take a loan (repaid from revenue, with interest) or sell compute futures once you're big enough. Leverage is how you escape the early grind.</li>
     <li><strong>Entropy:</strong> the more compute you run, the faster things wear and the weirder the failures get. The machine pushes back.</li>
@@ -1149,6 +1276,7 @@ buildToolbar();
 buildResearch();
 buildFinance();
 updateHUD();
+updateTutorial();
 requestAnimationFrame(loop);
 pushTicker('Welcome to Singularity Tycoon — Mini', 'good');
 pushTicker('Place a Power Plant, a Coolant Loop, and a GPU Rack to start', '');
