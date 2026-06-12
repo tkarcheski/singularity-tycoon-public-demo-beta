@@ -22,7 +22,16 @@ const TILE_TYPES = {
   bull:    { name: 'Bulldoze',        cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#2a1414', accent: '#ff4f6d', desc: 'Refund 50% of build cost.' },
 };
 
-const REVENUE_PER_TFLOPS = 0.30; // $/sec per TFLOPS
+const REVENUE_PER_TFLOPS = 0.30; // base $/sec per TFLOPS at neutral demand
+
+// Token market — a happy city wants more tokens. Demand scales the token
+// price with sentiment (the carrot to the mood penalties' stick), plus a
+// gentle mean-reverting market wobble for short-term fluctuation.
+const DEMAND_BASE = 0.6;          // price multiplier at sentiment 0
+const DEMAND_PER_SENTIMENT = 0.008; // +0.008× per sentiment point (×1.0 at 50, ×1.4 at 100)
+const MARKET_WOBBLE = 0.012;      // random walk step per tick
+const MARKET_REVERT = 0.01;       // pull toward 1.0 per tick
+const MARKET_MIN = 0.85, MARKET_MAX = 1.15;
 
 // Wear & repair — equipment degrades; exotic tech degrades faster.
 const WORN_AT = 40;              // below: output ×0.6
@@ -121,6 +130,10 @@ const state = {
 
   mood: 'neutral', // goodwill | neutral | unrest | protest
   permitReadyAt: 0,
+
+  // token market
+  market: 1,      // mean-reverting wobble around 1.0
+  tokenPrice: REVENUE_PER_TFLOPS, // effective $/TFLOPS after demand × market
 
   // v0.5: token allocation, research points, self-improvement, unlocks
   alloc: { sell: 1, research: 0, self: 0 }, // normalized shares of compute
@@ -254,6 +267,7 @@ const hudJobs = document.getElementById('hud-jobs');
 const hudSentiment = document.getElementById('hud-sentiment');
 const hudDebt = document.getElementById('hud-debt');
 const hudEntropy = document.getElementById('hud-entropy');
+const hudToken = document.getElementById('hud-token');
 
 // ---------- Init ----------
 function buildToolbar() {
@@ -667,8 +681,15 @@ function tick() {
     }
   }
 
-  // Revenue (only the SOLD share of compute), then finance settlement
-  const revPerSec = computeAdj * REVENUE_PER_TFLOPS * state.alloc.sell;
+  // Token market: a happy city buys more tokens. Demand follows sentiment;
+  // the market itself wobbles a little, mean-reverting to 1.0.
+  state.market = Math.max(MARKET_MIN, Math.min(MARKET_MAX,
+    state.market + (Math.random() - 0.5) * MARKET_WOBBLE + (1 - state.market) * MARKET_REVERT));
+  const demand = DEMAND_BASE + DEMAND_PER_SENTIMENT * state.sentiment;
+  state.tokenPrice = REVENUE_PER_TFLOPS * demand * state.market;
+
+  // Revenue (only the SOLD share of compute, at the live token price)
+  const revPerSec = computeAdj * state.tokenPrice * state.alloc.sell;
   const gross = revPerSec * dtS;
   let income = gross;
   if (state.futuresOwed > 0) {
@@ -830,6 +851,9 @@ function updateHUD() {
   hudDebt.classList.toggle('neg', state.debt > 0);
   hudEntropy.textContent = `${Math.round(state.entropy)}%`;
   hudEntropy.classList.toggle('neg', state.entropy > 70);
+  hudToken.textContent = `$${state.tokenPrice.toFixed(2)}`;
+  hudToken.classList.toggle('pos', state.tokenPrice >= REVENUE_PER_TFLOPS * 1.1);
+  hudToken.classList.toggle('neg', state.tokenPrice < REVENUE_PER_TFLOPS * 0.9);
   goalBarFill.style.width = Math.min(100, (state.cash / GOAL) * 100) + '%';
   updateResearch();
   updateFinance();
@@ -1265,7 +1289,7 @@ function takeLoan(i) {
 
 function sellFutures() {
   if (state.futuresOwed > 0) { pushTicker('Existing futures contract still delivering', 'warn'); return; }
-  const revPerSec = state.totalCompute * REVENUE_PER_TFLOPS;
+  const revPerSec = state.totalCompute * state.tokenPrice;
   if (state.totalCompute < FUTURES_UNLOCK_TFLOPS) {
     pushTicker(`Futures desk opens at ${FUTURES_UNLOCK_TFLOPS} TFLOPS`, 'warn');
     return;
@@ -1288,7 +1312,7 @@ function updateFinance() {
   }
   debtEl.hidden = state.debt <= 0;
   if (state.debt > 0) debtEl.textContent = `Repaying: $${Math.ceil(state.debt).toLocaleString()} left`;
-  const revPerSec = state.totalCompute * REVENUE_PER_TFLOPS;
+  const revPerSec = state.totalCompute * state.tokenPrice;
   const advance = Math.floor((1 - FUTURES_DISCOUNT) * revPerSec * FUTURES_WINDOW_S);
   const locked = state.totalCompute < FUTURES_UNLOCK_TFLOPS;
   futBtn.disabled = locked || state.futuresOwed > 0;
@@ -1423,7 +1447,7 @@ modalBody.innerHTML = `
     <li><strong>Coolant Loops</strong> supply cooling. GPUs need both.</li>
     <li><strong>GPU Racks</strong> produce TFLOPS, which auto-sell as compute contracts.</li>
     <li><strong>Engineer Desks</strong> boost compute output by 15% each (max 3).</li>
-    <li><strong>Jobs &amp; Public mood:</strong> selling compute displaces jobs in the city; your buildings (especially <strong>Retraining Centers</strong>) create them. Keep the public happy for a tax rebate — let it slide and you'll face surcharges, halved output, and permit delays.</li>
+    <li><strong>Jobs &amp; Public mood:</strong> selling compute displaces jobs in the city; your buildings (especially <strong>Retraining Centers</strong>) create them. A happy city <strong>buys more tokens</strong> — the Token \$ price in the HUD rises and falls with sentiment (plus market wobble). Let it slide and you'll face surcharges, halved output, and permit delays.</li>
     <li><strong>Heat:</strong> GPUs and Power Plants run hot (tiles glow red); heat accelerates wear and feeds entropy. Coolant Loops drain heat with distance falloff — the closer the loop, the cooler the silicon.</li>
     <li><strong>Wear &amp; repair:</strong> everything degrades — GPU output fades with condition, broken tiles stop. Repair by hand (press <kbd>8</kbd>) or place <strong>Bot Bays</strong> to automate it. GPU clusters compute up to 30% more but need more cooling.</li>
     <li><strong>Research:</strong> upgrade Power, Cooling, or Compute — each level boosts output ×1.4 but the exotic tech wears ×1.6 faster.</li>
