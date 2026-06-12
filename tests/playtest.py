@@ -42,7 +42,7 @@ def main():
         page.goto(INDEX.as_uri())
         page.wait_for_timeout(900)
 
-        check("loads with 9 tools", page.eval_on_selector_all("#tools .tool", "els => els.length") == 9)
+        check("loads with 11 tools", page.eval_on_selector_all("#tools .tool", "els => els.length") == 11)
         check("no boot errors", not errs, str(errs[:2]))
         check("tutorial visible with step 1", page.eval_on_selector("#tut-progress", "el => el.textContent") == "1 / 9")
         check("no blocking audio prompt", page.evaluate("!document.getElementById('audio-prompt')"))
@@ -60,14 +60,14 @@ def main():
             page.mouse.click(ox + gx * TILE + TILE / 2, oy + gy * TILE + TILE / 2)
 
         # First click anywhere starts music (counts as user gesture in Playwright)
-        page.keyboard.press("1"); click_cell(2, 2)  # power plant
+        page.keyboard.press("2"); click_cell(2, 2)  # power plant
         page.wait_for_timeout(500)
         check("music auto-starts on first interaction", page.evaluate("window.GameMusic.isAudioStarted()"))
         check("grid stores cells", page.evaluate("window.__state.grid[2][2]?.t") == "power")
 
         # Tutorial advances as steps are done
-        page.keyboard.press("2"); click_cell(3, 3)                       # cooler
-        page.keyboard.press("3"); click_cell(2, 3); click_cell(2, 4)     # adjacent gpus near cooler
+        page.keyboard.press("4"); click_cell(3, 3)                       # cooler
+        page.keyboard.press("5"); click_cell(2, 3); click_cell(2, 4)     # adjacent gpus near cooler
         page.wait_for_timeout(1200)
         step = page.evaluate("window.__state.tutStep")
         check("tutorial advances with play", step >= 4, f"step {step}")
@@ -121,12 +121,12 @@ def main():
 
         # Manual repair
         page.evaluate("window.__state.grid[3][2].cond = 20")
-        page.keyboard.press("8"); click_cell(2, 3)
+        page.keyboard.press("0"); click_cell(2, 3)
         check("manual repair restores to 100", page.evaluate("window.__state.grid[3][2].cond") == 100)
 
         # Bot bay (extra plant so the bay has power)
-        page.keyboard.press("1"); click_cell(5, 4)
-        page.keyboard.press("7"); click_cell(5, 5)
+        page.keyboard.press("2"); click_cell(5, 4)
+        page.keyboard.press("9"); click_cell(5, 5)
         page.evaluate("window.__state.grid[4][2].cond = 30")
         page.wait_for_timeout(4600)
         healed = page.evaluate("window.__state.grid[4][2].cond")
@@ -150,11 +150,11 @@ def main():
         check("debt repays from revenue", page.evaluate("window.__state.debt") < debt)
 
         # Futures (scale up first)
-        page.keyboard.press("1")
-        for gx in range(7, 12): click_cell(gx, 0)
         page.keyboard.press("2")
-        for gx in range(7, 12): click_cell(gx, 1)
+        for gx in range(7, 12): click_cell(gx, 0)
         page.keyboard.press("4")
+        for gx in range(7, 12): click_cell(gx, 1)
+        page.keyboard.press("6")
         for gx in range(7, 12): click_cell(gx, 2)
         page.wait_for_timeout(1300)
         check("scaled past futures unlock", page.evaluate("window.__state.totalCompute") >= 50)
@@ -184,6 +184,27 @@ def main():
         page.evaluate("window.__state.grid[2][2].cond = 50")
         page.wait_for_timeout(2500)
         check("auto-maintenance heals from revenue", page.evaluate("window.__state.grid[2][2].cond") > 50)
+
+        # Solar + fan: easy-start tiles work, sun cycles
+        page.keyboard.press("1"); click_cell(10, 8)   # solar
+        page.keyboard.press("3"); click_cell(10, 7)   # fan
+        page.wait_for_timeout(700)
+        sun = page.evaluate("window.__state.sun")
+        check("sun factor in range", 0.2 <= sun <= 1.0, f"{sun:.2f}")
+        check("solar placed and counted", page.evaluate("window.__state.grid[8][10]?.t") == "solar")
+        check("fan adds cooling supply", page.evaluate("window.__state.totalCooling") > 50)
+
+        # Revenue dial scales token price
+        base_price = page.evaluate("window.__state.tokenPrice")
+        page.click('input[name="god-revenue"][value="4"]')
+        page.wait_for_timeout(700)
+        boosted = page.evaluate("window.__state.tokenPrice")
+        check("revenue dial 4x boosts price", boosted > base_price * 2.5, f"{base_price:.2f}->{boosted:.2f}")
+        page.click('input[name="god-revenue"][value="1"]')
+
+        # No scrollbars: palette must fit without scrolling
+        overflow = page.evaluate("const p = document.getElementById('palette'); p.scrollHeight - p.clientHeight")
+        check("palette fits without scrolling", overflow <= 0, f"overflow {overflow}px")
 
         # Token demand: happy city pays more, angry city pays less
         page.evaluate("window.__state.sentiment = 95")
@@ -216,9 +237,9 @@ def main():
         def cc(gx, gy):
             page.mouse.click(ox + gx * TILE + TILE / 2, oy + gy * TILE + TILE / 2)
 
-        page.keyboard.press("1"); cc(4, 4)
-        page.keyboard.press("2"); cc(5, 4)
-        page.keyboard.press("3"); cc(5, 3); cc(6, 4); cc(5, 5)
+        page.keyboard.press("2"); cc(4, 4)
+        page.keyboard.press("4"); cc(5, 4)
+        page.keyboard.press("5"); cc(5, 3); cc(6, 4); cc(5, 5)
         page.wait_for_timeout(4000)
         rev = page.evaluate("window.__state.revenue")
         check("BALANCE: starter base is profitable", rev > 0, f"{rev:+.2f}/s")

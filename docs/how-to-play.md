@@ -16,7 +16,7 @@ You run a tiny AI data center on a 14×10 grid. Build the right tiles to turn po
 
 | Input | Action |
 |---|---|
-| `1`–`9` | Select tool (Power, Cooler, GPU v1, GPU v2, Desk, Retraining, Bot Bay, Repair, Bulldoze) |
+| `1`–`9`, `0`, `-` | Select tool (Solar, Power, Fan, Cooler, GPU v1, GPU v2, Desk, Retraining, Bot Bay, Repair, Bulldoze) |
 | Click grid | Place selected tile / repair / bulldoze |
 | Hover | Ghost preview (red = can't afford or occupied) and tile tooltips (condition, bonuses) |
 | `M` | Mute music |
@@ -26,6 +26,8 @@ You run a tiny AI data center on a 14×10 grid. Build the right tiles to turn po
 
 | Tile | Cost | Effect | Upkeep | Jobs |
 |---|---|---|---|---|
+| ☀ Solar Array | $40 | up to +4 MW, ebbs with the sky (~90s cycle); low wear | $0.10/s | +1 |
+| 🌀 Fan Wall | $25 | +4 kW air cooling, heat drain reach 1; wears fast | $0.15/s | — |
 | ⚡ Power Plant | $80 | +12 MW | $0.60/s | +2 |
 | ❄ Coolant Loop | $50 | +10 kW cooling, draws 1 MW; drains heat from nearby tiles (closer = cooler) | $0.30/s | +1 |
 | 🖥 GPU Rack v1 | $120 | +6 TFLOPS, needs 4 MW + 3 kW; clusters: +10% output, +15% cooling need per neighbor | $1.20/s | +1 |
