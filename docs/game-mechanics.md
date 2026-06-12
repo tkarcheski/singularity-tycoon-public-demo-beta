@@ -1,21 +1,65 @@
 # Game Mechanics
 
-Everything below is read straight from `src/main.js` (v0.2).
+Everything below is read straight from `src/main.js` (v0.3).
 
 ## The tick loop
 
 The simulation ticks every **500 ms** (`TICK_MS`). Each tick:
 
-1. **Tally supply** — sum power (MW) and cooling (kW) from all placed tiles; count Engineer Desks; sum jobs created.
-2. **Allocate to GPUs** — scan the grid top-left to bottom-right; each GPU runs only if the *remaining* pool covers its power **and** cooling draw. Allocation is first-come-first-served by grid position — there is no priority system.
-3. **Coolant loops draw power** (1 MW each) *after* GPUs, so coolers never starve GPUs of power.
-4. **Apply desk multiplier** — `compute × 1.15^min(desks, 3)` (max ×1.52).
-5. **Jobs ledger** — `displaced = compute × 0.25`; `netJobs = created − displaced`.
-6. **Sentiment drift** — sentiment moves toward `clamp(50 + netJobs, 0, 100)` at 1.5 points/s.
-7. **Mood effects** — see table below; may scale upkeep and halve compute.
-8. **Settle cash** — `cash += (compute × 0.30 − adjustedUpkeep) × 0.5`.
+1. **Expire timed effects** (driver crashes, brownouts, bot glitches).
+2. **Tally supply** — power and cooling, each scaled by research (×1.4^level) and tile condition; broken tiles supply nothing but bleed half upkeep; sum jobs created.
+3. **Allocate to GPUs** — scan top-left to bottom-right; each working GPU runs if the *remaining* pool covers its draw. Output scales with research, condition, and the cluster bonus (+10% per adjacent working GPU, max +30%); brownouts apply ×0.8.
+4. **Coolant loops (1 MW) and Bot Bays (2 MW) draw power** *after* GPUs, so they never starve compute.
+5. **Apply desk multiplier** — `compute × 1.15^min(desks, 3)` (max ×1.52).
+6. **Jobs ledger** — `displaced = compute × 0.25`; `netJobs = created − displaced`.
+7. **Sentiment drift** — toward `clamp(50 + netJobs, 0, 100)` at 1.5 points/s; **mood effects** may scale upkeep and halve compute.
+8. **Entropy** — `100 × (1 − e^(−compute/150))`; rolls a failure event with probability `0.06 × entropy01^1.5`.
+9. **Wear** — each tile loses `baseWear × 1.6^techLevel × (1 + 2 × entropy01)` condition/s; GPUs next to a working cooler wear ×0.5.
+10. **Bot bays** — every 8 ticks, each powered bay repairs the most-damaged other tile +15 condition, auto-paying 60% of the manual rate.
+11. **Settle cash** — gross revenue (`compute × 0.30`), minus futures withholding (50% of gross until delivered), minus debt service (`max(10% of gross, $0.5/s)`), minus adjusted upkeep.
 
-Upkeep is charged for every placed tile **whether or not it is running**.
+Upkeep is charged for every placed tile **whether or not it is running** (half, if broken).
+
+## Wear & repair (v0.3)
+
+| Tile | Base wear/s | Full half-life* |
+|---|---|---|
+| GPU racks | 0.42 | ~4 min (~8 min cooled) |
+| Coolant Loop | 0.25 | ~7 min |
+| Power Plant | 0.18 | ~9 min |
+| Bot Bay | 0.12 | ~14 min |
+| Desk / Retraining | 0.08 | ~21 min |
+
+*time from 100→0 at zero entropy, tech I.
+
+Condition < 40: output ×0.6 (worn). Condition 0: broken — inert until repaired. Manual repair (`8`): `30% × build cost × damage`. Bot bays pay 60% of that rate.
+
+## Research (v0.3)
+
+| Track | Level II | Level III | Effect per level |
+|---|---|---|---|
+| Power | $600 | $3,000 | plant output ×1.4 · plant wear ×1.6 |
+| Cooling | $500 | $2,500 | loop output ×1.4 · loop wear ×1.6 |
+| Compute | $800 | $4,000 | GPU output ×1.4 · GPU wear ×1.6 |
+
+## Finance (v0.3)
+
+- **Loans** (one at a time): $1,000→repay $1,300 · $5,000→$6,750 · $25,000→$35,000. Serviced automatically from `max(10% of gross revenue, $0.5/s)`.
+- **Compute futures** (unlock at 50 TFLOPS, one at a time): advance = `75% × revenue/s × 120s`; afterwards 50% of gross revenue is withheld until the full undiscounted amount is delivered.
+
+## Entropy events (v0.3)
+
+Available events depend on what you own — more equipment, more failure modes:
+
+| Event | Requires | Effect |
+|---|---|---|
+| ⚡ Power surge | ≥2 plants | random plant −30 condition |
+| 💧 Coolant leak | ≥1 cooler | cooler −25, adjacent GPUs −10 |
+| 🖥 Driver crash | gpu2 or Compute ≥ II | one GPU offline 8 s |
+| 🌆 Brownout | entropy > 70 | all GPU output ×0.8 for 10 s |
+| 🤖 Bot glitch | ≥1 bay, entropy > 50 | one bay offline 10 s |
+
+Events floor condition at 5 — they never instantly brick a tile.
 
 ## Jobs & public sentiment (v0.2)
 
@@ -68,5 +112,5 @@ A starter build (1 plant + 1 cooler + 2× GPU v1, $370 of the $500 starting cash
 
 - **Bulldoze** refunds 50% of the build cost, rounded down.
 - **Cash can go negative** — there is no floor and no game-over state.
-- The GPU v2 tooltip says *"Unlocks at $5k"* but no gate is enforced; it is purchasable whenever you have $400.
 - The goal bar tracks `cash / 1,000,000`; hitting it swaps the goal text and fires a celebration particle burst.
+- **Dev god modes** (⚙ DEV panel / `window.__god`): free build, no wear, no entropy, pin sentiment, 5× speed — each an independent toggle for testing.

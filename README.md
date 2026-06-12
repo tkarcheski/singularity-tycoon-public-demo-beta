@@ -8,16 +8,16 @@ A tiny browser tycoon game: run an AI data center, turn **power + cooling** into
 
 ## Play it
 
-The game is a zero-dependency static site (vanilla JS + ES modules). No build step, no install:
+The game is a zero-dependency static site (vanilla JS). No build step, no install, no server:
+
+**Just open `index.html` in a browser.** Download the repo (ZIP or clone) and double-click it — works straight from `file://` on any OS.
+
+Serving over HTTP also works, if you prefer:
 
 ```bash
-git clone git@github.com:tkarcheski/singularity-tycoon-mini.git
-cd singularity-tycoon-mini
-python3 -m http.server 8000
+python3 -m http.server 8000   # or: npx serve, php -S localhost:8000, ...
 # open http://localhost:8000
 ```
-
-> ES modules don't load from `file://` — any static HTTP server works (`npx serve`, `php -S`, etc.).
 
 ## Documentation
 
@@ -31,7 +31,7 @@ python3 -m http.server 8000
 
 ## At a glance
 
-- **Stack:** vanilla JavaScript (ES modules), Canvas 2D, Web Audio — zero dependencies, zero build step
+- **Stack:** vanilla JavaScript, Canvas 2D, Web Audio — zero dependencies, zero build step, runs from `file://`
 - **Size:** ~21 KB game logic + ~12 KB procedural audio
 - **Music:** four player-selectable generative vibes synthesized at runtime (no audio files)
 - **Status:** playable prototype / vibes test (`v0.2` — adds the jobs & public-sentiment dial)
