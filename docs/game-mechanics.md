@@ -34,9 +34,17 @@ Upkeep is charged for every placed tile **whether or not it is running** (half, 
 
 Condition < 40: output ×0.6 (worn). Condition 0: broken — inert until repaired. Manual repair (`8`): `30% × build cost × damage`. Bot bays pay 60% of that rate.
 
+## Human workers (v0.5)
+
+Worker Pods have **skill** (0–100) instead of wear — it only grows. Skill/s =
+min(2.0, Σ tutoring from working GPUs at distance 0/1/2 → 0/0.8/0.4) + 0.005 ×
+(skill gap) per smarter adjacent pod. Output = 3 TFLOPS × skill/100, added
+**outside** every multiplier (tech, desks, self-improvement — humans can't be
+upgraded) and immune to wear, breakage, and entropy events. +4 jobs each.
+
 ## Token market (v0.5)
 
-`tokenPrice = 0.30 × demand × market` where `demand = 0.6 + 0.008 × sentiment`
+`tokenPrice = 1.20 × demand × market` *(base raised 4× by playtest verdict)* where `demand = 0.6 + 0.008 × sentiment`
 (×1.0 at sentiment 50, ×1.4 at 100, ×0.6 at 0) and `market` is a mean-reverting
 random walk clamped to 0.85–1.15. A happy city buys more tokens — jobs are the
 engine of demand. Futures advances also price at the live token price.

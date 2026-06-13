@@ -42,7 +42,7 @@ def main():
         page.goto(INDEX.as_uri())
         page.wait_for_timeout(900)
 
-        check("loads with 11 tools", page.eval_on_selector_all("#tools .tool", "els => els.length") == 11)
+        check("loads with 12 tools", page.eval_on_selector_all("#tools .tool", "els => els.length") == 12)
         check("no boot errors", not errs, str(errs[:2]))
         check("tutorial visible with step 1", page.eval_on_selector("#tut-progress", "el => el.textContent") == "1 / 9")
         check("no blocking audio prompt", page.evaluate("!document.getElementById('audio-prompt')"))
@@ -121,12 +121,12 @@ def main():
 
         # Manual repair
         page.evaluate("window.__state.grid[3][2].cond = 20")
-        page.keyboard.press("0"); click_cell(2, 3)
+        page.keyboard.press("-"); click_cell(2, 3)
         check("manual repair restores to 100", page.evaluate("window.__state.grid[3][2].cond") == 100)
 
         # Bot bay (extra plant so the bay has power)
         page.keyboard.press("2"); click_cell(5, 4)
-        page.keyboard.press("9"); click_cell(5, 5)
+        page.keyboard.press("0"); click_cell(5, 5)
         page.evaluate("window.__state.grid[4][2].cond = 30")
         page.wait_for_timeout(4600)
         healed = page.evaluate("window.__state.grid[4][2].cond")
@@ -185,6 +185,20 @@ def main():
         page.wait_for_timeout(2500)
         check("auto-maintenance heals from revenue", page.evaluate("window.__state.grid[2][2].cond") > 50)
 
+        # Human workers: AI tutors them near GPUs, peers teach peers
+        page.keyboard.press("9"); click_cell(3, 2)   # pod adjacent to the gpu cluster
+        page.wait_for_timeout(2600)
+        skill = page.evaluate("window.__state.grid[2][3].skill")
+        check("humans learn near working GPUs", skill > 0, f"skill {skill:.1f}")
+        page.keyboard.press("9"); click_cell(12, 9)   # isolated pod, far from GPUs
+        page.evaluate("window.__state.grid[9][12].skill = 0")
+        page.keyboard.press("9"); click_cell(11, 9)   # mentor pod next door
+        page.evaluate("window.__state.grid[9][11].skill = 90")
+        page.wait_for_timeout(2600)
+        learned = page.evaluate("window.__state.grid[9][12].skill")
+        check("humans learn from peers", learned > 0, f"skill {learned:.2f}")
+        check("human pods never break", page.evaluate("window.__state.grid[2][3].cond") == 100)
+
         # Solar + fan: easy-start tiles work, sun cycles
         page.keyboard.press("1"); click_cell(10, 8)   # solar
         page.keyboard.press("3"); click_cell(10, 7)   # fan
@@ -213,7 +227,7 @@ def main():
         page.evaluate("window.__state.god.pinSentiment = false; window.__state.sentiment = 5")
         page.wait_for_timeout(700)
         lo = page.evaluate("window.__state.tokenPrice")
-        check("token demand follows sentiment", hi > 0.36 and lo < 0.24, f"hi={hi:.3f} lo={lo:.3f}")
+        check("token demand follows sentiment", hi > 1.45 and lo < 0.95, f"hi={hi:.3f} lo={lo:.3f}")
         page.evaluate("window.__state.sentiment = 60")
 
         check("zero console errors end-to-end", not errs, str(errs[:3]))
@@ -242,8 +256,8 @@ def main():
         page.keyboard.press("5"); cc(5, 3); cc(6, 4); cc(5, 5)
         page.wait_for_timeout(4000)
         rev = page.evaluate("window.__state.revenue")
-        check("BALANCE: starter base is profitable", rev > 0, f"{rev:+.2f}/s")
-        check("BALANCE: starter base isn't too rich", rev < 4, f"{rev:+.2f}/s")
+        check("BALANCE: starter base is profitable", rev > 4, f"{rev:+.2f}/s")
+        check("BALANCE: starter base isn't too rich", rev < 30, f"{rev:+.2f}/s")
         browser.close()
 
     print(f"\n{'ALL PASS' if not fails else 'FAILURES: ' + ', '.join(fails)}")
