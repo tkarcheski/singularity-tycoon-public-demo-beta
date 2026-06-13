@@ -16,7 +16,7 @@ You run a tiny AI data center on a 14×10 grid. Build the right tiles to turn po
 
 | Input | Action |
 |---|---|
-| `1`–`9`, `0`, `-` | Select tool (Solar, Power, Fan, Cooler, GPU v1, GPU v2, Desk, Retraining, Bot Bay, Repair, Bulldoze) |
+| `1`–`0`, `-`, `=` | Select tool (Solar, Power, Fan, Cooler, GPU v1, GPU v2, Desk, Retraining, Workers, Bot Bay, Repair, Bulldoze) |
 | Click grid | Place selected tile / repair / bulldoze |
 | Hover | Ghost preview (red = can't afford or occupied) and tile tooltips (condition, bonuses) |
 | `M` | Mute music |
@@ -34,11 +34,12 @@ You run a tiny AI data center on a 14×10 grid. Build the right tiles to turn po
 | 🖥 GPU Rack v2 | $400 | +22 TFLOPS, needs 10 MW + 8 kW; same cluster bonus | $4.00/s | +2 |
 | 👤 Engineer Desk | $220 | +15% compute output (stacks ×3 max), draws 1 MW | $0.50/s | +2 |
 | 🎓 Retraining Ctr. | $150 | +8 jobs, draws 1 MW | $1.00/s | +8 |
+| 🧑‍🤝‍🧑 Worker Pod | $100 | humans output ≤3 TFLOPS as skill grows; AI + peers train them; never breaks, never upgrades; draws 1 MW | $0.80/s | +4 |
 | 🤖 Bot Bay | $350 | Auto-repairs the most-damaged tile every 4 s at a 40% discount, draws 2 MW | $0.80/s | +1 |
 | 🔧 Repair | — | Fix a tile for 30% of build cost × damage | — | — |
 | 🗑 Bulldoze | — | Refunds 50% of build cost | — | — |
 
-Compute sells automatically at **$0.30/s per TFLOPS**.
+Compute sells automatically at a **$1.20/s per TFLOPS base** — the live price scales with public sentiment and market wobble (see the Token $ HUD cell).
 
 ## Allocation & unlocks (new in v0.5)
 

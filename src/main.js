@@ -19,12 +19,20 @@ const TILE_TYPES = {
   gpu2:    { name: 'GPU Rack v2',     cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  jobs: 2, wear: 0.42, gate: 'gpu2', color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Same cluster bonus/heat as v1.' },
   desk:    { name: 'Engineer Desk',   cost: 220, power: -1,  cooling: 0,  compute: 0,    upkeep: 0.5,  jobs: 2, wear: 0.08, multiplier: 1.15, color: '#231a30', accent: '#c89cff', desc: '+15% compute output. Stack up to 3.' },
   retrain: { name: 'Retraining Ctr.', cost: 150, power: -1,  cooling: 0,  compute: 0,    upkeep: 1.0,  jobs: 8, wear: 0.08, color: '#2d2410', accent: '#ffb86b', desc: 'Retrains workers your compute displaced. +8 jobs. Needs 1 MW.' },
+  human:   { name: 'Worker Pod',      cost: 100, power: -1,  cooling: 0,  compute: 0,    upkeep: 0.8,  jobs: 4, wear: 0,    color: '#2e1b26', accent: '#ff9ecf', desc: 'Humans output tokens as they learn — up to 3 TFLOPS at full skill. The AI trains them (sit near GPUs); they also teach each other. Cannot be upgraded — or broken.' },
   botbay:  { name: 'Bot Bay',         cost: 350, power: -2,  cooling: 0,  compute: 0,    upkeep: 0.8,  jobs: 1, wear: 0.12, gate: 'ops', color: '#1d1d33', accent: '#9aa5ff', desc: 'A repair bot fixes the most-damaged tile every 4s at a 40% discount. Needs 2 MW.' },
   repair:  { name: 'Repair',          cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#13241c', accent: '#7dffa8', desc: 'Fix a damaged tile for 30% of its build cost, scaled by damage.' },
   bull:    { name: 'Bulldoze',        cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#2a1414', accent: '#ff4f6d', desc: 'Refund 50% of build cost.' },
 };
 
-const REVENUE_PER_TFLOPS = 0.30; // base $/sec per TFLOPS at neutral demand
+const REVENUE_PER_TFLOPS = 1.20; // base $/sec per TFLOPS at neutral demand (4× the v0.2
+                                 // rate — playtest verdict: faster progress is more fun)
+
+// Human workers — they learn instead of wearing out, and can't be upgraded.
+const HUMAN_MAX_TFLOPS = 3;          // token output at skill 100
+const HUMAN_LEARN_GPU = [0, 0.8, 0.4]; // skill/s from a working GPU at distance 0/1/2
+const HUMAN_LEARN_CAP = 2.0;         // max skill/s from AI tutoring
+const HUMAN_PEER_RATE = 0.005;       // skill/s per point of gap to a smarter neighbor pod
 
 // Token market — a happy city wants more tokens. Demand scales the token
 // price with sentiment (the carrot to the mood penalties' stick), plus a
@@ -106,8 +114,8 @@ const UNREST_AT = 40;                   // <: upkeep +25% (power surcharge)
 const PROTEST_AT = 25;                  // <: compute halved + slow building permits
 const PERMIT_DELAY_MS = 4000;           // min gap between builds during protests
 
-const TOOL_ORDER = ['solar', 'power', 'fan', 'cooler', 'gpu1', 'gpu2', 'desk', 'retrain', 'botbay', 'repair', 'bull'];
-const TOOL_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-'];
+const TOOL_ORDER = ['solar', 'power', 'fan', 'cooler', 'gpu1', 'gpu2', 'desk', 'retrain', 'human', 'botbay', 'repair', 'bull'];
+const TOOL_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '='];
 
 // Solar output cycle — the sky has moods (0.2..1.0, ~90s period)
 const SOLAR_PERIOD_S = 90;
@@ -346,6 +354,7 @@ function toolStat(id) {
   if (id === 'gpu1' || id === 'gpu2') return `+${t.compute} TFLOPS`;
   if (id === 'desk') return `+15% compute`;
   if (id === 'retrain') return `+${t.jobs} jobs`;
+  if (id === 'human') return `learns · ≤${HUMAN_MAX_TFLOPS} TFLOPS`;
   if (id === 'botbay') return `auto-repairs`;
   if (id === 'repair') return `fix damage`;
   if (id === 'bull') return `refund 50%`;
@@ -362,6 +371,7 @@ function iconSvg(id) {
   if (id === 'gpu2')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><circle cx="8" cy="7.5" r="1.4"/><circle cx="16" cy="7.5" r="1.4"/><circle cx="8" cy="16.5" r="1.4"/><circle cx="16" cy="16.5" r="1.4"/></svg>`;
   if (id === 'desk')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="12" cy="7" r="3"/><path d="M5 21v-2a4 4 0 014-4h6a4 4 0 014 4v2" stroke-linecap="round"/></svg>`;
   if (id === 'retrain') return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M12 4L2 9l10 5 10-5-10-5z" stroke-linejoin="round"/><path d="M6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5" stroke-linecap="round"/></svg>`;
+  if (id === 'human')   return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="9" cy="8" r="2.6"/><circle cx="16" cy="9.5" r="2.1"/><path d="M3.5 20v-1.5a4.5 4.5 0 014.5-4.5h2a4.5 4.5 0 014.5 4.5V20M14 14.4a3.8 3.8 0 016.5 2.7V20" stroke-linecap="round"/></svg>`;
   if (id === 'botbay')  return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="6" y="8" width="12" height="10" rx="2"/><circle cx="10" cy="12" r="1.2"/><circle cx="14" cy="12" r="1.2"/><path d="M12 8V5M9 5h6M9 18v2M15 18v2" stroke-linecap="round"/></svg>`;
   if (id === 'repair')  return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M14.5 6.5a4 4 0 105.4 5.4L13 18.8a2.1 2.1 0 11-3-3l6.9-6.9a4 4 0 01-2.4-2.4z" stroke-linejoin="round" transform="rotate(90 12 12)"/></svg>`;
   if (id === 'bull')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M4 7l16 0M7 7v12a2 2 0 002 2h6a2 2 0 002-2V7M10 11v6M14 11v6M9 7l1-3h4l1 3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
@@ -470,7 +480,7 @@ function attemptPlace(x, y) {
     return;
   }
   if (existing) {
-    pushTicker(`Cell occupied — bulldoze first (press -)`, 'bad');
+    pushTicker(`Cell occupied — bulldoze first (press =)`, 'bad');
     return;
   }
   if (!state.god.freeBuild && state.cash < def.cost) {
@@ -487,7 +497,7 @@ function attemptPlace(x, y) {
     state.permitReadyAt = now + PERMIT_DELAY_MS;
   }
   if (!state.god.freeBuild) state.cash -= def.cost;
-  state.grid[y][x] = { t: id, cond: 100 };
+  state.grid[y][x] = id === 'human' ? { t: id, cond: 100, skill: 0 } : { t: id, cond: 100 };
   flashCell(x, y, 1.2);
   emitParticles(x, y, 8, def.accent || '#4af0c0');
 }
@@ -597,6 +607,12 @@ function tick() {
   }
   computeAdj *= 1 + state.selfImprove;
 
+  // Human tokens: skill-scaled and deliberately OUTSIDE every multiplier —
+  // humans can't be upgraded by tech, desks, or a self-improving AI
+  for (const pod of cellsOf('human')) {
+    computeAdj += HUMAN_MAX_TFLOPS * (pod.c.skill || 0) / 100;
+  }
+
   // Research allocation earns research points
   state.rp += computeAdj * RP_PER_TFLOPS * state.alloc.research * dtS;
 
@@ -669,13 +685,30 @@ function tick() {
         const before = c.cond;
         c.cond = Math.max(0, c.cond - rate * dtS);
         if (before > 0 && c.cond <= 0) {
-          pushTicker(`${TILE_TYPES[c.t].name} BROKE DOWN — repair it (press 0)`, 'bad');
+          pushTicker(`${TILE_TYPES[c.t].name} BROKE DOWN — repair it (press -)`, 'bad');
           flashCell(x, y, 1.2);
           emitParticles(x, y, 8, '#ff4f6d');
           playStinger('breakdown');
         }
       }
     }
+  }
+
+  // Humans learn: the AI tutors pods near working GPUs (distance falloff),
+  // and pods teach each other across shared edges. Skill only ever grows.
+  for (const pod of cellsOf('human')) {
+    let gain = 0;
+    for (const g of computeCells) {
+      const d = Math.abs(g.x - pod.x) + Math.abs(g.y - pod.y);
+      if (d < HUMAN_LEARN_GPU.length) gain += HUMAN_LEARN_GPU[d];
+    }
+    gain = Math.min(HUMAN_LEARN_CAP, gain);
+    for (const n of neighborCells(pod.x, pod.y)) {
+      if (n.c.t === 'human' && (n.c.skill || 0) > (pod.c.skill || 0)) {
+        gain += (n.c.skill - pod.c.skill) * HUMAN_PEER_RATE;
+      }
+    }
+    if (gain > 0) pod.c.skill = Math.min(100, (pod.c.skill || 0) + gain * dtS);
   }
 
   // Bot bays: each powered bay repairs the most-damaged other tile every 4s
@@ -1010,6 +1043,19 @@ function drawCell(px, py, cell, gx, gy) {
     ctx.restore();
   }
 
+  // Skill bar for humans — fills up as they learn (the inverse of wear)
+  if (cell.t === 'human') {
+    const skill = cell.skill || 0;
+    if (skill < 100) {
+      const bw = TILE - 10;
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(px + 5, py + TILE - 8, bw, 3);
+      ctx.fillStyle = '#ff9ecf';
+      ctx.fillRect(px + 5, py + TILE - 8, bw * skill / 100, 3);
+    }
+    return; // humans don't wear, break, or overheat-tint their own bar
+  }
+
   // Condition bar (only once it matters)
   if (cell.cond < 100) {
     const bw = TILE - 10;
@@ -1130,6 +1176,20 @@ function drawGlyph(ctx, cx, cy, id, color) {
     ctx.moveTo(cx - 6, cy + 7);
     ctx.quadraticCurveTo(cx, cy + 10, cx + 6, cy + 7);
     ctx.stroke();
+  } else if (id === 'human') {
+    // two people: heads + shoulders
+    ctx.beginPath();
+    ctx.arc(cx - 4, cy - 4, 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx + 5, cy - 2.5, 2.4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - 10, cy + s - 2);
+    ctx.quadraticCurveTo(cx - 4, cy + 1, cx + 2, cy + s - 2);
+    ctx.moveTo(cx + 1, cy + s - 2);
+    ctx.quadraticCurveTo(cx + 5, cy + 3, cx + 10, cy + s - 2);
+    ctx.stroke();
   }
   ctx.restore();
 }
@@ -1156,6 +1216,17 @@ function showCellTooltip(e, x, y, cell) {
   const h = state.heatMap ? state.heatMap[y][x] : 0;
   if (cell.t === 'solar') {
     rows += `<div class="tip-row"><span>Sun</span><span class="v">${Math.round(state.sun * 100)}% (${(TILE_TYPES.solar.power * state.sun).toFixed(1)} MW now)</span></div>`;
+  }
+  if (cell.t === 'human') {
+    const tutors = cellsOf('gpu1', 'gpu2').filter((g) => g.c.cond > 0
+      && Math.abs(g.x - x) + Math.abs(g.y - y) < HUMAN_LEARN_GPU.length).length;
+    const peers = neighborCells(x, y).filter((n) => n.c.t === 'human').length;
+    rows = `<div class="tip-row"><span>Skill</span><span class="v">${Math.round(cell.skill || 0)}%</span></div>`
+      + `<div class="tip-row"><span>Output</span><span class="v">${(HUMAN_MAX_TFLOPS * (cell.skill || 0) / 100).toFixed(1)} TFLOPS</span></div>`
+      + `<div class="tip-row"><span>Learning</span><span class="v">${tutors} GPU${tutors === 1 ? '' : 's'} · ${peers} peer${peers === 1 ? '' : 's'}</span></div>`;
+    tooltipEl.innerHTML = `<div class="tip-title">${def.name}</div><div style="color:var(--text-muted);font-size:11px;margin-top:4px;">${def.desc}</div>${rows}`;
+    moveTooltip(e);
+    return;
   }
   const hLabel = h < 0.15 ? 'cool' : h < 0.4 ? 'warm' : h < 0.7 ? 'HOT' : 'OVERHEATING';
   rows += `<div class="tip-row"><span>Heat</span><span class="v">${Math.round(h * 100)}% · ${hLabel} (wear +${Math.round(h * 100)}%)</span></div>`;
@@ -1419,7 +1490,7 @@ const TUTORIAL = [
   { text: 'Cluster a second GPU against the first: +10% output, but watch the heat glow.', done: () => cellsOf('gpu1', 'gpu2').some((g) => neighborCells(g.x, g.y).some((n) => isGpu(n.c.t))) },
   { text: 'Cash trickles early. Take the $1,000 loan (Finance panel) and expand.', done: () => state.debt > 0 },
   { text: 'Watch Jobs & Public in the HUD — a Retraining Ctr. (8) keeps the city on your side, and a happy city pays more per token.', done: () => has('retrain') || state.sentiment >= GOODWILL_AT },
-  { text: 'Equipment wears out — repair damaged tiles by hand (0).', done: () => state.stats.manualRepairs > 0 },
+  { text: 'Equipment wears out — repair damaged tiles by hand (-).', done: () => state.stats.manualRepairs > 0 },
   { text: 'Divert tokens: slide some compute into Research (Allocation panel).', done: () => state.alloc.research > 0 },
   { text: 'Spend research points on an upgrade — or save 20 RP to unlock Ops Automation.', done: () => state.tech.power + state.tech.cooling + state.tech.compute > 0 || state.unlocks.ops },
 ];
@@ -1509,7 +1580,8 @@ modalBody.innerHTML = `
     <li><strong>Unlocks:</strong> anything marked 🔒 in the Build panel is earned — hardware costs cash, capabilities cost research points. Ops Automation opens Bot Bays and auto-maintenance.</li>
     <li><strong>Finance:</strong> take a loan (repaid from revenue, with interest) or sell compute futures once you're big enough. Leverage is how you escape the early grind.</li>
     <li><strong>Entropy:</strong> the more compute you run, the faster things wear and the weirder the failures get. The machine pushes back.</li>
-    <li>Press <kbd>1</kbd>–<kbd>9</kbd>, <kbd>0</kbd> (repair), <kbd>-</kbd> (bulldoze) to pick tools. <kbd>M</kbd> to mute. Use the Music panel to swap vibes.</li>
+    <li><strong>Worker Pods:</strong> humans output tokens as they learn — the AI trains them when they sit near working GPUs, and they teach each other. They can't be upgraded, but they also never break.</li>
+    <li>Press <kbd>1</kbd>–<kbd>0</kbd>, <kbd>-</kbd> (repair), <kbd>=</kbd> (bulldoze) to pick tools. <kbd>M</kbd> to mute. Use the Music panel to swap vibes.</li>
   </ul>
   <p>Reach <strong>$1,000,000</strong> to unlock the Dyson Sphere blueprint — the prologue to the full game.</p>
 `;
