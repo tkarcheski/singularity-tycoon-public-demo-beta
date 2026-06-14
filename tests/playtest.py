@@ -42,9 +42,9 @@ def main():
         page.goto(INDEX.as_uri())
         page.wait_for_timeout(900)
 
-        check("loads with 9 tools", page.eval_on_selector_all("#tools .tool", "els => els.length") == 9)
+        check("loads with 12 tools", page.eval_on_selector_all("#tools .tool", "els => els.length") == 12)
         check("no boot errors", not errs, str(errs[:2]))
-        check("tutorial visible with step 1", page.eval_on_selector("#tut-progress", "el => el.textContent") == "1 / 8")
+        check("tutorial visible with step 1", page.eval_on_selector("#tut-progress", "el => el.textContent") == "1 / 9")
         check("no blocking audio prompt", page.evaluate("!document.getElementById('audio-prompt')"))
 
         geo = page.evaluate(
@@ -60,17 +60,40 @@ def main():
             page.mouse.click(ox + gx * TILE + TILE / 2, oy + gy * TILE + TILE / 2)
 
         # First click anywhere starts music (counts as user gesture in Playwright)
-        page.keyboard.press("1"); click_cell(2, 2)  # power plant
+        page.keyboard.press("2"); click_cell(2, 2)  # power plant
         page.wait_for_timeout(500)
         check("music auto-starts on first interaction", page.evaluate("window.GameMusic.isAudioStarted()"))
         check("grid stores cells", page.evaluate("window.__state.grid[2][2]?.t") == "power")
 
         # Tutorial advances as steps are done
-        page.keyboard.press("2"); click_cell(3, 3)                       # cooler
-        page.keyboard.press("3"); click_cell(2, 3); click_cell(2, 4)     # adjacent gpus near cooler
+        page.keyboard.press("4"); click_cell(3, 3)                       # cooler
+        page.keyboard.press("5"); click_cell(2, 3); click_cell(2, 4)     # adjacent gpus near cooler
         page.wait_for_timeout(1200)
         step = page.evaluate("window.__state.tutStep")
         check("tutorial advances with play", step >= 4, f"step {step}")
+
+        # Unlock gating: gpu2 is locked at minute zero; buying the unlock opens it
+        check("gpu2 starts locked", page.evaluate("!window.__state.unlocks.gpu2"))
+        page.click('.tool[data-tool="gpu2"]')  # can't afford -> stays locked
+        check("unlock refused without cash", page.evaluate("!window.__state.unlocks.gpu2"))
+        page.evaluate("window.__state.cash = 2000")
+        page.click('.tool[data-tool="gpu2"]')
+        check("gpu2 unlock purchased", page.evaluate("window.__state.unlocks.gpu2"))
+        check("auto-maintain hidden before ops unlock", page.evaluate("document.querySelector('.fin-maint').hidden"))
+
+        # Allocation: divert to research -> RP accrues; self -> multiplier grows
+        page.evaluate("const r = document.querySelector('input[data-alloc=\"research\"]'); r.value = 50; r.dispatchEvent(new Event('input'))")
+        page.wait_for_timeout(1600)
+        rp = page.evaluate("window.__state.rp")
+        check("research allocation earns RP", rp > 0, f"{rp:.2f} RP")
+        page.evaluate("const r = document.querySelector('input[data-alloc=\"self\"]'); r.value = 60; r.dispatchEvent(new Event('input'))")
+        page.wait_for_timeout(1600)
+        si = page.evaluate("window.__state.selfImprove")
+        check("self-improvement compounds", si > 0, f"+{si*100:.3f}%")
+        rev_split = page.evaluate("window.__state.alloc.sell")
+        check("allocation normalizes", abs(page.evaluate("window.__state.alloc.sell + window.__state.alloc.research + window.__state.alloc.self") - 1) < 1e-6, f"sell={rev_split:.2f}")
+        # reset allocation to pure sell for the rest of the suite
+        page.evaluate("for (const r of document.querySelectorAll('input[data-alloc]')) { r.value = r.dataset.alloc === 'sell' ? 100 : 0; r.dispatchEvent(new Event('input')) }")
 
         # God toggles
         page.click("#dev-toggle")
@@ -98,19 +121,19 @@ def main():
 
         # Manual repair
         page.evaluate("window.__state.grid[3][2].cond = 20")
-        page.keyboard.press("8"); click_cell(2, 3)
+        page.keyboard.press("-"); click_cell(2, 3)
         check("manual repair restores to 100", page.evaluate("window.__state.grid[3][2].cond") == 100)
 
         # Bot bay (extra plant so the bay has power)
-        page.keyboard.press("1"); click_cell(5, 4)
-        page.keyboard.press("7"); click_cell(5, 5)
+        page.keyboard.press("2"); click_cell(5, 4)
+        page.keyboard.press("0"); click_cell(5, 5)
         page.evaluate("window.__state.grid[4][2].cond = 30")
         page.wait_for_timeout(4600)
         healed = page.evaluate("window.__state.grid[4][2].cond")
         check("bot bay auto-repairs", healed > 30, f"30->{healed:.0f}")
 
-        # Research
-        page.click("#dev-cash")
+        # Research (costs RP now)
+        page.evaluate("window.__state.rp = 500")
         before = page.evaluate("window.__state.totalCompute")
         page.click('.research-row[data-track="compute"] [data-buy]')
         page.wait_for_timeout(1200)
@@ -127,11 +150,11 @@ def main():
         check("debt repays from revenue", page.evaluate("window.__state.debt") < debt)
 
         # Futures (scale up first)
-        page.keyboard.press("1")
-        for gx in range(7, 12): click_cell(gx, 0)
         page.keyboard.press("2")
-        for gx in range(7, 12): click_cell(gx, 1)
+        for gx in range(7, 12): click_cell(gx, 0)
         page.keyboard.press("4")
+        for gx in range(7, 12): click_cell(gx, 1)
+        page.keyboard.press("6")
         for gx in range(7, 12): click_cell(gx, 2)
         page.wait_for_timeout(1300)
         check("scaled past futures unlock", page.evaluate("window.__state.totalCompute") >= 50)
@@ -162,6 +185,51 @@ def main():
         page.wait_for_timeout(2500)
         check("auto-maintenance heals from revenue", page.evaluate("window.__state.grid[2][2].cond") > 50)
 
+        # Human workers: AI tutors them near GPUs, peers teach peers
+        page.keyboard.press("9"); click_cell(3, 2)   # pod adjacent to the gpu cluster
+        page.wait_for_timeout(2600)
+        skill = page.evaluate("window.__state.grid[2][3].skill")
+        check("humans learn near working GPUs", skill > 0, f"skill {skill:.1f}")
+        page.keyboard.press("9"); click_cell(12, 9)   # isolated pod, far from GPUs
+        page.evaluate("window.__state.grid[9][12].skill = 0")
+        page.keyboard.press("9"); click_cell(11, 9)   # mentor pod next door
+        page.evaluate("window.__state.grid[9][11].skill = 90")
+        page.wait_for_timeout(2600)
+        learned = page.evaluate("window.__state.grid[9][12].skill")
+        check("humans learn from peers", learned > 0, f"skill {learned:.2f}")
+        check("human pods never break", page.evaluate("window.__state.grid[2][3].cond") == 100)
+
+        # Solar + fan: easy-start tiles work, sun cycles
+        page.keyboard.press("1"); click_cell(10, 8)   # solar
+        page.keyboard.press("3"); click_cell(10, 7)   # fan
+        page.wait_for_timeout(700)
+        sun = page.evaluate("window.__state.sun")
+        check("sun factor in range", 0.2 <= sun <= 1.0, f"{sun:.2f}")
+        check("solar placed and counted", page.evaluate("window.__state.grid[8][10]?.t") == "solar")
+        check("fan adds cooling supply", page.evaluate("window.__state.totalCooling") > 50)
+
+        # Revenue dial scales token price
+        base_price = page.evaluate("window.__state.tokenPrice")
+        page.click('input[name="god-revenue"][value="4"]')
+        page.wait_for_timeout(700)
+        boosted = page.evaluate("window.__state.tokenPrice")
+        check("revenue dial 4x boosts price", boosted > base_price * 2.5, f"{base_price:.2f}->{boosted:.2f}")
+        page.click('input[name="god-revenue"][value="1"]')
+
+        # No scrollbars: palette must fit without scrolling
+        overflow = page.evaluate("const p = document.getElementById('palette'); p.scrollHeight - p.clientHeight")
+        check("palette fits without scrolling", overflow <= 0, f"overflow {overflow}px")
+
+        # Token demand: happy city pays more, angry city pays less
+        page.evaluate("window.__state.sentiment = 95")
+        page.wait_for_timeout(700)
+        hi = page.evaluate("window.__state.tokenPrice")
+        page.evaluate("window.__state.god.pinSentiment = false; window.__state.sentiment = 5")
+        page.wait_for_timeout(700)
+        lo = page.evaluate("window.__state.tokenPrice")
+        check("token demand follows sentiment", hi > 1.45 and lo < 0.95, f"hi={hi:.3f} lo={lo:.3f}")
+        page.evaluate("window.__state.sentiment = 60")
+
         check("zero console errors end-to-end", not errs, str(errs[:3]))
         browser.close()
 
@@ -183,13 +251,13 @@ def main():
         def cc(gx, gy):
             page.mouse.click(ox + gx * TILE + TILE / 2, oy + gy * TILE + TILE / 2)
 
-        page.keyboard.press("1"); cc(4, 4)
-        page.keyboard.press("2"); cc(5, 4)
-        page.keyboard.press("3"); cc(5, 3); cc(6, 4); cc(5, 5)
+        page.keyboard.press("2"); cc(4, 4)
+        page.keyboard.press("4"); cc(5, 4)
+        page.keyboard.press("5"); cc(5, 3); cc(6, 4); cc(5, 5)
         page.wait_for_timeout(4000)
         rev = page.evaluate("window.__state.revenue")
-        check("BALANCE: starter base is profitable", rev > 0, f"{rev:+.2f}/s")
-        check("BALANCE: starter base isn't too rich", rev < 4, f"{rev:+.2f}/s")
+        check("BALANCE: starter base is profitable", rev > 4, f"{rev:+.2f}/s")
+        check("BALANCE: starter base isn't too rich", rev < 30, f"{rev:+.2f}/s")
         browser.close()
 
     print(f"\n{'ALL PASS' if not fails else 'FAILURES: ' + ', '.join(fails)}")

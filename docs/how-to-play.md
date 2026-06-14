@@ -16,7 +16,7 @@ You run a tiny AI data center on a 14×10 grid. Build the right tiles to turn po
 
 | Input | Action |
 |---|---|
-| `1`–`9` | Select tool (Power, Cooler, GPU v1, GPU v2, Desk, Retraining, Bot Bay, Repair, Bulldoze) |
+| `1`–`0`, `-`, `=` | Select tool (Solar, Power, Fan, Cooler, GPU v1, GPU v2, Desk, Retraining, Workers, Bot Bay, Repair, Bulldoze) |
 | Click grid | Place selected tile / repair / bulldoze |
 | Hover | Ghost preview (red = can't afford or occupied) and tile tooltips (condition, bonuses) |
 | `M` | Mute music |
@@ -26,17 +26,26 @@ You run a tiny AI data center on a 14×10 grid. Build the right tiles to turn po
 
 | Tile | Cost | Effect | Upkeep | Jobs |
 |---|---|---|---|---|
+| ☀ Solar Array | $40 | up to +4 MW, ebbs with the sky (~90s cycle); low wear | $0.10/s | +1 |
+| 🌀 Fan Wall | $25 | +4 kW air cooling, heat drain reach 1; wears fast | $0.15/s | — |
 | ⚡ Power Plant | $80 | +12 MW | $0.60/s | +2 |
 | ❄ Coolant Loop | $50 | +10 kW cooling, draws 1 MW; drains heat from nearby tiles (closer = cooler) | $0.30/s | +1 |
 | 🖥 GPU Rack v1 | $120 | +6 TFLOPS, needs 4 MW + 3 kW; clusters: +10% output, +15% cooling need per neighbor | $1.20/s | +1 |
 | 🖥 GPU Rack v2 | $400 | +22 TFLOPS, needs 10 MW + 8 kW; same cluster bonus | $4.00/s | +2 |
 | 👤 Engineer Desk | $220 | +15% compute output (stacks ×3 max), draws 1 MW | $0.50/s | +2 |
 | 🎓 Retraining Ctr. | $150 | +8 jobs, draws 1 MW | $1.00/s | +8 |
+| 🧑‍🤝‍🧑 Worker Pod | $100 | humans output ≤3 TFLOPS as skill grows; AI + peers train them; never breaks, never upgrades; draws 1 MW | $0.80/s | +4 |
 | 🤖 Bot Bay | $350 | Auto-repairs the most-damaged tile every 4 s at a 40% discount, draws 2 MW | $0.80/s | +1 |
 | 🔧 Repair | — | Fix a tile for 30% of build cost × damage | — | — |
 | 🗑 Bulldoze | — | Refunds 50% of build cost | — | — |
 
-Compute sells automatically at **$0.30/s per TFLOPS**.
+Compute sells automatically at a **$1.20/s per TFLOPS base** — the live price scales with public sentiment and market wobble (see the Token $ HUD cell).
+
+## Allocation & unlocks (new in v0.5)
+
+- **Allocation sliders** (left panel): split your AI's tokens between **Sell** (cash, the default), **Research** (earns research points), and **Self-improve** (compounding output multiplier… that feeds entropy — the singularity dial).
+- **Everything beyond the minute-zero kit is earned.** 🔒 tools in the Build panel are unlocks: GPU Rack v2 costs $1,500; **Ops Automation** (Bot Bays + auto-maintenance) costs 20 RP. Research upgrades now cost RP, not cash.
+- Entropy fades in gently below ~30 TFLOPS — the early game is calm; scale is what wakes the machine.
 
 ## Wear, research, finance & entropy (new in v0.3)
 

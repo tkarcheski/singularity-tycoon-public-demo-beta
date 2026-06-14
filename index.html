@@ -35,12 +35,15 @@
           <div class="hud-cell"><span class="hud-label">Public</span><span class="hud-value" id="hud-sentiment">60%</span></div>
           <div class="hud-cell"><span class="hud-label">Debt</span><span class="hud-value" id="hud-debt">—</span></div>
           <div class="hud-cell"><span class="hud-label">Entropy</span><span class="hud-value" id="hud-entropy">0%</span></div>
+          <div class="hud-cell"><span class="hud-label">Token $</span><span class="hud-value" id="hud-token">$0.30</span></div>
         </div>
       </header>
 
       <aside class="palette" id="palette">
         <h2 class="palette-title">Build</h2>
         <div class="tools" id="tools"></div>
+        <h2 class="palette-title">Allocation</h2>
+        <div class="allocation" id="allocation"></div>
         <h2 class="palette-title">Research</h2>
         <div class="research" id="research"></div>
         <h2 class="palette-title">Finance</h2>
@@ -94,6 +97,13 @@
               <label><input type="radio" name="god-entropy" value="1" checked /> 1×</label>
               <label><input type="radio" name="god-entropy" value="5" /> 5×</label>
               <label><input type="radio" name="god-entropy" value="25" /> 25×</label>
+            </div>
+            <div class="dev-dial">
+              <span class="dev-dial-label">Revenue</span>
+              <label><input type="radio" name="god-revenue" value="0.5" /> ½×</label>
+              <label><input type="radio" name="god-revenue" value="1" checked /> 1×</label>
+              <label><input type="radio" name="god-revenue" value="2" /> 2×</label>
+              <label><input type="radio" name="god-revenue" value="4" /> 4×</label>
             </div>
             <label><input type="checkbox" data-god="pinSentiment" /> Pin sentiment 75</label>
             <label><input type="checkbox" data-god="fast" /> 5× speed</label>
