@@ -180,7 +180,7 @@ body {
 }
 .tool.disabled .cost { color: var(--text-dim); }
 
-.palette-foot { margin-top: auto; padding-top: 10px; }
+.palette-foot { margin-top: auto; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .ghost-btn {
   width: 100%;
   background: transparent;

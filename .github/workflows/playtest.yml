@@ -5,7 +5,8 @@ on:
   pull_request:
 
 jobs:
-  playtest:
+  pytest:
+    name: pytest unit suite
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -13,9 +14,35 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install Playwright
+      - name: Install deps
         run: |
-          pip install playwright
+          pip install -r tests/requirements.txt
           playwright install --with-deps chromium
-      - name: Run automated playtest
-        run: python tests/playtest.py
+      - name: Run pytest
+        run: pytest
+
+  robot:
+    name: robot framework integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install deps
+        run: |
+          pip install -r tests/requirements.txt
+          rfbrowser init --skip-browsers
+          playwright install --with-deps chromium
+      - name: Run robot
+        run: robot --outputdir results/robot tests/integration
+      - name: Upload robot results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robot-results
+          path: results/robot/

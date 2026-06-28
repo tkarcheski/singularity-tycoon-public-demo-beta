@@ -1,0 +1,1333 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot generator="Robot 7.4.2 (Python 3.14.6 on linux)" generated="2026-06-28T01:15:56.298304" rpa="false" schemaversion="5">
+<suite id="s1" name="Smoke" source="/home/tkarcheski/AI/github/games/singularity-tycoon-mini/tests/integration/smoke.robot">
+<test id="s1-t1" name="Boots Cleanly With Twelve Tools" line="11">
+<kw name="Open Game" owner="keywords" type="SETUP">
+<kw name="New Browser" owner="Browser">
+<msg time="2026-06-28T01:15:56.456879" level="INFO">{"browser": "chromium", "headless": true, "chromiumSandbox": false, "devtools": false, "handleSIGHUP": true, "handleSIGINT": true, "handleSIGTERM": true, "slowMo": 0.0, "timeout": 30000.0, "tracesDir": "/home/tkarcheski/AI/github/games/singularity-tycoon-mini/results/robot/browser/traces/temp/8a3e6c98-debb-4fc8-9fff-03a382c5394c"}</msg>
+<msg time="2026-06-28T01:15:56.463995" level="INFO">Starting Browser process /tmp/stm-venv/lib/python3.14/site-packages/Browser/wrapper/index.js using at 127.0.0.1:33823</msg>
+<msg time="2026-06-28T01:15:56.960614" level="INFO">Successfully created browser with options: {"browser":"chromium","headless":true,"chromiumSandbox":false,"devtools":false,"handleSIGHUP":true,"handleSIGINT":true,"handleSIGTERM":true,"slowMo":0,"timeout":30000,"tracesDir":"/home/tkarcheski/AI/github/games/singularity-tycoon-mini/results/robot/browser/traces/temp/8a3e6c98-debb-4fc8-9fff-03a382c5394c"}</msg>
+<arg>chromium</arg>
+<arg>headless=True</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Create a new playwright Browser with specified options.</doc>
+<status status="PASS" start="2026-06-28T01:15:56.456149" elapsed="0.504710"/>
+</kw>
+<kw name="New Context" owner="Browser">
+<msg time="2026-06-28T01:15:56.962932" level="INFO">{
+  "acceptDownloads": true,
+  "bypassCSP": false,
+  "forcedColors": "none",
+  "ignoreHTTPSErrors": false,
+  "javaScriptEnabled": true,
+  "offline": false,
+  "reducedMotion": "no-preference",
+  "serviceWorkers": "allow",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}</msg>
+<msg time="2026-06-28T01:15:56.975160" level="INFO">Successfully created context. </msg>
+<msg time="2026-06-28T01:15:56.975237" level="INFO">{'acceptDownloads': True, 'bypassCSP': False, 'forcedColors': 'none', 'ignoreHTTPSErrors': False, 'javaScriptEnabled': True, 'offline': False, 'reducedMotion': 'no-preference', 'serviceWorkers': 'allow', 'viewport': {'width': 1440, 'height': 900}}</msg>
+<arg>viewport={'width': 1440, 'height': 900}</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Create a new BrowserContext with specified options.</doc>
+<status status="PASS" start="2026-06-28T01:15:56.961214" elapsed="0.014104"/>
+</kw>
+<kw name="New Page" owner="Browser">
+<msg time="2026-06-28T01:15:57.578544" level="INFO">Successfully initialized new page object and opened url: file:///home/tkarcheski/AI/github/games/singularity-tycoon-mini/index.html</msg>
+<arg>${INDEX_URL}</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Open a new Page.</doc>
+<status status="PASS" start="2026-06-28T01:15:56.975525" elapsed="0.603338"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-06-28T01:15:58.479877" level="INFO">Slept 900 milliseconds.</msg>
+<arg>900ms</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-06-28T01:15:57.579148" elapsed="0.900977"/>
+</kw>
+<doc>Launch a fresh browser context and load the game.</doc>
+<status status="PASS" start="2026-06-28T01:15:56.455177" elapsed="2.025214"/>
+</kw>
+<kw name="Get Element Count" owner="Browser">
+<msg time="2026-06-28T01:15:58.512583" level="INFO">${count} = 12</msg>
+<var>${count}</var>
+<arg>css=#tools .tool</arg>
+<tag>Assertion</tag>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<doc>Returns the count of elements found with ``selector``.</doc>
+<status status="PASS" start="2026-06-28T01:15:58.480777" elapsed="0.031902"/>
+</kw>
+<kw name="Should Be Equal As Integers" owner="BuiltIn">
+<msg time="2026-06-28T01:15:58.513494" level="INFO">Argument types are:
+&lt;class 'int'&gt;
+&lt;class 'str'&gt;</msg>
+<arg>${count}</arg>
+<arg>12</arg>
+<doc>Fails if objects are unequal after converting them to integers.</doc>
+<status status="PASS" start="2026-06-28T01:15:58.513027" elapsed="0.000539"/>
+</kw>
+<kw name="Get Text" owner="Browser">
+<msg time="2026-06-28T01:15:58.548056" level="INFO">Text: ['1 / 9']</msg>
+<msg time="2026-06-28T01:15:58.548315" level="INFO">${step} = 1 / 9</msg>
+<var>${step}</var>
+<arg>css=#tut-progress</arg>
+<tag>Assertion</tag>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<doc>Returns text attribute of the element found by ``selector``.</doc>
+<status status="PASS" start="2026-06-28T01:15:58.513682" elapsed="0.034687"/>
+</kw>
+<kw name="Should Be Equal" owner="BuiltIn">
+<arg>${step}</arg>
+<arg>1 / 9</arg>
+<doc>Fails if the given objects are unequal.</doc>
+<status status="PASS" start="2026-06-28T01:15:58.548699" elapsed="0.000722"/>
+</kw>
+<kw name="Close Browser" owner="Browser" type="TEARDOWN">
+<msg time="2026-06-28T01:15:58.577553" level="INFO">Closed browser</msg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Closes the current browser.</doc>
+<status status="PASS" start="2026-06-28T01:15:58.549616" elapsed="0.028137"/>
+</kw>
+<doc>The shell renders all twelve build tools and starts the tutorial.</doc>
+<status status="PASS" start="2026-06-28T01:15:56.454270" elapsed="2.123587"/>
+</test>
+<test id="s1-t2" name="Player Can Build A Working Starter Cluster" line="18">
+<kw name="Open Game" owner="keywords" type="SETUP">
+<kw name="New Browser" owner="Browser">
+<msg time="2026-06-28T01:15:58.588925" level="INFO">{"browser": "chromium", "headless": true, "chromiumSandbox": false, "devtools": false, "handleSIGHUP": true, "handleSIGINT": true, "handleSIGTERM": true, "slowMo": 0.0, "timeout": 30000.0, "tracesDir": "/home/tkarcheski/AI/github/games/singularity-tycoon-mini/results/robot/browser/traces/temp/4e680dc8-821e-4ee9-bf71-81c5600609e9"}</msg>
+<msg time="2026-06-28T01:15:58.635492" level="INFO">Successfully created browser with options: {"browser":"chromium","headless":true,"chromiumSandbox":false,"devtools":false,"handleSIGHUP":true,"handleSIGINT":true,"handleSIGTERM":true,"slowMo":0,"timeout":30000,"tracesDir":"/home/tkarcheski/AI/github/games/singularity-tycoon-mini/results/robot/browser/traces/temp/4e680dc8-821e-4ee9-bf71-81c5600609e9"}</msg>
+<arg>chromium</arg>
+<arg>headless=True</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Create a new playwright Browser with specified options.</doc>
+<status status="PASS" start="2026-06-28T01:15:58.588217" elapsed="0.047505"/>
+</kw>
+<kw name="New Context" owner="Browser">
+<msg time="2026-06-28T01:15:58.637362" level="INFO">{
+  "acceptDownloads": true,
+  "bypassCSP": false,
+  "forcedColors": "none",
+  "ignoreHTTPSErrors": false,
+  "javaScriptEnabled": true,
+  "offline": false,
+  "reducedMotion": "no-preference",
+  "serviceWorkers": "allow",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}</msg>
+<msg time="2026-06-28T01:15:58.642571" level="INFO">Successfully created context. </msg>
+<msg time="2026-06-28T01:15:58.642641" level="INFO">{'acceptDownloads': True, 'bypassCSP': False, 'forcedColors': 'none', 'ignoreHTTPSErrors': False, 'javaScriptEnabled': True, 'offline': False, 'reducedMotion': 'no-preference', 'serviceWorkers': 'allow', 'viewport': {'width': 1440, 'height': 900}}</msg>
+<arg>viewport={'width': 1440, 'height': 900}</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Create a new BrowserContext with specified options.</doc>
+<status status="PASS" start="2026-06-28T01:15:58.635967" elapsed="0.006744"/>
+</kw>
+<kw name="New Page" owner="Browser">
+<msg time="2026-06-28T01:15:59.246854" level="INFO">Successfully initialized new page object and opened url: file:///home/tkarcheski/AI/github/games/singularity-tycoon-mini/index.html</msg>
+<arg>${INDEX_URL}</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Open a new Page.</doc>
+<status status="PASS" start="2026-06-28T01:15:58.642891" elapsed="0.604270"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-06-28T01:16:00.148206" level="INFO">Slept 900 milliseconds.</msg>
+<arg>900ms</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-06-28T01:15:59.247430" elapsed="0.901010"/>
+</kw>
+<doc>Launch a fresh browser context and load the game.</doc>
+<status status="PASS" start="2026-06-28T01:15:58.587825" elapsed="1.560901"/>
+</kw>
+<kw name="Reset Save" owner="keywords">
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:00.157845" level="INFO">JavaScript executed successfully.</msg>
+<arg>${None}</arg>
+<arg>() =&gt; localStorage.clear()</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:00.149704" elapsed="0.008399"/>
+</kw>
+<kw name="Reload" owner="Browser">
+<msg time="2026-06-28T01:16:00.195482" level="INFO">Reloaded page with options: {"waitUntil": "load"}</msg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Reloads current active page.</doc>
+<status status="PASS" start="2026-06-28T01:16:00.158382" elapsed="0.037487"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-06-28T01:16:00.997009" level="INFO">Slept 800 milliseconds.</msg>
+<arg>800ms</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-06-28T01:16:00.196184" elapsed="0.801073"/>
+</kw>
+<doc>Wipe localStorage and reload — guarantees a clean state.</doc>
+<status status="PASS" start="2026-06-28T01:16:00.149162" elapsed="0.848296"/>
+</kw>
+<kw name="Place Tile" owner="keywords">
+<kw name="Keyboard Key" owner="Browser">
+<arg>press</arg>
+<arg>${hotkey}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Press a keyboard key on the virtual keyboard or set a key up or down.</doc>
+<status status="PASS" start="2026-06-28T01:16:00.998394" elapsed="0.010399"/>
+</kw>
+<kw name="Click Cell" owner="keywords">
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.015909" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.016134" level="INFO">${l} = 220</msg>
+<var>${l}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().left</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.009777" elapsed="0.006384"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.021355" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.021737" level="INFO">${t} = 56</msg>
+<var>${t}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().top</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.016339" elapsed="0.005443"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.027172" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.027555" level="INFO">${w} = 1220</msg>
+<var>${w}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientWidth</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.022089" elapsed="0.005494"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.031550" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.031711" level="INFO">${h} = 844</msg>
+<var>${h}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientHeight</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.027791" elapsed="0.003945"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.032481" level="INFO">${ox} = 438</msg>
+<var>${ox}</var>
+<arg>${l} + (${w} - ${COLS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.031892" elapsed="0.000617"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.032970" level="INFO">${oy} = 198</msg>
+<var>${oy}</var>
+<arg>${t} + (${h} - ${ROWS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.032614" elapsed="0.000388"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.033423" level="INFO">${px} = 690.0</msg>
+<var>${px}</var>
+<arg>${ox} + ${gx} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.033095" elapsed="0.000350"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.033826" level="INFO">${py} = 450.0</msg>
+<var>${py}</var>
+<arg>${oy} + ${gy} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.033533" elapsed="0.000314"/>
+</kw>
+<kw name="Mouse Button" owner="Browser">
+<msg time="2026-06-28T01:16:01.035163" level="INFO">Moving mouse to x: 690.0, y: 450.0 coordinates.</msg>
+<msg time="2026-06-28T01:16:01.056886" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<msg time="2026-06-28T01:16:01.109586" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<arg>click</arg>
+<arg>x=${px}</arg>
+<arg>y=${py}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Clicks, presses or releases a mouse button.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.033937" elapsed="0.080077"/>
+</kw>
+<arg>${gx}</arg>
+<arg>${gy}</arg>
+<status status="PASS" start="2026-06-28T01:16:01.009268" elapsed="0.104903"/>
+</kw>
+<arg>2</arg>
+<arg>4</arg>
+<arg>4</arg>
+<status status="PASS" start="2026-06-28T01:16:00.997793" elapsed="0.116435"/>
+</kw>
+<kw name="Place Tile" owner="keywords">
+<kw name="Keyboard Key" owner="Browser">
+<arg>press</arg>
+<arg>${hotkey}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Press a keyboard key on the virtual keyboard or set a key up or down.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.114852" elapsed="0.008874"/>
+</kw>
+<kw name="Click Cell" owner="keywords">
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.128439" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.128644" level="INFO">${l} = 220</msg>
+<var>${l}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().left</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.124486" elapsed="0.004184"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.132213" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.132387" level="INFO">${t} = 56</msg>
+<var>${t}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().top</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.128892" elapsed="0.003521"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.136021" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.136372" level="INFO">${w} = 1220</msg>
+<var>${w}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientWidth</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.132571" elapsed="0.003833"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.141698" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.142190" level="INFO">${h} = 844</msg>
+<var>${h}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientHeight</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.136632" elapsed="0.005608"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.143288" level="INFO">${ox} = 438</msg>
+<var>${ox}</var>
+<arg>${l} + (${w} - ${COLS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.142520" elapsed="0.000807"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.144004" level="INFO">${oy} = 198</msg>
+<var>${oy}</var>
+<arg>${t} + (${h} - ${ROWS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.143479" elapsed="0.000560"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.144642" level="INFO">${px} = 746.0</msg>
+<var>${px}</var>
+<arg>${ox} + ${gx} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.144177" elapsed="0.000498"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.145241" level="INFO">${py} = 450.0</msg>
+<var>${py}</var>
+<arg>${oy} + ${gy} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.144799" elapsed="0.000473"/>
+</kw>
+<kw name="Mouse Button" owner="Browser">
+<msg time="2026-06-28T01:16:01.146736" level="INFO">Moving mouse to x: 746.0, y: 450.0 coordinates.</msg>
+<msg time="2026-06-28T01:16:01.155263" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<msg time="2026-06-28T01:16:01.159195" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<arg>click</arg>
+<arg>x=${px}</arg>
+<arg>y=${py}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Clicks, presses or releases a mouse button.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.145404" elapsed="0.017281"/>
+</kw>
+<arg>${gx}</arg>
+<arg>${gy}</arg>
+<status status="PASS" start="2026-06-28T01:16:01.124066" elapsed="0.038765"/>
+</kw>
+<arg>4</arg>
+<arg>5</arg>
+<arg>4</arg>
+<status status="PASS" start="2026-06-28T01:16:01.114444" elapsed="0.048441"/>
+</kw>
+<kw name="Place Tile" owner="keywords">
+<kw name="Keyboard Key" owner="Browser">
+<arg>press</arg>
+<arg>${hotkey}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Press a keyboard key on the virtual keyboard or set a key up or down.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.163499" elapsed="0.005737"/>
+</kw>
+<kw name="Click Cell" owner="keywords">
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.174014" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.174282" level="INFO">${l} = 220</msg>
+<var>${l}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().left</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.169941" elapsed="0.004369"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.178610" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.178760" level="INFO">${t} = 56</msg>
+<var>${t}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().top</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.174520" elapsed="0.004262"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.182665" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.182850" level="INFO">${w} = 1220</msg>
+<var>${w}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientWidth</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.178938" elapsed="0.003943"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.186178" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.186307" level="INFO">${h} = 844</msg>
+<var>${h}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientHeight</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.183069" elapsed="0.003259"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.186898" level="INFO">${ox} = 438</msg>
+<var>${ox}</var>
+<arg>${l} + (${w} - ${COLS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.186458" elapsed="0.000465"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.187368" level="INFO">${oy} = 198</msg>
+<var>${oy}</var>
+<arg>${t} + (${h} - ${ROWS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.187030" elapsed="0.000362"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.187780" level="INFO">${px} = 746.0</msg>
+<var>${px}</var>
+<arg>${ox} + ${gx} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.187479" elapsed="0.000322"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.188186" level="INFO">${py} = 394.0</msg>
+<var>${py}</var>
+<arg>${oy} + ${gy} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.187884" elapsed="0.000322"/>
+</kw>
+<kw name="Mouse Button" owner="Browser">
+<msg time="2026-06-28T01:16:01.189293" level="INFO">Moving mouse to x: 746.0, y: 394.0 coordinates.</msg>
+<msg time="2026-06-28T01:16:01.205829" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<msg time="2026-06-28T01:16:01.211127" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<arg>click</arg>
+<arg>x=${px}</arg>
+<arg>y=${py}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Clicks, presses or releases a mouse button.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.188298" elapsed="0.026004"/>
+</kw>
+<arg>${gx}</arg>
+<arg>${gy}</arg>
+<status status="PASS" start="2026-06-28T01:16:01.169529" elapsed="0.044905"/>
+</kw>
+<arg>5</arg>
+<arg>5</arg>
+<arg>3</arg>
+<status status="PASS" start="2026-06-28T01:16:01.163103" elapsed="0.051390"/>
+</kw>
+<kw name="Place Tile" owner="keywords">
+<kw name="Keyboard Key" owner="Browser">
+<arg>press</arg>
+<arg>${hotkey}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Press a keyboard key on the virtual keyboard or set a key up or down.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.215097" elapsed="0.005358"/>
+</kw>
+<kw name="Click Cell" owner="keywords">
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.225167" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.225418" level="INFO">${l} = 220</msg>
+<var>${l}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().left</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.221382" elapsed="0.004071"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.228425" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.228565" level="INFO">${t} = 56</msg>
+<var>${t}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().top</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.225710" elapsed="0.002878"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.230931" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.231072" level="INFO">${w} = 1220</msg>
+<var>${w}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientWidth</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.228718" elapsed="0.002377"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.233520" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.233651" level="INFO">${h} = 844</msg>
+<var>${h}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientHeight</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.231217" elapsed="0.002457"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.234229" level="INFO">${ox} = 438</msg>
+<var>${ox}</var>
+<arg>${l} + (${w} - ${COLS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.233795" elapsed="0.000458"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.234673" level="INFO">${oy} = 198</msg>
+<var>${oy}</var>
+<arg>${t} + (${h} - ${ROWS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.234350" elapsed="0.000344"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.235093" level="INFO">${px} = 802.0</msg>
+<var>${px}</var>
+<arg>${ox} + ${gx} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.234779" elapsed="0.000335"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.235486" level="INFO">${py} = 450.0</msg>
+<var>${py}</var>
+<arg>${oy} + ${gy} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.235197" elapsed="0.000309"/>
+</kw>
+<kw name="Mouse Button" owner="Browser">
+<msg time="2026-06-28T01:16:01.236601" level="INFO">Moving mouse to x: 802.0, y: 450.0 coordinates.</msg>
+<msg time="2026-06-28T01:16:01.256722" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<msg time="2026-06-28T01:16:01.261713" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<arg>click</arg>
+<arg>x=${px}</arg>
+<arg>y=${py}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Clicks, presses or releases a mouse button.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.235591" elapsed="0.029459"/>
+</kw>
+<arg>${gx}</arg>
+<arg>${gy}</arg>
+<status status="PASS" start="2026-06-28T01:16:01.220811" elapsed="0.044386"/>
+</kw>
+<arg>5</arg>
+<arg>6</arg>
+<arg>4</arg>
+<status status="PASS" start="2026-06-28T01:16:01.214700" elapsed="0.050553"/>
+</kw>
+<kw name="Place Tile" owner="keywords">
+<kw name="Keyboard Key" owner="Browser">
+<arg>press</arg>
+<arg>${hotkey}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Press a keyboard key on the virtual keyboard or set a key up or down.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.265861" elapsed="0.008079"/>
+</kw>
+<kw name="Click Cell" owner="keywords">
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.279432" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.279583" level="INFO">${l} = 220</msg>
+<var>${l}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().left</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.274714" elapsed="0.004893"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.283528" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.283649" level="INFO">${t} = 56</msg>
+<var>${t}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().top</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.279746" elapsed="0.003924"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.287655" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.287942" level="INFO">${w} = 1220</msg>
+<var>${w}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientWidth</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.283786" elapsed="0.004187"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:01.293469" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:01.293750" level="INFO">${h} = 844</msg>
+<var>${h}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientHeight</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.288216" elapsed="0.005578"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.294743" level="INFO">${ox} = 438</msg>
+<var>${ox}</var>
+<arg>${l} + (${w} - ${COLS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.294091" elapsed="0.000686"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.295257" level="INFO">${oy} = 198</msg>
+<var>${oy}</var>
+<arg>${t} + (${h} - ${ROWS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.294896" elapsed="0.000384"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.295689" level="INFO">${px} = 746.0</msg>
+<var>${px}</var>
+<arg>${ox} + ${gx} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.295367" elapsed="0.000350"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:01.296116" level="INFO">${py} = 506.0</msg>
+<var>${py}</var>
+<arg>${oy} + ${gy} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.295807" elapsed="0.000329"/>
+</kw>
+<kw name="Mouse Button" owner="Browser">
+<msg time="2026-06-28T01:16:01.297451" level="INFO">Moving mouse to x: 746.0, y: 506.0 coordinates.</msg>
+<msg time="2026-06-28T01:16:01.305284" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<msg time="2026-06-28T01:16:01.308870" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<arg>click</arg>
+<arg>x=${px}</arg>
+<arg>y=${py}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Clicks, presses or releases a mouse button.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.296225" elapsed="0.014610"/>
+</kw>
+<arg>${gx}</arg>
+<arg>${gy}</arg>
+<status status="PASS" start="2026-06-28T01:16:01.274284" elapsed="0.036718"/>
+</kw>
+<arg>5</arg>
+<arg>5</arg>
+<arg>5</arg>
+<status status="PASS" start="2026-06-28T01:16:01.265467" elapsed="0.045591"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-06-28T01:16:05.311723" level="INFO">Slept 4 seconds.</msg>
+<arg>4s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-06-28T01:16:01.311205" elapsed="4.000699"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:05.316935" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:05.317137" level="INFO">${rev} = 17.050447748523776</msg>
+<var>${rev}</var>
+<arg>${None}</arg>
+<arg>() =&gt; window.__state.revenue</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:05.312168" elapsed="0.004993"/>
+</kw>
+<kw name="Should Be True" owner="BuiltIn">
+<arg>4 &lt; ${rev} &lt; 30</arg>
+<arg>revenue out of band: ${rev}</arg>
+<doc>Fails if the given condition is not true.</doc>
+<status status="PASS" start="2026-06-28T01:16:05.317321" elapsed="0.000467"/>
+</kw>
+<kw name="Close Browser" owner="Browser" type="TEARDOWN">
+<msg time="2026-06-28T01:16:05.340982" level="INFO">Closed browser</msg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Closes the current browser.</doc>
+<status status="PASS" start="2026-06-28T01:16:05.317974" elapsed="0.023292"/>
+</kw>
+<doc>Walk through the same tiles a new player would place,
+then wait long enough for revenue to land in the profit band.</doc>
+<status status="PASS" start="2026-06-28T01:15:58.584374" elapsed="6.757004"/>
+</test>
+<test id="s1-t3" name="Save Persists Across A Reload" line="31">
+<kw name="Open Game" owner="keywords" type="SETUP">
+<kw name="New Browser" owner="Browser">
+<msg time="2026-06-28T01:16:05.348697" level="INFO">{"browser": "chromium", "headless": true, "chromiumSandbox": false, "devtools": false, "handleSIGHUP": true, "handleSIGINT": true, "handleSIGTERM": true, "slowMo": 0.0, "timeout": 30000.0, "tracesDir": "/home/tkarcheski/AI/github/games/singularity-tycoon-mini/results/robot/browser/traces/temp/f91fc715-7d8a-4125-97d1-e0bc445c7e97"}</msg>
+<msg time="2026-06-28T01:16:05.397855" level="INFO">Successfully created browser with options: {"browser":"chromium","headless":true,"chromiumSandbox":false,"devtools":false,"handleSIGHUP":true,"handleSIGINT":true,"handleSIGTERM":true,"slowMo":0,"timeout":30000,"tracesDir":"/home/tkarcheski/AI/github/games/singularity-tycoon-mini/results/robot/browser/traces/temp/f91fc715-7d8a-4125-97d1-e0bc445c7e97"}</msg>
+<arg>chromium</arg>
+<arg>headless=True</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Create a new playwright Browser with specified options.</doc>
+<status status="PASS" start="2026-06-28T01:16:05.348042" elapsed="0.050152"/>
+</kw>
+<kw name="New Context" owner="Browser">
+<msg time="2026-06-28T01:16:05.399987" level="INFO">{
+  "acceptDownloads": true,
+  "bypassCSP": false,
+  "forcedColors": "none",
+  "ignoreHTTPSErrors": false,
+  "javaScriptEnabled": true,
+  "offline": false,
+  "reducedMotion": "no-preference",
+  "serviceWorkers": "allow",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}</msg>
+<msg time="2026-06-28T01:16:05.403822" level="INFO">Successfully created context. </msg>
+<msg time="2026-06-28T01:16:05.403931" level="INFO">{'acceptDownloads': True, 'bypassCSP': False, 'forcedColors': 'none', 'ignoreHTTPSErrors': False, 'javaScriptEnabled': True, 'offline': False, 'reducedMotion': 'no-preference', 'serviceWorkers': 'allow', 'viewport': {'width': 1440, 'height': 900}}</msg>
+<arg>viewport={'width': 1440, 'height': 900}</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Create a new BrowserContext with specified options.</doc>
+<status status="PASS" start="2026-06-28T01:16:05.398548" elapsed="0.005497"/>
+</kw>
+<kw name="New Page" owner="Browser">
+<msg time="2026-06-28T01:16:06.104129" level="INFO">Successfully initialized new page object and opened url: file:///home/tkarcheski/AI/github/games/singularity-tycoon-mini/index.html</msg>
+<arg>${INDEX_URL}</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Open a new Page.</doc>
+<status status="PASS" start="2026-06-28T01:16:05.404314" elapsed="0.700240"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-06-28T01:16:07.005367" level="INFO">Slept 900 milliseconds.</msg>
+<arg>900ms</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-06-28T01:16:06.104784" elapsed="0.900738"/>
+</kw>
+<doc>Launch a fresh browser context and load the game.</doc>
+<status status="PASS" start="2026-06-28T01:16:05.347715" elapsed="1.657934"/>
+</kw>
+<kw name="Reset Save" owner="keywords">
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:07.012820" level="INFO">JavaScript executed successfully.</msg>
+<arg>${None}</arg>
+<arg>() =&gt; localStorage.clear()</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.006263" elapsed="0.006706"/>
+</kw>
+<kw name="Reload" owner="Browser">
+<msg time="2026-06-28T01:16:07.044485" level="INFO">Reloaded page with options: {"waitUntil": "load"}</msg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Reloads current active page.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.013146" elapsed="0.031637"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-06-28T01:16:07.845701" level="INFO">Slept 800 milliseconds.</msg>
+<arg>800ms</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.045072" elapsed="0.800782"/>
+</kw>
+<doc>Wipe localStorage and reload — guarantees a clean state.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.005891" elapsed="0.840084"/>
+</kw>
+<kw name="Place Tile" owner="keywords">
+<kw name="Keyboard Key" owner="Browser">
+<arg>press</arg>
+<arg>${hotkey}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Press a keyboard key on the virtual keyboard or set a key up or down.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.846778" elapsed="0.007752"/>
+</kw>
+<kw name="Click Cell" owner="keywords">
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:07.861494" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:07.861814" level="INFO">${l} = 220</msg>
+<var>${l}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().left</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.855663" elapsed="0.006181"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:07.866571" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:07.866746" level="INFO">${t} = 56</msg>
+<var>${t}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().top</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.862098" elapsed="0.004671"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:07.870794" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:07.871005" level="INFO">${w} = 1220</msg>
+<var>${w}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientWidth</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.866950" elapsed="0.004078"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:07.874958" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:07.875110" level="INFO">${h} = 844</msg>
+<var>${h}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientHeight</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.871212" elapsed="0.003941"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:07.875792" level="INFO">${ox} = 438</msg>
+<var>${ox}</var>
+<arg>${l} + (${w} - ${COLS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.875315" elapsed="0.000502"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:07.876244" level="INFO">${oy} = 198</msg>
+<var>${oy}</var>
+<arg>${t} + (${h} - ${ROWS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.875912" elapsed="0.000354"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:07.876655" level="INFO">${px} = 746.0</msg>
+<var>${px}</var>
+<arg>${ox} + ${gx} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.876351" elapsed="0.000326"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:07.877059" level="INFO">${py} = 506.0</msg>
+<var>${py}</var>
+<arg>${oy} + ${gy} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.876759" elapsed="0.000321"/>
+</kw>
+<kw name="Mouse Button" owner="Browser">
+<msg time="2026-06-28T01:16:07.878056" level="INFO">Moving mouse to x: 746.0, y: 506.0 coordinates.</msg>
+<msg time="2026-06-28T01:16:07.887711" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<msg time="2026-06-28T01:16:07.939698" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<arg>click</arg>
+<arg>x=${px}</arg>
+<arg>y=${py}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Clicks, presses or releases a mouse button.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.877170" elapsed="0.066510"/>
+</kw>
+<arg>${gx}</arg>
+<arg>${gy}</arg>
+<status status="PASS" start="2026-06-28T01:16:07.854971" elapsed="0.088856"/>
+</kw>
+<arg>2</arg>
+<arg>5</arg>
+<arg>5</arg>
+<status status="PASS" start="2026-06-28T01:16:07.846201" elapsed="0.097684"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:07.947517" level="INFO">JavaScript executed successfully.</msg>
+<arg>${None}</arg>
+<arg>() =&gt; { window.__state.cash = 50000 }</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.944114" elapsed="0.003519"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:07.950899" level="INFO">JavaScript executed successfully.</msg>
+<arg>${None}</arg>
+<arg>() =&gt; window.dispatchEvent(new Event('beforeunload'))</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.947804" elapsed="0.003211"/>
+</kw>
+<kw name="Reload" owner="Browser">
+<msg time="2026-06-28T01:16:07.983279" level="INFO">Reloaded page with options: {"waitUntil": "load"}</msg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Reloads current active page.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.951148" elapsed="0.032406"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-06-28T01:16:08.784535" level="INFO">Slept 800 milliseconds.</msg>
+<arg>800ms</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-06-28T01:16:07.983821" elapsed="0.800941"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:08.792465" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:08.792644" level="INFO">${tile} = power</msg>
+<var>${tile}</var>
+<arg>${None}</arg>
+<arg>() =&gt; window.__state.grid[5][5]?.t</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.785117" elapsed="0.007553"/>
+</kw>
+<kw name="Should Be Equal" owner="BuiltIn">
+<arg>${tile}</arg>
+<arg>power</arg>
+<doc>Fails if the given objects are unequal.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.792828" elapsed="0.000387"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:08.796751" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:08.796901" level="INFO">${cash} = 49999.7</msg>
+<var>${cash}</var>
+<arg>${None}</arg>
+<arg>() =&gt; window.__state.cash</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.793326" elapsed="0.003597"/>
+</kw>
+<kw name="Should Be True" owner="BuiltIn">
+<arg>abs(${cash} - 50000) &lt; 5</arg>
+<arg>cash drifted unexpectedly: ${cash}</arg>
+<doc>Fails if the given condition is not true.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.797058" elapsed="0.000428"/>
+</kw>
+<kw name="Get Text" owner="Browser">
+<msg time="2026-06-28T01:16:08.840525" level="INFO">Text: ['Save restored — welcome back\nPlace a Power Plant, a Coolant Loop, and a GPU Rack to start']</msg>
+<msg time="2026-06-28T01:16:08.840718" level="INFO">${ticker} = Save restored — welcome back
+Place a Power Plant, a Coolant Loop, and a GPU Rack to start</msg>
+<var>${ticker}</var>
+<arg>css=#ticker</arg>
+<tag>Assertion</tag>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<doc>Returns text attribute of the element found by ``selector``.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.797598" elapsed="0.043150"/>
+</kw>
+<kw name="Should Contain" owner="BuiltIn">
+<arg>${ticker}</arg>
+<arg>Save restored</arg>
+<doc>Fails if ``container`` does not contain ``item`` one or more times.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.840954" elapsed="0.000643"/>
+</kw>
+<kw name="Close Browser" owner="Browser" type="TEARDOWN">
+<msg time="2026-06-28T01:16:08.864127" level="INFO">Closed browser</msg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Closes the current browser.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.841775" elapsed="0.022557"/>
+</kw>
+<doc>Place a tile, simulate the autosave path, reload — state survives.
+Cash is checked approximately because a tick or two of upkeep
+may run between restore and the assertion.</doc>
+<status status="PASS" start="2026-06-28T01:16:05.345460" elapsed="3.518969"/>
+</test>
+<test id="s1-t4" name="New Game Button Wipes The Save" line="48">
+<kw name="Open Game" owner="keywords" type="SETUP">
+<kw name="New Browser" owner="Browser">
+<msg time="2026-06-28T01:16:08.870889" level="INFO">{"browser": "chromium", "headless": true, "chromiumSandbox": false, "devtools": false, "handleSIGHUP": true, "handleSIGINT": true, "handleSIGTERM": true, "slowMo": 0.0, "timeout": 30000.0, "tracesDir": "/home/tkarcheski/AI/github/games/singularity-tycoon-mini/results/robot/browser/traces/temp/dffe48a3-6def-4cc6-9f28-69b93322a977"}</msg>
+<msg time="2026-06-28T01:16:08.920812" level="INFO">Successfully created browser with options: {"browser":"chromium","headless":true,"chromiumSandbox":false,"devtools":false,"handleSIGHUP":true,"handleSIGINT":true,"handleSIGTERM":true,"slowMo":0,"timeout":30000,"tracesDir":"/home/tkarcheski/AI/github/games/singularity-tycoon-mini/results/robot/browser/traces/temp/dffe48a3-6def-4cc6-9f28-69b93322a977"}</msg>
+<arg>chromium</arg>
+<arg>headless=True</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Create a new playwright Browser with specified options.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.870212" elapsed="0.050861"/>
+</kw>
+<kw name="New Context" owner="Browser">
+<msg time="2026-06-28T01:16:08.922806" level="INFO">{
+  "acceptDownloads": true,
+  "bypassCSP": false,
+  "forcedColors": "none",
+  "ignoreHTTPSErrors": false,
+  "javaScriptEnabled": true,
+  "offline": false,
+  "reducedMotion": "no-preference",
+  "serviceWorkers": "allow",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  }
+}</msg>
+<msg time="2026-06-28T01:16:08.928138" level="INFO">Successfully created context. </msg>
+<msg time="2026-06-28T01:16:08.928301" level="INFO">{'acceptDownloads': True, 'bypassCSP': False, 'forcedColors': 'none', 'ignoreHTTPSErrors': False, 'javaScriptEnabled': True, 'offline': False, 'reducedMotion': 'no-preference', 'serviceWorkers': 'allow', 'viewport': {'width': 1440, 'height': 900}}</msg>
+<arg>viewport={'width': 1440, 'height': 900}</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Create a new BrowserContext with specified options.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.921318" elapsed="0.007091"/>
+</kw>
+<kw name="New Page" owner="Browser">
+<msg time="2026-06-28T01:16:09.615153" level="INFO">Successfully initialized new page object and opened url: file:///home/tkarcheski/AI/github/games/singularity-tycoon-mini/index.html</msg>
+<arg>${INDEX_URL}</arg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Open a new Page.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.928656" elapsed="0.686739"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-06-28T01:16:10.516171" level="INFO">Slept 900 milliseconds.</msg>
+<arg>900ms</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-06-28T01:16:09.615606" elapsed="0.900793"/>
+</kw>
+<doc>Launch a fresh browser context and load the game.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.869834" elapsed="1.646766"/>
+</kw>
+<kw name="Reset Save" owner="keywords">
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:10.523525" level="INFO">JavaScript executed successfully.</msg>
+<arg>${None}</arg>
+<arg>() =&gt; localStorage.clear()</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:10.517265" elapsed="0.006463"/>
+</kw>
+<kw name="Reload" owner="Browser">
+<msg time="2026-06-28T01:16:10.552624" level="INFO">Reloaded page with options: {"waitUntil": "load"}</msg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Reloads current active page.</doc>
+<status status="PASS" start="2026-06-28T01:16:10.523943" elapsed="0.028943"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-06-28T01:16:11.353962" level="INFO">Slept 800 milliseconds.</msg>
+<arg>800ms</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-06-28T01:16:10.553171" elapsed="0.801025"/>
+</kw>
+<doc>Wipe localStorage and reload — guarantees a clean state.</doc>
+<status status="PASS" start="2026-06-28T01:16:10.516894" elapsed="0.837470"/>
+</kw>
+<kw name="Place Tile" owner="keywords">
+<kw name="Keyboard Key" owner="Browser">
+<arg>press</arg>
+<arg>${hotkey}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Press a keyboard key on the virtual keyboard or set a key up or down.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.355234" elapsed="0.009429"/>
+</kw>
+<kw name="Click Cell" owner="keywords">
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:11.373478" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:11.373858" level="INFO">${l} = 220</msg>
+<var>${l}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().left</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.365709" elapsed="0.008189"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:11.377843" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:11.378112" level="INFO">${t} = 56</msg>
+<var>${t}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').getBoundingClientRect().top</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.374298" elapsed="0.003842"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:11.381261" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:11.381576" level="INFO">${w} = 1220</msg>
+<var>${w}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientWidth</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.378344" elapsed="0.003284"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:11.384614" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:11.384837" level="INFO">${h} = 844</msg>
+<var>${h}</var>
+<arg>${None}</arg>
+<arg>() =&gt; document.getElementById('game').clientHeight</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.381864" elapsed="0.003004"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:11.385589" level="INFO">${ox} = 438</msg>
+<var>${ox}</var>
+<arg>${l} + (${w} - ${COLS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.385070" elapsed="0.000548"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:11.386076" level="INFO">${oy} = 198</msg>
+<var>${oy}</var>
+<arg>${t} + (${h} - ${ROWS} * ${TILE}) // 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.385721" elapsed="0.000378"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:11.386501" level="INFO">${px} = 746.0</msg>
+<var>${px}</var>
+<arg>${ox} + ${gx} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.386188" elapsed="0.000335"/>
+</kw>
+<kw name="Evaluate" owner="BuiltIn">
+<msg time="2026-06-28T01:16:11.386896" level="INFO">${py} = 506.0</msg>
+<var>${py}</var>
+<arg>${oy} + ${gy} * ${TILE} + ${TILE} / 2</arg>
+<doc>Evaluates the given expression in Python and returns the result.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.386606" elapsed="0.000311"/>
+</kw>
+<kw name="Mouse Button" owner="Browser">
+<msg time="2026-06-28T01:16:11.388383" level="INFO">Moving mouse to x: 746.0, y: 506.0 coordinates.</msg>
+<msg time="2026-06-28T01:16:11.404674" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<msg time="2026-06-28T01:16:11.456468" level="INFO">No coordinates where set. Action appears at current position.</msg>
+<arg>click</arg>
+<arg>x=${px}</arg>
+<arg>y=${py}</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Clicks, presses or releases a mouse button.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.387014" elapsed="0.074087"/>
+</kw>
+<arg>${gx}</arg>
+<arg>${gy}</arg>
+<status status="PASS" start="2026-06-28T01:16:11.365119" elapsed="0.096159"/>
+</kw>
+<arg>2</arg>
+<arg>5</arg>
+<arg>5</arg>
+<status status="PASS" start="2026-06-28T01:16:11.354663" elapsed="0.106672"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:11.464495" level="INFO">JavaScript executed successfully.</msg>
+<arg>${None}</arg>
+<arg>() =&gt; { window.__state.cash = 9999 }</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.461492" elapsed="0.003162"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:11.467343" level="INFO">JavaScript executed successfully.</msg>
+<arg>${None}</arg>
+<arg>() =&gt; window.dispatchEvent(new Event('beforeunload'))</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.464815" elapsed="0.002670"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:11.472735" level="INFO">JavaScript executed successfully.</msg>
+<arg>${None}</arg>
+<arg>() =&gt; { window.confirm = () =&gt; true }</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.467621" elapsed="0.005318"/>
+</kw>
+<kw name="Click" owner="Browser">
+<msg time="2026-06-28T01:16:11.473680" level="INFO">Clicks the element 'id=btn-new-game'.</msg>
+<arg>id=btn-new-game</arg>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Simulates mouse click on the element found by ``selector``.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.473163" elapsed="0.064732"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-06-28T01:16:12.338761" level="INFO">Slept 800 milliseconds.</msg>
+<arg>800ms</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-06-28T01:16:11.538163" elapsed="0.800784"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:12.345237" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:12.345469" level="INFO">${cash} = 500</msg>
+<var>${cash}</var>
+<arg>${None}</arg>
+<arg>() =&gt; window.__state.cash</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:12.339207" elapsed="0.006286"/>
+</kw>
+<kw name="Should Be Equal As Integers" owner="BuiltIn">
+<msg time="2026-06-28T01:16:12.346049" level="INFO">Argument types are:
+&lt;class 'int'&gt;
+&lt;class 'str'&gt;</msg>
+<arg>${cash}</arg>
+<arg>500</arg>
+<doc>Fails if objects are unequal after converting them to integers.</doc>
+<status status="PASS" start="2026-06-28T01:16:12.345672" elapsed="0.000434"/>
+</kw>
+<kw name="Evaluate JavaScript" owner="Browser">
+<msg time="2026-06-28T01:16:12.350523" level="INFO">JavaScript executed successfully.</msg>
+<msg time="2026-06-28T01:16:12.350714" level="INFO">${tile} = None</msg>
+<var>${tile}</var>
+<arg>${None}</arg>
+<arg>() =&gt; window.__state.grid[5][5]</arg>
+<tag>Getter</tag>
+<tag>PageContent</tag>
+<tag>Setter</tag>
+<doc>Executes given javascript on the selected element(s) or on page.</doc>
+<status status="PASS" start="2026-06-28T01:16:12.346213" elapsed="0.004532"/>
+</kw>
+<kw name="Should Be Equal" owner="BuiltIn">
+<arg>${tile}</arg>
+<arg>${None}</arg>
+<doc>Fails if the given objects are unequal.</doc>
+<status status="PASS" start="2026-06-28T01:16:12.350909" elapsed="0.000366"/>
+</kw>
+<kw name="Close Browser" owner="Browser" type="TEARDOWN">
+<msg time="2026-06-28T01:16:12.372461" level="INFO">Closed browser</msg>
+<tag>BrowserControl</tag>
+<tag>Setter</tag>
+<doc>Closes the current browser.</doc>
+<status status="PASS" start="2026-06-28T01:16:12.351435" elapsed="0.021227"/>
+</kw>
+<doc>Pressing New Game (auto-confirmed) clears localStorage and resets cash.</doc>
+<status status="PASS" start="2026-06-28T01:16:08.867881" elapsed="3.504878"/>
+</test>
+<doc>End-to-end smoke flows for Singularity Tycoon Mini.
+These exercise full user journeys (boot, build, persist, restart)
+and complement the per-system pytest suite.</doc>
+<status status="PASS" start="2026-06-28T01:15:56.299104" elapsed="16.077117"/>
+</suite>
+<statistics>
+<total>
+<stat pass="4" fail="0" skip="0">All Tests</stat>
+</total>
+<tag>
+</tag>
+<suite>
+<stat name="Smoke" id="s1" pass="4" fail="0" skip="0">Smoke</stat>
+</suite>
+</statistics>
+<errors>
+</errors>
+</robot>

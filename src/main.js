@@ -1597,6 +1597,61 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
+// ---------- Persistence ----------
+const SAVE_KEY = 'stm-save-v1';
+// Allowlist: stable game state. Skip derived (revenue, totalCompute…), transient
+// (hover, particles, flashes, effects with performance.now() deadlines), and dev
+// (god). `tick` is kept so the solar/starfield cycles resume in place.
+const SAVE_KEYS = [
+  'cash', 'grid', 'selectedTool', 'tick',
+  'sentiment', 'mood', 'market',
+  'alloc', 'rp', 'selfImprove', 'unlocks',
+  'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool',
+  'entropy', 'tutStep', 'stats', 'goalUnlocked',
+];
+
+function saveState() {
+  try {
+    const snap = { _v: 1 };
+    for (const k of SAVE_KEYS) snap[k] = state[k];
+    localStorage.setItem(SAVE_KEY, JSON.stringify(snap));
+  } catch (e) { /* quota or sandbox — silently skip */ }
+}
+
+function loadState() {
+  let raw;
+  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return false; }
+  if (!raw) return false;
+  let snap;
+  try { snap = JSON.parse(raw); } catch (e) { return false; }
+  if (!snap || snap._v !== 1) return false;
+  for (const k of SAVE_KEYS) {
+    if (snap[k] !== undefined) state[k] = snap[k];
+  }
+  return true;
+}
+
+function clearSave() {
+  try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+}
+
+const restored = loadState();
+
+// All autosave paths funnel through this wrapper so New Game can silence
+// them with a single flag (reload fires visibilitychange + beforeunload).
+let suspendAutoSave = false;
+function autoSave() { if (!suspendAutoSave) saveState(); }
+setInterval(autoSave, 5000);
+window.addEventListener('beforeunload', autoSave);
+document.addEventListener('visibilitychange', () => { if (document.hidden) autoSave(); });
+
+document.getElementById('btn-new-game').addEventListener('click', () => {
+  if (!confirm('Start a new game? Current progress will be lost.')) return;
+  clearSave();
+  suspendAutoSave = true;
+  location.reload();
+});
+
 // ---------- Boot ----------
 resizeCanvas();
 buildToolbar();
@@ -1606,5 +1661,5 @@ buildFinance();
 updateHUD();
 updateTutorial();
 requestAnimationFrame(loop);
-pushTicker('Welcome to Singularity Tycoon — Mini', 'good');
+pushTicker(restored ? 'Save restored — welcome back' : 'Welcome to Singularity Tycoon — Mini', 'good');
 pushTicker('Place a Power Plant, a Coolant Loop, and a GPU Rack to start', '');
