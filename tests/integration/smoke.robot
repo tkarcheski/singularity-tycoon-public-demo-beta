@@ -4,7 +4,7 @@ Documentation    End-to-end smoke flows for Singularity Tycoon Mini.
 ...              and complement the per-system pytest suite.
 Resource         keywords.resource
 Test Setup       Open Game
-Test Teardown    Close Browser
+Test Teardown    Close Game
 
 
 *** Test Cases ***
@@ -14,6 +14,7 @@ Boots Cleanly With Twelve Tools
     Should Be Equal As Integers    ${count}    12
     ${step}=     Get Text             css=#tut-progress
     Should Be Equal    ${step}    1 / 9
+    Snapshot     boot-with-tools
 
 Player Can Build A Working Starter Cluster
     [Documentation]    Walk through the same tiles a new player would place,
@@ -24,9 +25,11 @@ Player Can Build A Working Starter Cluster
     Place Tile    5    5    3
     Place Tile    5    6    4
     Place Tile    5    5    5
+    Snapshot      starter-cluster-placed
     Sleep         4s
-    ${rev}=    Evaluate JavaScript    ${None}    () => window.__state.revenue
+    ${rev}=       Evaluate JavaScript    ${None}    () => window.__state.revenue
     Should Be True    4 < ${rev} < 30    revenue out of band: ${rev}
+    Snapshot      starter-cluster-running
 
 Save Persists Across A Reload
     [Documentation]    Place a tile, simulate the autosave path, reload — state survives.
@@ -35,9 +38,11 @@ Save Persists Across A Reload
     Reset Save
     Place Tile    2    5    5
     Evaluate JavaScript    ${None}    () => { window.__state.cash = 50000 }
+    Snapshot      before-reload
     Evaluate JavaScript    ${None}    () => window.dispatchEvent(new Event('beforeunload'))
     Reload
-    Sleep    800ms
+    Sleep         800ms
+    Snapshot      after-reload
     ${tile}=    Evaluate JavaScript    ${None}    () => window.__state.grid[5][5]?.t
     Should Be Equal    ${tile}    power
     ${cash}=    Evaluate JavaScript    ${None}    () => window.__state.cash
@@ -51,10 +56,12 @@ New Game Button Wipes The Save
     Place Tile    2    5    5
     Evaluate JavaScript    ${None}    () => { window.__state.cash = 9999 }
     Evaluate JavaScript    ${None}    () => window.dispatchEvent(new Event('beforeunload'))
+    Snapshot      before-new-game
     Evaluate JavaScript    ${None}    () => { window.confirm = () => true }
-    Click          id=btn-new-game
-    Sleep          800ms
-    ${cash}=       Evaluate JavaScript    ${None}    () => window.__state.cash
+    Click         id=btn-new-game
+    Sleep         800ms
+    Snapshot      after-new-game
+    ${cash}=      Evaluate JavaScript    ${None}    () => window.__state.cash
     Should Be Equal As Integers    ${cash}    500
-    ${tile}=       Evaluate JavaScript    ${None}    () => window.__state.grid[5][5]
+    ${tile}=      Evaluate JavaScript    ${None}    () => window.__state.grid[5][5]
     Should Be Equal    ${tile}    ${None}
