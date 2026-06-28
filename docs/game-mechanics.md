@@ -7,14 +7,14 @@ Everything below is read straight from `src/main.js` (v0.3).
 The simulation ticks every **500 ms** (`TICK_MS`). Each tick:
 
 1. **Expire timed effects** (driver crashes, brownouts, bot glitches).
-2. **Tally supply** — power and cooling, each scaled by research (×1.4^level) and tile condition; broken tiles supply nothing but bleed half upkeep; sum jobs created.
+2. **Tally supply** — power and cooling, each scaled by the track's research output multiplier (see [Research](#research-v06)) and tile condition; broken tiles supply nothing but bleed half upkeep; sum jobs created.
 3. **Allocate to GPUs** — scan top-left to bottom-right; each working GPU runs if the *remaining* pool covers its draw. Output scales with research, condition, and the cluster bonus (+10% per adjacent working GPU, max +30%); brownouts apply ×0.8.
 4. **Coolant loops (1 MW) and Bot Bays (2 MW) draw power** *after* GPUs, so they never starve compute.
 5. **Apply desk multiplier** — `compute × 1.15^min(desks, 3)` (max ×1.52).
 6. **Jobs ledger** — `displaced = compute × 0.25`; `netJobs = created − displaced`.
 7. **Sentiment drift** — toward `clamp(50 + netJobs, 0, 100)` at 1.5 points/s; **mood effects** may scale upkeep and halve compute.
 8. **Entropy** — `100 × (1 − e^(−compute/150))`; rolls a failure event with probability `0.06 × entropy01^1.5`.
-9. **Wear** — each tile loses `baseWear × 1.6^techLevel × (1 + 2 × entropy01)` condition/s; GPUs next to a working cooler wear ×0.5.
+9. **Wear** — each tile loses `baseWear × techWear × (1 + 2 × entropy01)` condition/s, where `techWear` is the track's research wear multiplier (see [Research](#research-v06)); GPUs next to a working cooler wear ×0.5.
 10. **Bot bays** — every 8 ticks, each powered bay repairs the most-damaged other tile +15 condition, auto-paying 60% of the manual rate.
 11. **Settle cash** — gross revenue (`compute × 0.30`), minus futures withholding (50% of gross until delivered), minus debt service (`max(10% of gross, $0.5/s)`), minus adjusted upkeep.
 
@@ -61,13 +61,27 @@ entropy01; tiles are tinted red-orange by temperature. GPU clusters also need
 +15% cooling per adjacent GPU. GPU token output scales continuously with
 condition (`0.4 + 0.6 × cond/100`); supply tiles keep stepped output.
 
-## Research (v0.3)
+## Research (v0.6)
 
-| Track | Level II | Level III | Effect per level |
-|---|---|---|---|
-| Power | $600 | $3,000 | plant output ×1.4 · plant wear ×1.6 |
-| Cooling | $500 | $2,500 | loop output ×1.4 · loop wear ×1.6 |
-| Compute | $800 | $4,000 | GPU output ×1.4 · GPU wear ×1.6 |
+Each track is a 5-tier ladder. Researching a tier sets that track's **cumulative**
+output and wear multipliers (relative to the bare tile) — they are absolute totals,
+not per-level deltas. Costs are **research points** (RP), earned by allocating compute
+to Research. Tiers I–III keep the original geometric numbers; tiers IV–V are late-game
+**breakthroughs** — big output jumps while the wear curve flattens, so they reward
+saving RP rather than punishing it.
+
+| Tier | Power | Cooling | Compute | out × | wear × | RP (Pwr/Cool/Cmp) |
+|---|---|---|---|---|---|---|
+| I | Grid Tap | Air Handling | Commodity GPUs | 1.0 | 1.0 | — (owned) |
+| II | On-site Substation | Chilled Water Loop | Tensor Cores | 1.4 | 1.6 | 30 / 25 / 40 |
+| III | Liquid-Cooled Cores | Immersion Baths | Sparsity Engine | 1.96 | 2.56 | 150 / 125 / 200 |
+| IV | Small Modular Reactor | Two-Phase Plates | GPU v3 | 3.2 | 3.0 | 700 / 600 / 900 |
+| V | Fusion Pilot | Cryo Loop | Wafer-Scale Engine | 5.5 | 3.3 | 3000 / 2600 / 4000 |
+
+Note the wear column: it climbs to 2.56× by tier III, then *barely moves* (3.0 → 3.3)
+through the breakthrough tiers even as output nearly triples — the late game is where
+research finally pays off. Effects are read live each tick via `techMult()` and the
+wear calc; there is no separate apply step.
 
 ## Finance (v0.3)
 

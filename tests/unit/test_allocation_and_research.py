@@ -48,3 +48,32 @@ def test_research_boosts_compute_output(game, place):
     after = game.evaluate("window.__state.totalCompute")
     assert game.evaluate("window.__state.tech.compute") == 1
     assert after > before * 1.2, f"{before:.1f}->{after:.1f}"
+
+
+def test_research_climbs_to_max_then_caps(game):
+    """A track researches up its full ladder, then buyResearch no-ops at MAX."""
+    game.evaluate("window.__state.god.freeBuild = true")  # ignore RP cost
+    max_lvl = game.evaluate("window.__research.compute.tiers.length - 1")
+    assert max_lvl >= 4, "compute should have 5 tiers (I-V)"
+    # climb to the top (each click enabled until MAX)
+    for _ in range(max_lvl):
+        game.click('.research-row[data-track="compute"] [data-buy]')
+    assert game.evaluate("window.__state.tech.compute") == max_lvl
+    btn = '.research-row[data-track="compute"] [data-buy]'
+    assert game.evaluate(f"document.querySelector('{btn}').textContent") == "MAX"
+    assert game.evaluate(f"document.querySelector('{btn}').disabled") is True
+    # buying past the top must no-op, not over-index
+    game.evaluate("buyResearch('compute'); buyResearch('compute')")
+    assert game.evaluate("window.__state.tech.compute") == max_lvl
+
+
+def test_breakthrough_tiers_flatten_wear(game):
+    """Late tiers (IV-V) keep raising output while the wear ratio improves."""
+    tiers = game.evaluate("window.__research.power.tiers.map(t => ({out: t.out, wear: t.wear}))")
+    # output strictly increases across the ladder
+    outs = [t["out"] for t in tiers]
+    assert outs == sorted(outs) and len(set(outs)) == len(outs)
+    # the output-per-wear ratio is better at the top tier than at tier III
+    ratio_iii = tiers[2]["out"] / tiers[2]["wear"]
+    ratio_v = tiers[-1]["out"] / tiers[-1]["wear"]
+    assert ratio_v > ratio_iii, f"breakthrough should improve ratio: {ratio_iii:.2f}->{ratio_v:.2f}"

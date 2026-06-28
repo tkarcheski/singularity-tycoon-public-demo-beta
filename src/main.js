@@ -63,14 +63,48 @@ const HEAT_CAP = 10;              // net heat that maps to heat01 = 1.0
 const HEAT_WEAR_MULT = 1.0;       // wear ×(1 + this × heat01)
 const HEAT_ENTROPY = 0.35;        // entropy01 contribution of average source-tile heat
 
-// Research — global tech tracks; each level: output ×1.4, wear ×1.6.
+// Research — global tech tracks. Each track is a ladder of named tiers; researching
+// a tier multiplies that track's output (`out`) and wear (`wear`) — both CUMULATIVE
+// absolute multipliers relative to the bare tile, not per-level deltas.
+//
+// Tiers I–III keep the original geometric numbers (out 1.4/1.96, wear 1.6/2.56) so old
+// saves and balance are unchanged. Tiers IV–V are late-game "breakthroughs": big output
+// jumps but the wear curve FLATTENS, so they're a goal worth chasing instead of a trap.
 // Costs are RESEARCH POINTS, earned by allocating compute to Research.
-const RESEARCH_OUTPUT = 1.4;
-const RESEARCH_WEAR = 1.6;
 const RESEARCH = {
-  power:   { name: 'Power',   costs: [30, 150] },
-  cooling: { name: 'Cooling', costs: [25, 125] },
-  compute: { name: 'Compute', costs: [40, 200] },
+  power: { name: 'Power', tiers: [
+    { roman: 'I',   name: 'Grid Tap',             out: 1.0,  wear: 1.0 },
+    { roman: 'II',  name: 'On-site Substation',   cost: 30,   out: 1.4,  wear: 1.6,
+      blurb: 'A dedicated feed instead of borrowed wall power — more MW per tile.' },
+    { roman: 'III', name: 'Liquid-Cooled Cores',  cost: 150,  out: 1.96, wear: 2.56,
+      blurb: 'Coolant-jacketed transformers push harder, but the exotic gear wears fast.' },
+    { roman: 'IV',  name: 'Small Modular Reactor', cost: 700,  out: 3.2,  wear: 3.0,
+      blurb: 'On-site fission. Enormous, steady output — and engineered to last.' },
+    { roman: 'V',   name: 'Fusion Pilot',          cost: 3000, out: 5.5,  wear: 3.3,
+      blurb: 'A tokamak in the basement. Near-limitless power with barely any added wear.' },
+  ]},
+  cooling: { name: 'Cooling', tiers: [
+    { roman: 'I',   name: 'Air Handling',         out: 1.0,  wear: 1.0 },
+    { roman: 'II',  name: 'Chilled Water Loop',   cost: 25,   out: 1.4,  wear: 1.6,
+      blurb: 'Water carries heat away far better than air — neighbors run cooler.' },
+    { roman: 'III', name: 'Immersion Baths',      cost: 125,  out: 1.96, wear: 2.56,
+      blurb: 'Dunk the racks in dielectric fluid. Brutal cooling, brutal upkeep.' },
+    { roman: 'IV',  name: 'Two-Phase Plates',     cost: 600,  out: 3.2,  wear: 3.0,
+      blurb: 'Boiling coolant on the die wicks heat at the source — efficient and durable.' },
+    { roman: 'V',   name: 'Cryo Loop',            cost: 2600, out: 5.5,  wear: 3.3,
+      blurb: 'Sub-ambient cryogenic coolant. Silicon barely notices it is working.' },
+  ]},
+  compute: { name: 'Compute', tiers: [
+    { roman: 'I',   name: 'Commodity GPUs',       out: 1.0,  wear: 1.0 },
+    { roman: 'II',  name: 'Tensor Cores',         cost: 40,   out: 1.4,  wear: 1.6,
+      blurb: 'Dedicated matrix units — far more tokens per watt.' },
+    { roman: 'III', name: 'Sparsity Engine',      cost: 200,  out: 1.96, wear: 2.56,
+      blurb: 'Skip the zeros. Throughput soars, but the silicon is pushed to its edge.' },
+    { roman: 'IV',  name: 'GPU v3',               cost: 900,  out: 3.2,  wear: 3.0,
+      blurb: 'Next-gen accelerators with on-package memory — a generational leap.' },
+    { roman: 'V',   name: 'Wafer-Scale Engine',   cost: 4000, out: 5.5,  wear: 3.3,
+      blurb: 'A single chip the size of a dinner plate. No interconnect, no compromise.' },
+  ]},
 };
 
 // Allocation — where the AI's tokens go. Selling pays now; research earns RP;
@@ -183,6 +217,7 @@ const state = {
 // Programmatic handles for tests and future agent players
 window.__state = state;
 window.__god = state.god;
+window.__research = RESEARCH;
 
 // ---------- Grid helpers ----------
 const NEIGHBOR_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -215,7 +250,7 @@ function condScale(c) { return c.cond <= 0 ? 0 : c.cond < WORN_AT ? 0.6 : 1; }
 // GPU token output degrades continuously: pristine = 1.0 fading toward 0.4,
 // dead = 0. Worn silicon produces fewer tokens, not a sudden cliff.
 function gpuCondScale(c) { return c.cond <= 0 ? 0 : 0.4 + 0.6 * (c.cond / 100); }
-function techMult(track) { return Math.pow(RESEARCH_OUTPUT, state.tech[track]); }
+function techMult(track) { return RESEARCH[track].tiers[state.tech[track]].out; }
 function isGpu(t) { return t === 'gpu1' || t === 'gpu2'; }
 function trackOf(t) {
   if (t === 'power' || t === 'solar') return 'power';
@@ -679,7 +714,7 @@ function tick() {
         if (!c || c.cond <= 0) continue;
         const track = trackOf(c.t);
         const rate = TILE_TYPES[c.t].wear
-          * (track ? Math.pow(RESEARCH_WEAR, state.tech[track]) : 1)
+          * (track ? RESEARCH[track].tiers[state.tech[track]].wear : 1)
           * (1 + ENTROPY_WEAR_MULT * entropy01)
           * (1 + HEAT_WEAR_MULT * heatMap[y][x]);
         const before = c.cond;
@@ -1319,16 +1354,17 @@ function buildResearch() {
 }
 
 function buyResearch(key) {
-  const lvl = state.tech[key];
-  if (lvl >= RESEARCH[key].costs.length) return;
-  const cost = RESEARCH[key].costs[lvl];
-  if (!state.god.freeBuild && state.rp < cost) {
-    pushTicker(`Need ${cost} RP for ${RESEARCH[key].name} ${['II', 'III'][lvl]} — allocate compute to Research`, 'bad');
+  const tiers = RESEARCH[key].tiers;
+  const next = state.tech[key] + 1;          // tier we're trying to buy into
+  if (next >= tiers.length) return;          // already at MAX
+  const tier = tiers[next];
+  if (!state.god.freeBuild && state.rp < tier.cost) {
+    pushTicker(`Need ${tier.cost} RP for ${RESEARCH[key].name} ${tier.roman} (${tier.name}) — allocate compute to Research`, 'bad');
     return;
   }
-  if (!state.god.freeBuild) state.rp -= cost;
-  state.tech[key]++;
-  pushTicker(`★ ${RESEARCH[key].name} ${['II', 'III'][lvl]} researched — output ×1.4, wear ×1.6`, 'good');
+  if (!state.god.freeBuild) state.rp -= tier.cost;
+  state.tech[key] = next;
+  pushTicker(`★ ${RESEARCH[key].name} ${tier.roman}: ${tier.name} online — ${tier.blurb}`, 'good');
   playStinger('research');
   updateResearch();
 }
@@ -1338,16 +1374,22 @@ function updateResearch() {
   if (rpLine) rpLine.textContent = `Research points: ${state.rp.toFixed(1)}`;
   for (const row of researchEl.querySelectorAll('.research-row')) {
     const key = row.dataset.track;
+    const tiers = RESEARCH[key].tiers;
     const lvl = state.tech[key];
     const pips = row.querySelector('[data-pips]');
-    pips.textContent = ['I', 'II', 'III'].map((r, i) => (i <= lvl ? '●' : '○')).join(' ');
+    // one pip per tier; the first tier (I) is the baseline you already own
+    pips.textContent = tiers.map((_, i) => (i <= lvl ? '●' : '○')).join(' ');
+    pips.title = `${RESEARCH[key].name} ${tiers[lvl].roman}: ${tiers[lvl].name}`;
     const btn = row.querySelector('[data-buy]');
-    if (lvl >= RESEARCH[key].costs.length) {
+    const next = tiers[lvl + 1];
+    if (!next) {
       btn.textContent = 'MAX';
+      btn.title = `${tiers[lvl].name} — fully researched`;
       btn.disabled = true;
     } else {
-      btn.textContent = `${RESEARCH[key].costs[lvl]} RP`;
-      btn.disabled = !state.god.freeBuild && state.rp < RESEARCH[key].costs[lvl];
+      btn.textContent = `${next.roman} · ${next.cost} RP`;
+      btn.title = `${next.name} — ${next.blurb}`;
+      btn.disabled = !state.god.freeBuild && state.rp < next.cost;
     }
   }
 }
@@ -1575,7 +1617,7 @@ modalBody.innerHTML = `
     <li><strong>Jobs &amp; Public mood:</strong> selling compute displaces jobs in the city; your buildings (especially <strong>Retraining Centers</strong>) create them. A happy city <strong>buys more tokens</strong> — the Token \$ price in the HUD rises and falls with sentiment (plus market wobble). Let it slide and you'll face surcharges, halved output, and permit delays.</li>
     <li><strong>Heat:</strong> GPUs and Power Plants run hot (tiles glow red); heat accelerates wear and feeds entropy. Coolant Loops drain heat with distance falloff — the closer the loop, the cooler the silicon.</li>
     <li><strong>Wear &amp; repair:</strong> everything degrades — GPU output fades with condition, broken tiles stop. Repair by hand (press <kbd>8</kbd>) or place <strong>Bot Bays</strong> to automate it. GPU clusters compute up to 30% more but need more cooling.</li>
-    <li><strong>Research:</strong> upgrade Power, Cooling, or Compute — each level boosts output ×1.4 but the exotic tech wears ×1.6 faster.</li>
+    <li><strong>Research:</strong> climb the Power, Cooling, and Compute tiers — early tiers trade more output for faster wear, but late breakthroughs (SMR, Fusion, Cryo Loop, Wafer-Scale) pile on output while the wear curve flattens. Save RP for them.</li>
     <li><strong>Allocation:</strong> decide where your AI's tokens go — <em>Sell</em> for cash, <em>Research</em> for research points (buys tech and unlocks), or <em>Self-improve</em> for compounding output that feeds entropy. The singularity dial is yours.</li>
     <li><strong>Unlocks:</strong> anything marked 🔒 in the Build panel is earned — hardware costs cash, capabilities cost research points. Ops Automation opens Bot Bays and auto-maintenance.</li>
     <li><strong>Finance:</strong> take a loan (repaid from revenue, with interest) or sell compute futures once you're big enough. Leverage is how you escape the early grind.</li>
@@ -1627,6 +1669,15 @@ function loadState() {
   if (!snap || snap._v !== 1) return false;
   for (const k of SAVE_KEYS) {
     if (snap[k] !== undefined) state[k] = snap[k];
+  }
+  // Clamp tech levels to the current ladder — a save from a build with more
+  // tiers (or a corrupt value) must not index past tiers.length-1.
+  if (state.tech) {
+    for (const track of Object.keys(RESEARCH)) {
+      const max = RESEARCH[track].tiers.length - 1;
+      const lvl = state.tech[track];
+      state.tech[track] = Number.isFinite(lvl) ? Math.max(0, Math.min(max, lvl)) : 0;
+    }
   }
   return true;
 }
