@@ -16,13 +16,12 @@ ${INDEX_URL}     file://${EXECDIR}${/}index.html
 *** Keywords ***
 Open Game
     [Documentation]    Launch a fresh browser context and load the game.
-    ...                Any keyword failure auto-captures an embedded screenshot.
+    ...                The screenshot_listener (loaded via --listener) embeds a
+    ...                snapshot after every top-level keyword automatically.
     New Browser    chromium    headless=True
     New Context    viewport={'width': 1440, 'height': 900}
     New Page       ${INDEX_URL}
     Sleep          900ms
-    Register Keyword To Run On Failure    Snapshot    failure
-    Snapshot       boot
 
 Reset Save
     [Documentation]    Wipe localStorage and reload — guarantees a clean state.
@@ -30,16 +29,9 @@ Reset Save
     Reload
     Sleep                  800ms
 
-Snapshot
-    [Documentation]    Embed the current page screenshot into log.html with a
-    ...                stable, step-tagged filename so each one is easy to scan.
-    [Arguments]    ${tag}
-    Take Screenshot    filename=EMBED    fullPage=True
-    Log                Snapshot: ${tag}    level=INFO
-
 Close Game
-    [Documentation]    Final teardown snapshot (always-on) then tear down the browser.
-    Run Keyword And Ignore Error    Snapshot    teardown
+    [Documentation]    Tear down the browser. Listener has already snapped the
+    ...                final body keyword, so no manual screenshot here.
     Close Browser
 
 Game State

@@ -39,7 +39,7 @@ jobs:
           rfbrowser init --skip-browsers
           playwright install --with-deps chromium
       - name: Run robot
-        run: robot --outputdir results/robot tests/integration
+        run: robot --listener tests/integration/listeners/screenshot_listener.py --outputdir results/robot tests/integration
       - name: Upload robot results
         if: always()
         uses: actions/upload-artifact@v4
