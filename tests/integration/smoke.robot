@@ -8,22 +8,24 @@ Test Teardown    Close Game
 
 
 *** Test Cases ***
-Boots Cleanly With Twelve Tools
-    [Documentation]    The shell renders all twelve build tools and starts the tutorial.
+Boots Cleanly With Sixteen Tools
+    [Documentation]    The shell renders all sixteen build tools (v0.7 added the
+    ...                CPU/APU/TPU/Quantum compute archetypes) and starts the tutorial.
     ${count}=    Get Element Count    css=#tools .tool
-    Should Be Equal As Integers    ${count}    12
+    Should Be Equal As Integers    ${count}    16
     ${step}=     Get Text             css=#tut-progress
     Should Be Equal    ${step}    1 / 9
 
 Player Can Build A Working Starter Cluster
     [Documentation]    Walk through the same tiles a new player would place,
     ...                then wait long enough for revenue to land in the profit band.
+    ...                A CPU Orchestrator feeds the GPUs (v0.7 — unfed GPUs run at 50%).
     Reset Save
     Place Tile    2    4    4
     Place Tile    4    5    4
+    Place Tile    c    4    5
     Place Tile    5    5    3
     Place Tile    5    6    4
-    Place Tile    5    5    5
     Sleep         4s
     ${rev}=       Evaluate JavaScript    ${None}    () => window.__state.revenue
     Should Be True    4 < ${rev} < 30    revenue out of band: ${rev}

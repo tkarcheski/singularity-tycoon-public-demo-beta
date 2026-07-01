@@ -4,6 +4,7 @@
 def _starter_cluster(place):
     place("2", 2, 2)
     place("4", 3, 3)
+    place("c", 3, 2)   # CPU feeds the GPUs (v0.7 — else they throttle to 50%)
     place("5", 2, 3)
     place("5", 2, 4)
 

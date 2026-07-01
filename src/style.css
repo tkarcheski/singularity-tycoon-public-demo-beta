@@ -45,7 +45,10 @@ body {
 #app {
   display: grid;
   grid-template-columns: 220px 1fr;
-  grid-template-rows: 56px 1fr;
+  /* minmax(0, 1fr) lets the content row shrink to the viewport instead of growing
+     to its tallest child — otherwise the palette expands past 100vh and its lower
+     tiles get clipped by the body's `overflow: hidden`. */
+  grid-template-rows: 56px minmax(0, 1fr);
   height: 100vh;
   gap: 0;
 }
@@ -117,30 +120,54 @@ body {
 .palette {
   background: var(--bg-1);
   border-right: 1px solid var(--border);
-  padding: 8px 10px;
+  padding: 6px 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  overflow: hidden; /* no scrollbars — the layout is compacted to fit */
+  gap: 1px;
+  /* Scroll instead of clipping when the window is shorter than the palette, so
+     no build tiles are ever hidden (regression fix: 16 tiles overflowed short
+     windows under the old `overflow: hidden`). Needs min-height:0 so the grid
+     item can shrink below its content and hand the overflow to this scroller. */
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hi) transparent;
 }
+.palette::-webkit-scrollbar { width: 7px; }
+.palette::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 4px; }
+.palette::-webkit-scrollbar-track { background: transparent; }
 .palette-title {
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--text-muted);
-  margin: 2px 0 0;
+  margin: 1px 0 0;
 }
-.tools { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.tools { display: flex; flex-direction: column; gap: 4px; }
+/* Group label sits to the LEFT of each tile row (not on its own line) so the
+   16-tile palette stays grouped AND fits without a scrollbar. */
+.tool-group { display: grid; grid-template-columns: 30px 1fr; align-items: start; gap: 5px; }
+.tool-group-title {
+  font-family: var(--font-display);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding-top: 5px;
+  line-height: 1.15;
+}
+.tool-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
 
 .tool {
-  display: grid;
-  grid-template-columns: 22px 1fr;
-  grid-template-rows: auto auto;
+  /* Single compact row (icon · name · cost) so the v0.7 16-tile palette fits
+     without scrolling — details live in the hover tooltip. */
+  display: flex;
   align-items: center;
-  gap: 0 6px;
-  padding: 3px 6px;
+  gap: 6px;
+  padding: 1px 6px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -149,6 +176,7 @@ body {
   text-align: left;
   color: var(--text);
   font: inherit;
+  min-height: 20px;
 }
 .tool:hover { background: var(--surface-hi); border-color: var(--border-hi); }
 .tool:active { transform: translateY(1px); }
@@ -159,20 +187,21 @@ body {
 }
 .tool.disabled { opacity: 0.45; cursor: not-allowed; }
 .tool .icon {
-  width: 18px; height: 18px;
-  grid-row: 1 / 3;
+  width: 16px; height: 16px;
+  flex: 0 0 auto;
   border-radius: var(--r-sm);
   background: var(--bg-2);
   display: flex; align-items: center; justify-content: center;
 }
-.tool .icon svg { width: 14px; height: 14px; }
-.tool .meta { display: flex; flex-direction: column; min-width: 0; }
+.tool .icon svg { width: 12px; height: 12px; }
+.tool .meta { flex: 1 1 auto; min-width: 0; }
 .tool .name {
   font-weight: 500; font-size: 10.5px; color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tool .sub { display: none; } /* details live in the tooltip */
 .tool .cost {
+  flex: 0 0 auto;
   font-family: var(--font-mono);
   font-size: 9px;
   color: var(--accent);
@@ -180,7 +209,8 @@ body {
 }
 .tool.disabled .cost { color: var(--text-dim); }
 
-.palette-foot { margin-top: auto; padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.palette-foot { margin-top: auto; padding-top: 8px; display: flex; gap: 6px; }
+.palette-foot .ghost-btn { flex: 1; }
 .ghost-btn {
   width: 100%;
   background: transparent;
@@ -496,16 +526,16 @@ body {
 .primary-btn:active { transform: translateY(1px); }
 
 /* ---------- Research panel ---------- */
-.research { display: flex; flex-direction: column; gap: 3px; }
+.research { display: flex; flex-direction: column; gap: 2px; }
 .research-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 8px;
+  padding: 1px 8px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  font-size: 11px;
+  font-size: 10px;
 }
 .research-name { flex: 1; color: var(--text); font-weight: 500; }
 .research-pips { color: var(--accent); font-size: 9px; letter-spacing: 2px; }
@@ -524,15 +554,15 @@ body {
 .research-btn:disabled { color: var(--text-dim); cursor: default; }
 
 /* ---------- Finance panel ---------- */
-.finance { display: flex; flex-direction: column; gap: 3px; }
-.fin-loans { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
-.fin-loans .fin-btn { flex-direction: column; align-items: flex-start; gap: 0; padding: 5px 7px; }
+.finance { display: flex; flex-direction: column; gap: 2px; }
+.fin-loans { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; }
+.fin-loans .fin-btn { flex-direction: column; align-items: flex-start; gap: 0; padding: 4px 6px; }
 .fin-btn {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 3px 8px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
@@ -544,10 +574,10 @@ body {
 }
 .fin-btn:hover:not(:disabled) { border-color: var(--border-hi); background: var(--surface-hi); }
 .fin-btn:disabled { color: var(--text-dim); cursor: default; }
-.fin-sub { color: var(--text-muted); font-family: var(--font-mono); font-size: 10px; }
+.fin-sub { color: var(--text-muted); font-family: var(--font-mono); font-size: 9px; }
 .fin-btn:disabled .fin-sub { color: var(--text-dim); }
 .fin-status {
-  padding: 3px 8px;
+  padding: 2px 8px;
   border-radius: var(--r-sm);
   background: rgba(255, 170, 34, 0.08);
   border: 1px solid rgba(255, 170, 34, 0.25);
@@ -625,10 +655,10 @@ body {
 .fin-maint input { accent-color: var(--accent); }
 
 /* allocation sliders */
-.allocation { display: flex; flex-direction: column; gap: 2px; }
-.alloc-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
-.alloc-name { width: 76px; color: var(--text); font-size: 12px; }
-.alloc-row input[type="range"] { flex: 1; accent-color: var(--accent); height: 14px; }
+.allocation { display: flex; flex-direction: column; gap: 1px; }
+.alloc-row { display: flex; align-items: center; gap: 7px; font-size: 11px; }
+.alloc-name { width: 72px; color: var(--text); font-size: 11px; }
+.alloc-row input[type="range"] { flex: 1; accent-color: var(--accent); height: 10px; }
 .alloc-pct {
   width: 34px; text-align: right;
   font-family: var(--font-mono); font-size: 10px; color: var(--text-muted);
