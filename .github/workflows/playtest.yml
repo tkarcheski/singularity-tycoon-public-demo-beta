@@ -39,7 +39,13 @@ jobs:
           rfbrowser init --skip-browsers
           playwright install --with-deps chromium
       - name: Run robot
-        run: robot --listener tests/integration/listeners/screenshot_listener.py --outputdir results/robot tests/integration
+        # PYTHONPATH + prerunmodifier fold the pytest unit suite into the same
+        # report as the integration smoke tests (see tests/integration/pytest_bridge.py).
+        run: |
+          PYTHONPATH=tests/integration robot \
+            --listener tests/integration/listeners/screenshot_listener.py \
+            --prerunmodifier pytest_bridge.inject_unit_tests \
+            --outputdir results/robot tests/integration
       - name: Upload robot results
         if: always()
         uses: actions/upload-artifact@v4
