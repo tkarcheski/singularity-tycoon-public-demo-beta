@@ -155,7 +155,8 @@ const GOAL = 1_000_000;
 const state = {
   cash: 500,
   // each cell: null (empty) or { t: tileTypeId, cond: 0..100 }
-  grid: Array.from({ length: ROWS }, () => Array(COLS).fill(null)),
+  grid: Array.from({ length: ROWS }, () => Array(COLS).fill(null)), // alias of floors[floor]
+  floor: 0,
   selectedTool: 'gpu1',
   hover: { x: -1, y: -1 },
   tick: 0,
@@ -209,6 +210,60 @@ const state = {
   flashes: new Map(), // "x,y" -> flash strength
   goalUnlocked: false,
 };
+
+// Floors (#20 v1): state.grid always aliases the active floor's grid so
+// rendering/input/tutorial code stays single-grid; the sim ticks every floor.
+state.floors = [state.grid];
+const FLOOR2_COST = 150_000;
+
+function newGrid() {
+  return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+}
+
+function setActiveFloor(i) {
+  state.floor = Math.max(0, Math.min(state.floors.length - 1, i));
+  state.grid = state.floors[state.floor];
+  updateFloorTabs();
+}
+
+function updateFloorTabs() {
+  const tabs = document.getElementById('floor-tabs');
+  if (!tabs) return;
+  tabs.hidden = state.floors.length < 2;
+  if (tabs.hidden) return;
+  tabs.innerHTML = state.floors.map((_, i) =>
+    `<button class="floor-tab${i === state.floor ? ' active' : ''}" data-floor="${i}">🏢 F${i + 1}</button>`,
+  ).join('');
+  for (const btn of tabs.querySelectorAll('[data-floor]')) {
+    btn.addEventListener('click', () => setActiveFloor(+btn.dataset.floor));
+  }
+}
+
+// While the sim visits a non-visible floor, visual effects are muted.
+let visualsEnabled = true;
+function forEachFloor(fn) {
+  for (let f = 0; f < state.floors.length; f++) {
+    state.grid = state.floors[f];
+    visualsEnabled = f === state.floor;
+    fn(f);
+  }
+  state.grid = state.floors[state.floor];
+  visualsEnabled = true;
+}
+
+function buyFloor() {
+  if (state.floors.length >= 2) return;
+  if (!state.god.freeBuild && state.cash < FLOOR2_COST) {
+    pushTicker(`Floor 2: need $${FLOOR2_COST.toLocaleString()}`, 'bad');
+    return;
+  }
+  if (!state.god.freeBuild) state.cash -= FLOOR2_COST;
+  state.floors.push(newGrid());
+  pushTicker('🏢 FLOOR 2 ONLINE — the datacenter grows upward', 'good');
+  playStinger('research');
+  setActiveFloor(1);
+  updateFinance();
+}
 
 // Programmatic handles for tests and future agent players
 window.__state = state;
@@ -518,6 +573,8 @@ window.addEventListener('keydown', (e) => {
     buildToolbar();
   }
   if (e.key.toLowerCase() === 'm') { handleMute(); }
+  if (e.key === 'PageUp') { setActiveFloor(state.floor + 1); e.preventDefault(); }
+  if (e.key === 'PageDown') { setActiveFloor(state.floor - 1); e.preventDefault(); }
 });
 
 function attemptPlace(x, y) {
@@ -581,10 +638,12 @@ function attemptPlace(x, y) {
 }
 
 function flashCell(x, y, strength) {
+  if (!visualsEnabled) return; // sim is visiting a floor the player isn't viewing
   state.flashes.set(`${x},${y}`, strength);
 }
 
 function emitParticles(gx, gy, count, color) {
+  if (!visualsEnabled) return;
   const o = gridOrigin();
   const cx = o.x + gx * TILE + TILE / 2;
   const cy = o.y + gy * TILE + TILE / 2;
@@ -607,75 +666,85 @@ function tick() {
   const dtS = (TICK_MS / 1000) * (state.god.fast ? 5 : 1);
   const now = performance.now();
 
-  // Expire timed entropy effects
+  // Expire timed entropy effects (effects are floor-tagged)
   state.effects = state.effects.filter((ef) => ef.until > now);
   const offline = new Set(
-    state.effects.filter((ef) => ef.kind === 'crash' || ef.kind === 'botGlitch').map((ef) => `${ef.x},${ef.y}`),
+    state.effects.filter((ef) => ef.kind === 'crash' || ef.kind === 'botGlitch').map((ef) => `${ef.f || 0}:${ef.x},${ef.y}`),
   );
   const brownout = state.effects.some((ef) => ef.kind === 'brownout');
 
-  // Tally power, cooling, upkeep, jobs — research and condition scale supply;
-  // broken tiles supply nothing but still bleed half upkeep
+  // Tally power, cooling, upkeep, jobs across ALL floors — research and
+  // condition scale supply; broken tiles supply nothing but bleed half upkeep
   let power = 0, cooling = 0, deskCount = 0, upkeep = 0, jobsCreated = 0;
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      const c = state.grid[y][x];
-      if (!c) continue;
-      const t = TILE_TYPES[c.t];
-      const broken = c.cond <= 0;
-      upkeep += (t.upkeep || 0) * (broken ? 0.5 : 1);
-      jobsCreated += t.jobs || 0;
-      if (broken) continue;
-      const s = condScale(c);
-      if (c.t === 'solar') power += t.power * techMult('power') * s * state.sun;
-      else if (t.power > 0) power += t.power * techMult('power') * s;
-      if (t.cooling > 0) cooling += t.cooling * techMult('cooling') * s;
-      if (c.t === 'desk') deskCount++;
-    }
-  }
-
-  // Each working compute tile draws from the global pools; output scales with
-  // research, condition, synergy auras, and the GPU adjacency cluster bonus
-  const auras = computeAuraMaps();
-  state.auraMaps = auras;
-  let powerUsed = 0, coolingUsed = 0, gpuTflops = 0;
-  const computeCells = [];
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      const c = state.grid[y][x];
-      if (!c || !isCompute(c.t) || c.cond <= 0 || offline.has(`${x},${y}`)) continue;
-      const t = TILE_TYPES[c.t];
-      // Clusters (GPUs only): +output per adjacent working GPU, but packed silicon runs hot
-      const adjGpus = isGpu(c.t)
-        ? Math.min(3, neighborCells(x, y).filter((n) => isGpu(n.c.t) && n.c.cond > 0).length)
-        : 0;
-      const needP = Math.abs(t.power); // negative => draw
-      const needC = Math.abs(t.cooling) * (1 + GPU_ADJ_HEAT * adjGpus);
-      if (power - powerUsed >= needP && cooling - coolingUsed >= needC) {
-        powerUsed += needP;
-        coolingUsed += needC;
-        let out = t.compute * techMult('compute') * gpuCondScale(c) * (1 + GPU_ADJ_BONUS * adjGpus) * (1 + auras.boost[y][x]);
-        if (brownout) out *= 0.8;
-        gpuTflops += out;
-        computeCells.push({ x, y });
+  forEachFloor(() => {
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const c = state.grid[y][x];
+        if (!c) continue;
+        const t = TILE_TYPES[c.t];
+        const broken = c.cond <= 0;
+        upkeep += (t.upkeep || 0) * (broken ? 0.5 : 1);
+        jobsCreated += t.jobs || 0;
+        if (broken) continue;
+        const s = condScale(c);
+        if (c.t === 'solar') power += t.power * techMult('power') * s * state.sun;
+        else if (t.power > 0) power += t.power * techMult('power') * s;
+        if (t.cooling > 0) cooling += t.cooling * techMult('cooling') * s;
+        if (c.t === 'desk') deskCount++;
       }
     }
-  }
+  });
+
+  // Each working compute tile draws from the SHARED pools; output scales with
+  // research, condition, synergy auras, and the GPU adjacency cluster bonus
+  const aurasByFloor = [];
+  const cellsByFloor = [];
+  let powerUsed = 0, coolingUsed = 0, gpuTflops = 0;
+  forEachFloor((f) => {
+    const auras = computeAuraMaps();
+    aurasByFloor[f] = auras;
+    cellsByFloor[f] = [];
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const c = state.grid[y][x];
+        if (!c || !isCompute(c.t) || c.cond <= 0 || offline.has(`${f}:${x},${y}`)) continue;
+        const t = TILE_TYPES[c.t];
+        // Clusters (GPUs only): +output per adjacent working GPU, but packed silicon runs hot
+        const adjGpus = isGpu(c.t)
+          ? Math.min(3, neighborCells(x, y).filter((n) => isGpu(n.c.t) && n.c.cond > 0).length)
+          : 0;
+        const needP = Math.abs(t.power); // negative => draw
+        const needC = Math.abs(t.cooling) * (1 + GPU_ADJ_HEAT * adjGpus);
+        if (power - powerUsed >= needP && cooling - coolingUsed >= needC) {
+          powerUsed += needP;
+          coolingUsed += needC;
+          let out = t.compute * techMult('compute') * gpuCondScale(c) * (1 + GPU_ADJ_BONUS * adjGpus) * (1 + auras.boost[y][x]);
+          if (brownout) out *= 0.8;
+          gpuTflops += out;
+          cellsByFloor[f].push({ x, y });
+        }
+      }
+    }
+  });
+  state.auraMaps = aurasByFloor[state.floor];
+  const computeCells = cellsByFloor[state.floor];
   // Cooling tiles and bot bays draw power after compute (never starve compute)
   const poweredBays = [];
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      const c = state.grid[y][x];
-      if (!c || c.cond <= 0) continue;
-      const t = TILE_TYPES[c.t];
-      const coolDraw = t.cooling > 0 ? Math.abs(Math.min(0, t.power)) : 0;
-      if (coolDraw && power - powerUsed >= coolDraw) powerUsed += coolDraw;
-      if (c.t === 'botbay' && !offline.has(`${x},${y}`) && power - powerUsed >= 2) {
-        powerUsed += 2;
-        poweredBays.push({ x, y });
+  forEachFloor((f) => {
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const c = state.grid[y][x];
+        if (!c || c.cond <= 0) continue;
+        const t = TILE_TYPES[c.t];
+        const coolDraw = t.cooling > 0 ? Math.abs(Math.min(0, t.power)) : 0;
+        if (coolDraw && power - powerUsed >= coolDraw) powerUsed += coolDraw;
+        if (c.t === 'botbay' && !offline.has(`${f}:${x},${y}`) && power - powerUsed >= 2) {
+          powerUsed += 2;
+          poweredBays.push({ f, x, y });
+        }
       }
     }
-  }
+  });
 
   // Engineer multiplier (cap at 3 desks)
   const mult = Math.pow(TILE_TYPES.desk.multiplier, Math.min(deskCount, 3));
@@ -693,9 +762,11 @@ function tick() {
 
   // Human tokens: skill-scaled and deliberately OUTSIDE every multiplier —
   // humans can't be upgraded by tech, desks, or a self-improving AI
-  for (const pod of cellsOf('human')) {
-    computeAdj += HUMAN_MAX_TFLOPS * (pod.c.skill || 0) / 100;
-  }
+  forEachFloor(() => {
+    for (const pod of cellsOf('human')) {
+      computeAdj += HUMAN_MAX_TFLOPS * (pod.c.skill || 0) / 100;
+    }
+  });
 
   // Research allocation earns research points
   state.rp += computeAdj * RP_PER_TFLOPS * state.alloc.research * dtS;
@@ -733,16 +804,20 @@ function tick() {
   if (mood === 'unrest' || mood === 'protest') upkeepAdj *= 1.25;
   if (mood === 'protest') computeAdj *= 0.5;
 
-  // Heat map: hot silicon wears faster, and a hot floor feeds entropy
-  const heatMap = computeHeatMap();
-  state.heatMap = heatMap;
+  // Heat maps: hot silicon wears faster, and hot floors feed entropy
+  const heatByFloor = [];
   let heatSum = 0, heatN = 0;
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      const c = state.grid[y][x];
-      if (c && HEAT_SOURCE[c.t]) { heatSum += heatMap[y][x]; heatN++; }
+  forEachFloor((f) => {
+    const heatMap = computeHeatMap();
+    heatByFloor[f] = heatMap;
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const c = state.grid[y][x];
+        if (c && HEAT_SOURCE[c.t]) { heatSum += heatMap[y][x]; heatN++; }
+      }
     }
-  }
+  });
+  state.heatMap = heatByFloor[state.floor];
   const avgHeat = heatN ? heatSum / heatN : 0;
 
   // Entropy rises with compute, floor temperature, and self-improvement; it
@@ -763,65 +838,73 @@ function tick() {
 
   // Wear — exotic tech and entropy accelerate it; coolers shelter neighbors
   if (!state.god.noWear) {
-    for (let y = 0; y < ROWS; y++) {
-      for (let x = 0; x < COLS; x++) {
-        const c = state.grid[y][x];
-        if (!c || c.cond <= 0) continue;
-        const track = trackOf(c.t);
-        const rate = TILE_TYPES[c.t].wear
-          * (track ? Math.pow(RESEARCH_WEAR, state.tech[track]) : 1)
-          * (1 + ENTROPY_WEAR_MULT * entropy01)
-          * (1 + HEAT_WEAR_MULT * heatMap[y][x])
-          * auras.wear[y][x];
-        const before = c.cond;
-        c.cond = Math.max(0, c.cond - rate * dtS);
-        if (before > 0 && c.cond <= 0) {
-          pushTicker(`${TILE_TYPES[c.t].name} BROKE DOWN — repair it (press -)`, 'bad');
-          flashCell(x, y, 1.2);
-          emitParticles(x, y, 8, '#ff4f6d');
-          playStinger('breakdown');
-        }
-      }
-    }
-  }
-
-  // Humans learn: the AI tutors pods near working GPUs (distance falloff),
-  // and pods teach each other across shared edges. Skill only ever grows.
-  for (const pod of cellsOf('human')) {
-    let gain = 0;
-    for (const g of computeCells) {
-      const d = Math.abs(g.x - pod.x) + Math.abs(g.y - pod.y);
-      if (d < HUMAN_LEARN_GPU.length) gain += HUMAN_LEARN_GPU[d];
-    }
-    gain = Math.min(HUMAN_LEARN_CAP, gain);
-    for (const n of neighborCells(pod.x, pod.y)) {
-      if (n.c.t === 'human' && (n.c.skill || 0) > (pod.c.skill || 0)) {
-        gain += (n.c.skill - pod.c.skill) * HUMAN_PEER_RATE;
-      }
-    }
-    if (gain > 0) pod.c.skill = Math.min(100, (pod.c.skill || 0) + gain * dtS);
-  }
-
-  // Bot bays: each powered bay repairs the most-damaged other tile every 4s
-  if (poweredBays.length && state.tick % BOT_PERIOD_TICKS === 0) {
-    for (const bay of poweredBays) {
-      let target = null;
+    forEachFloor((f) => {
       for (let y = 0; y < ROWS; y++) {
         for (let x = 0; x < COLS; x++) {
           const c = state.grid[y][x];
-          if (!c || c.cond >= 100 || (x === bay.x && y === bay.y)) continue;
-          if (!target || c.cond < target.c.cond) target = { x, y, c };
+          if (!c || c.cond <= 0) continue;
+          const track = trackOf(c.t);
+          const rate = TILE_TYPES[c.t].wear
+            * (track ? Math.pow(RESEARCH_WEAR, state.tech[track]) : 1)
+            * (1 + ENTROPY_WEAR_MULT * entropy01)
+            * (1 + HEAT_WEAR_MULT * heatByFloor[f][y][x])
+            * aurasByFloor[f].wear[y][x];
+          const before = c.cond;
+          c.cond = Math.max(0, c.cond - rate * dtS);
+          if (before > 0 && c.cond <= 0) {
+            pushTicker(`${TILE_TYPES[c.t].name} BROKE DOWN — repair it (press -)`, 'bad');
+            flashCell(x, y, 1.2);
+            emitParticles(x, y, 8, '#ff4f6d');
+            playStinger('breakdown');
+          }
         }
       }
-      if (!target) continue;
-      const heal = Math.min(BOT_HEAL, 100 - target.c.cond);
-      const price = Math.ceil(TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * (heal / 100) * BOT_REPAIR_DISCOUNT);
-      if (!state.god.freeBuild && state.cash < price) continue;
-      if (!state.god.freeBuild) state.cash -= price;
-      target.c.cond += heal;
-      emitParticles(target.x, target.y, 3, '#9aa5ff');
-      flashCell(target.x, target.y, 0.6);
+    });
+  }
+
+  // Humans learn: the AI tutors pods near working same-floor GPUs (distance
+  // falloff), and pods teach each other across shared edges. Skill only grows.
+  forEachFloor((f) => {
+    for (const pod of cellsOf('human')) {
+      let gain = 0;
+      for (const g of cellsByFloor[f]) {
+        const d = Math.abs(g.x - pod.x) + Math.abs(g.y - pod.y);
+        if (d < HUMAN_LEARN_GPU.length) gain += HUMAN_LEARN_GPU[d];
+      }
+      gain = Math.min(HUMAN_LEARN_CAP, gain);
+      for (const n of neighborCells(pod.x, pod.y)) {
+        if (n.c.t === 'human' && (n.c.skill || 0) > (pod.c.skill || 0)) {
+          gain += (n.c.skill - pod.c.skill) * HUMAN_PEER_RATE;
+        }
+      }
+      if (gain > 0) pod.c.skill = Math.min(100, (pod.c.skill || 0) + gain * dtS);
     }
+  });
+
+  // Bot bays: each powered bay repairs the most-damaged other tile on ITS
+  // floor every 4s
+  if (poweredBays.length && state.tick % BOT_PERIOD_TICKS === 0) {
+    forEachFloor((f) => {
+      for (const bay of poweredBays) {
+        if (bay.f !== f) continue;
+        let target = null;
+        for (let y = 0; y < ROWS; y++) {
+          for (let x = 0; x < COLS; x++) {
+            const c = state.grid[y][x];
+            if (!c || c.cond >= 100 || (x === bay.x && y === bay.y)) continue;
+            if (!target || c.cond < target.c.cond) target = { x, y, c };
+          }
+        }
+        if (!target) continue;
+        const heal = Math.min(BOT_HEAL, 100 - target.c.cond);
+        const price = Math.ceil(TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * (heal / 100) * BOT_REPAIR_DISCOUNT);
+        if (!state.god.freeBuild && state.cash < price) continue;
+        if (!state.god.freeBuild) state.cash -= price;
+        target.c.cond += heal;
+        emitParticles(target.x, target.y, 3, '#9aa5ff');
+        flashCell(target.x, target.y, 0.6);
+      }
+    });
   }
 
   // Token market: a happy city buys more tokens. Demand follows sentiment;
@@ -869,13 +952,23 @@ function tick() {
   // (manual repair rate ×0.8 — bays at ×0.6 stay the better deal).
   if (state.maintainPool > 0) {
     let target = null;
-    for (let y = 0; y < ROWS; y++) {
-      for (let x = 0; x < COLS; x++) {
-        const c = state.grid[y][x];
-        if (c && c.cond < 100 && (!target || c.cond < target.c.cond)) target = { x, y, c };
+    forEachFloor((f) => {
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          const c = state.grid[y][x];
+          if (c && c.cond < 100 && (!target || c.cond < target.c.cond)) target = { f, x, y, c };
+        }
       }
-    }
-    if (target) {
+    });
+    if (target && target.f !== state.floor) {
+      // heal silently on the unseen floor
+      const perPoint = TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * 0.01 * 0.8;
+      const points = Math.min(100 - target.c.cond, state.maintainPool / perPoint);
+      if (points > 0.1) {
+        target.c.cond += points;
+        state.maintainPool -= points * perPoint;
+      }
+    } else if (target) {
       const perPoint = TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * 0.01 * 0.8;
       const points = Math.min(100 - target.c.cond, state.maintainPool / perPoint);
       if (points > 0.1) {
@@ -956,7 +1049,7 @@ function maybeEntropyEvent(entropy01, now) {
     pushTicker('💧 Coolant leak — loop and adjacent silicon damaged', 'bad');
   } else if (kind === 'crash') {
     const g = pick(gpus);
-    state.effects.push({ kind: 'crash', x: g.x, y: g.y, until: now + 8000 });
+    state.effects.push({ kind: 'crash', f: state.floor, x: g.x, y: g.y, until: now + 8000 });
     flashCell(g.x, g.y, 1);
     pushTicker('🖥 Driver crash — a GPU rack is offline for 8s', 'warn');
   } else if (kind === 'brownout') {
@@ -964,7 +1057,7 @@ function maybeEntropyEvent(entropy01, now) {
     pushTicker('🌆 Grid brownout — all GPU output −20% for 10s', 'warn');
   } else if (kind === 'botGlitch') {
     const b = pick(bays);
-    state.effects.push({ kind: 'botGlitch', x: b.x, y: b.y, until: now + 10000 });
+    state.effects.push({ kind: 'botGlitch', f: state.floor, x: b.x, y: b.y, until: now + 10000 });
     flashCell(b.x, b.y, 1);
     pushTicker('🤖 Bot glitch — a repair bay is rebooting for 10s', 'warn');
   }
@@ -1175,7 +1268,7 @@ function drawCell(px, py, cell, gx, gy) {
   }
 
   // Offline (driver crash / bot glitch): pause bars top-right
-  if (state.effects.some((ef) => ef.x === gx && ef.y === gy && (ef.kind === 'crash' || ef.kind === 'botGlitch'))) {
+  if (state.effects.some((ef) => (ef.f || 0) === state.floor && ef.x === gx && ef.y === gy && (ef.kind === 'crash' || ef.kind === 'botGlitch'))) {
     ctx.save();
     ctx.fillStyle = '#6ec5ff';
     ctx.globalAlpha = 0.9;
@@ -1461,6 +1554,7 @@ function readAllocSliders() {
     state.alloc[k] = sum > 0 ? raw[k] / sum : (k === 'sell' ? 1 : 0);
   }
   for (const el of allocEl.querySelectorAll('[data-pct]')) {
+    if (el.dataset.pct === 'ubi') continue; // UBI is a profit share, not an alloc share
     el.textContent = `${Math.round(state.alloc[el.dataset.pct] * 100)}%`;
   }
 }
@@ -1544,6 +1638,10 @@ function buildFinance() {
   financeEl.innerHTML = `
     <div class="fin-loans"></div>
     <div class="fin-status" data-debt hidden></div>
+    <button class="fin-btn" data-floor2>
+      <span>🏢 Buy Floor 2</span>
+      <span class="fin-sub">$${FLOOR2_COST.toLocaleString()} — double the datacenter</span>
+    </button>
     <button class="fin-btn" data-futures>
       <span>📜 Sell compute futures</span>
       <span class="fin-sub" data-futures-sub></span>
@@ -1577,6 +1675,7 @@ function buildFinance() {
     loansEl.appendChild(btn);
   });
   financeEl.querySelector('[data-futures]').addEventListener('click', sellFutures);
+  financeEl.querySelector('[data-floor2]').addEventListener('click', buyFloor);
   updateFinance();
 }
 
@@ -1627,6 +1726,11 @@ function updateFinance() {
   // Auto-maintenance is part of the Ops Automation unlock
   const maint = financeEl.querySelector('.fin-maint');
   if (maint) maint.hidden = !state.unlocks.ops && !state.god.freeBuild;
+  const floorBtn = financeEl.querySelector('[data-floor2]');
+  if (floorBtn) {
+    floorBtn.hidden = state.floors.length >= 2;
+    floorBtn.disabled = !state.god.freeBuild && state.cash < FLOOR2_COST;
+  }
 }
 
 // ---------- God-mode dev panel ----------
@@ -1788,7 +1892,7 @@ const SAVE_KEY = 'stm-save-v1';
 // (hover, particles, flashes, effects with performance.now() deadlines), and dev
 // (god). `tick` is kept so the solar/starfield cycles resume in place.
 const SAVE_KEYS = [
-  'cash', 'grid', 'selectedTool', 'tick',
+  'cash', 'floors', 'floor', 'selectedTool', 'tick',
   'sentiment', 'mood', 'market',
   'alloc', 'rp', 'selfImprove', 'unlocks',
   'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool', 'ubiShare',
@@ -1810,9 +1914,11 @@ function loadState() {
   let snap;
   try { snap = JSON.parse(raw); } catch (e) { return false; }
   if (!snap || snap._v !== 1) return false;
+  if (snap.grid && !snap.floors) snap.floors = [snap.grid]; // pre-floors save
   for (const k of SAVE_KEYS) {
     if (snap[k] !== undefined) state[k] = snap[k];
   }
+  setActiveFloor(state.floor || 0);
   return true;
 }
 

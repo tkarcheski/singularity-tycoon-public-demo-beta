@@ -223,6 +223,32 @@ body {
     radial-gradient(800px 600px at 50% 60%, rgba(74,240,192,0.06), transparent 70%),
     linear-gradient(180deg, var(--bg-1), var(--bg-0));
 }
+.floor-tabs {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  z-index: 5;
+}
+.floor-tab {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.floor-tab:hover { border-color: var(--border-hi); color: var(--text); }
+.floor-tab.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 12px -4px var(--accent);
+}
+
 #game {
   display: block;
   width: 100%;
@@ -563,6 +589,7 @@ body {
   cursor: pointer;
   text-align: left;
 }
+.fin-btn[hidden] { display: none; }
 .fin-btn:hover:not(:disabled) { border-color: var(--border-hi); background: var(--surface-hi); }
 .fin-btn:disabled { color: var(--text-dim); cursor: default; }
 .fin-sub { color: var(--text-muted); font-family: var(--font-mono); font-size: 10px; }
