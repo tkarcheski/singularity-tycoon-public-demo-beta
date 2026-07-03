@@ -1,8 +1,8 @@
 """Smoke tests covering the freshly loaded game shell."""
 
 
-def test_loads_with_eighteen_tools(game):
-    assert game.eval_on_selector_all("#tools .tool", "els => els.length") == 18
+def test_loads_with_twenty_tools(game):
+    assert game.eval_on_selector_all("#tools .tool", "els => els.length") == 20
 
 
 def test_palette_shows_layer_headers(game):
