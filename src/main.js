@@ -88,7 +88,6 @@ const RESEARCH = {
 const UBC_SENT_PER_TFLOPS = 0.5; // sentiment pts per donated TFLOPS
 const UBC_SENT_CAP = 30;
 const UBI_JOBS_PER_DOLLAR = 0.6; // jobs funded per $/s of public dividend
-const UBI_MAX_SHARE = 0.30;
 const RP_PER_TFLOPS = 0.05;        // RP/s per TFLOPS at 100% research
 const SELF_IMPROVE_RATE = 0.00004; // multiplier growth/s per TFLOPS at 100% self
 const SELF_IMPROVE_CAP = 1.0;      // self-improvement tops out at ×2 output
@@ -182,8 +181,7 @@ const state = {
   tokenPrice: REVENUE_PER_TFLOPS, // effective $/TFLOPS after demand × market
 
   // v0.5: token allocation, research points, self-improvement, unlocks
-  alloc: { sell: 1, research: 0, self: 0, ubc: 0 }, // normalized shares of compute
-  ubiShare: 0, // fraction of gross revenue paid as public dividend
+  alloc: { sell: 1, research: 0, self: 0, ubc: 0, ubi: 0 }, // normalized shares of compute
   rp: 0,             // research points
   selfImprove: 0,    // compounding output bonus, 0..SELF_IMPROVE_CAP
   unlocks: { gpu2: false, ops: false, tpu: false, quantum: false, immersion: false, cryo: false },
@@ -918,9 +916,9 @@ function tick() {
   const revPerSec = computeAdj * state.tokenPrice * state.alloc.sell;
   const gross = revPerSec * dtS;
   let income = gross;
-  // Universal Basic Income: a share of gross revenue becomes a public dividend
-  state.ubiSpend = revPerSec * (state.ubiShare || 0);
-  income -= state.ubiSpend * dtS;
+  // Universal Basic Income: the UBI allocation share is sold too, but the
+  // proceeds are paid straight out as a public dividend (funds jobs above)
+  state.ubiSpend = computeAdj * state.tokenPrice * (state.alloc.ubi || 0);
   if (state.futuresOwed > 0) {
     const withheld = Math.min(state.futuresOwed, gross * FUTURES_REVENUE_SHARE);
     state.futuresOwed -= withheld;
@@ -994,7 +992,7 @@ function tick() {
   state.coolingUsed = coolingUsed;
   state.totalCompute = computeAdj;
   state.upkeep = upkeepAdj;
-  state.revenue = revPerSec - state.ubiSpend - upkeepAdj;
+  state.revenue = revPerSec - upkeepAdj;
   state.jobsCreated = jobsCreated;
   state.jobsDisplaced = jobsDisplaced;
   state.netJobs = netJobs;
@@ -1516,30 +1514,23 @@ function pushTicker(text, cls = '') {
 }
 
 // ---------- Allocation UI ----------
-// Three sliders, normalized to shares: where the AI's tokens go.
+// Five sliders, normalized to shares: where the AI's tokens go. UBI is a
+// full member of the group — its share is sold and the proceeds paid out
+// as a public dividend, so it rebalances against the others with no cap.
 const allocEl = document.getElementById('allocation');
-const ALLOC_LABELS = { sell: '💰 Sell', research: '🔬 Research', self: '🧠 Improve', ubc: '🎁 Public' };
+const ALLOC_LABELS = { sell: '💰 Sell', research: '🔬 Research', self: '🧠 Improve', ubc: '🎁 Public', ubi: '🤝 UBI' };
 
 function buildAllocation() {
+  // Seed slider positions from state.alloc so a restored save keeps its mix
   allocEl.innerHTML = Object.keys(ALLOC_LABELS).map((k) => `
     <div class="alloc-row">
       <span class="alloc-name">${ALLOC_LABELS[k]}</span>
-      <input type="range" min="0" max="100" value="${k === 'sell' ? 100 : 0}" data-alloc="${k}" />
+      <input type="range" min="0" max="100" value="${Math.round((state.alloc[k] || 0) * 100)}" data-alloc="${k}" />
       <span class="alloc-pct" data-pct="${k}">—</span>
-    </div>`).join('') + `
-    <div class="alloc-row">
-      <span class="alloc-name">🤝 UBI</span>
-      <input type="range" min="0" max="${UBI_MAX_SHARE * 100}" value="0" data-ubi />
-      <span class="alloc-pct" data-pct="ubi">0%</span>
-    </div>
-    <div class="fin-status" id="alloc-note" hidden></div>`;
+    </div>`).join('') + '<div class="fin-status" id="alloc-note" hidden></div>';
   for (const r of allocEl.querySelectorAll('input[data-alloc]')) {
     r.addEventListener('input', readAllocSliders);
   }
-  allocEl.querySelector('input[data-ubi]').addEventListener('input', (e) => {
-    state.ubiShare = +e.target.value / 100;
-    allocEl.querySelector('[data-pct="ubi"]').textContent = `${e.target.value}%`;
-  });
   readAllocSliders();
 }
 
@@ -1554,7 +1545,6 @@ function readAllocSliders() {
     state.alloc[k] = sum > 0 ? raw[k] / sum : (k === 'sell' ? 1 : 0);
   }
   for (const el of allocEl.querySelectorAll('[data-pct]')) {
-    if (el.dataset.pct === 'ubi') continue; // UBI is a profit share, not an alloc share
     el.textContent = `${Math.round(state.alloc[el.dataset.pct] * 100)}%`;
   }
 }
@@ -1895,7 +1885,7 @@ const SAVE_KEYS = [
   'cash', 'floors', 'floor', 'selectedTool', 'tick',
   'sentiment', 'mood', 'market',
   'alloc', 'rp', 'selfImprove', 'unlocks',
-  'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool', 'ubiShare',
+  'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool',
   'entropy', 'tutStep', 'stats', 'goalUnlocked',
 ];
 
