@@ -26,7 +26,9 @@ const TILE_TYPES = {
   desk:    { name: 'Engineer Desk',   cost: 220, power: -1,  cooling: 0,  compute: 0,    upkeep: 0.5,  jobs: 2, wear: 0.08, multiplier: 1.15, color: '#231a30', accent: '#c89cff', desc: '+15% compute output. Stack up to 3.' },
   retrain: { name: 'Retraining Ctr.', cost: 150, power: -1,  cooling: 0,  compute: 0,    upkeep: 1.0,  jobs: 8, wear: 0.08, color: '#2d2410', accent: '#ffb86b', desc: 'Retrains workers your compute displaced. +8 jobs. Needs 1 MW.' },
   human:   { name: 'Worker Pod',      cost: 100, power: -1,  cooling: 0,  compute: 0,    upkeep: 0.8,  jobs: 4, wear: 0,    color: '#2e1b26', accent: '#ff9ecf', desc: 'Humans output tokens as they learn — up to 3 TFLOPS at full skill. The AI trains them (sit near GPUs); they also teach each other. Cannot be upgraded — or broken.' },
-  botbay:  { name: 'Bot Bay',         cost: 350, power: -2,  cooling: 0,  compute: 0,    upkeep: 0.8,  jobs: 1, wear: 0.12, gate: 'ops', color: '#1d1d33', accent: '#9aa5ff', desc: 'A repair bot fixes the most-damaged tile every 4s at a 40% discount. Needs 2 MW.' },
+  botbay:  { name: 'Bot Bay',         cost: 350, power: -2,  cooling: 0,  compute: 0,    upkeep: 0.8,  jobs: 1, wear: 0.12, gate: 'ops', color: '#1d1d33', accent: '#9aa5ff', desc: 'A repair bot fixes the most-damaged tile every 4s at a 40% discount. Needs 2 MW. Robots don\'t breathe.' },
+  life:    { name: 'Life Support',    cost: 400, power: -3,  cooling: 0,  compute: 0,    upkeep: 1.5,  jobs: 0, wear: 0.2,  color: '#0e2a33', accent: '#7ee7ff', desc: 'Air, water, warmth — a breathable bubble reaching 2 tiles. In space, people tiles outside a field suffocate and produce nothing. On Earth, the sky does this for free.' },
+  fission: { name: 'Fission Core',    cost: 1500, power: 30, cooling: 0,  compute: 0,    upkeep: 6.0,  jobs: 2, wear: 0.25, gate: 'fission', color: '#2e1a10', accent: '#ffd24a', desc: 'Supplies 30 MW anywhere — the atom doesn\'t need air. Emits serious heat (12): in vacuum, with nowhere for heat to go, reactor placement is the puzzle.' },
   repair:  { name: 'Repair',          cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#13241c', accent: '#7dffa8', desc: 'Fix a damaged tile for 30% of its build cost, scaled by damage.' },
   bull:    { name: 'Bulldoze',        cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#2a1414', accent: '#ff4f6d', desc: 'Refund 50% of build cost.' },
 };
@@ -61,7 +63,11 @@ const GPU_ADJ_HEAT = 0.15;       // +cooling need per adjacent working GPU — c
 // Heat — per-tile temperature. GPUs and plants emit it, coolant loops drain it
 // with distance falloff (closer loop = cooler tile). Heat multiplies wear and
 // feeds entropy; tiles are tinted by temperature.
-const HEAT_SOURCE = { gpu1: 3, gpu2: 8, power: 4, cpu: 1, tpu: 6, quantum: 2 }; // heat emitted by a working tile
+const HEAT_SOURCE = { gpu1: 3, gpu2: 8, power: 4, cpu: 1, tpu: 6, quantum: 2, fission: 12 }; // heat emitted by a working tile
+
+// Life support (#53): people tiles on space floors need a breathable field
+const LIFE_RANGE = 2;
+const PEOPLE_TILES = ['human', 'desk', 'retrain'];
 const HEAT_SPREAD = 0.5;          // fraction of neighbor source heat that bleeds over
 // Heat drain profiles live on TILE_TYPES as `drain: [d0, d1, ...]` — heat
 // removed at Manhattan distance 0/1/2/... per cooling tile.
@@ -80,7 +86,12 @@ const RESEARCH = {
   power:   { name: '⚡ Power',   costs: [30, 150] },
   cooling: { name: '❄️ Cooling', costs: [25, 125] },
   compute: { name: '🧮 Compute', costs: [40, 200] },
+  durability: { name: '🔧 Durability', costs: [35, 175] },
 };
+// Durability research: everything wears ×0.75 per level — the counterweight
+// to the output tracks' wear penalty (×1.6/level). First step toward the
+// full "everything researchable" tree (#32/#37).
+const DURABILITY_WEAR_MULT = 0.75;
 
 // Allocation — where the AI's tokens go. Selling pays now; research earns RP;
 // self-improvement compounds output but feeds the singularity (entropy);
@@ -103,6 +114,7 @@ const UNLOCKS = {
   immersion: { name: 'Immersion Bath', cash: 3000, blurb: 'dielectric liquid cooling' },
   cryo: { name: 'Cryo Plant',     rp: 60,     blurb: 'industrial cryogenics' },
   hex:  { name: 'Hexagonal Lattice', rp: 80,  blurb: 'six-way adjacency — new floors build on hex' },
+  fission: { name: 'Fission Core',   rp: 100, blurb: 'power that works anywhere — even vacuum' },
 };
 
 // Finance — leverage to escape the mid-game stall.
@@ -134,15 +146,15 @@ const PERMIT_DELAY_MS = 4000;           // min gap between builds during protest
 
 // New tiles append at the end (keys q/w/e, r/t/y) so existing hotkeys stay
 // stable. Display grouping comes from each tile's `layer`, not this order.
-const TOOL_ORDER = ['solar', 'power', 'fan', 'cooler', 'gpu1', 'gpu2', 'desk', 'retrain', 'human', 'botbay', 'repair', 'bull', 'cpu', 'tpu', 'quantum', 'exch', 'immersion', 'cryo'];
-const TOOL_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 'q', 'w', 'e', 'r', 't', 'y'];
+const TOOL_ORDER = ['solar', 'power', 'fan', 'cooler', 'gpu1', 'gpu2', 'desk', 'retrain', 'human', 'botbay', 'repair', 'bull', 'cpu', 'tpu', 'quantum', 'exch', 'immersion', 'cryo', 'life', 'fission'];
+const TOOL_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i'];
 
 // The palette teaches the stack bottom-up — a loose OSI homage. L3 · NETWORK
 // is reserved for switches/floors/topology (issues #18/#20/#21).
 const LAYERS = [
-  { name: '🔌 L1 · Physical',     tiles: ['solar', 'power', 'fan', 'cooler', 'exch', 'immersion', 'cryo'] },
+  { name: '🔌 L1 · Physical',     tiles: ['solar', 'power', 'fission', 'fan', 'cooler', 'exch', 'immersion', 'cryo'] },
   { name: '🧠 L2 · Compute',      tiles: ['gpu1', 'gpu2', 'cpu', 'tpu', 'quantum'] },
-  { name: '👥 L7 · People & Ops', tiles: ['desk', 'retrain', 'human', 'botbay'] },
+  { name: '👥 L7 · People & Ops', tiles: ['desk', 'retrain', 'human', 'botbay', 'life'] },
   { name: '🛠️ Tools',             tiles: ['repair', 'bull'] },
 ];
 
@@ -197,10 +209,10 @@ const state = {
   alloc: { sell: 1, research: 0, self: 0, ubc: 0, ubi: 0 }, // normalized shares of compute
   rp: 0,             // research points
   selfImprove: 0,    // compounding output bonus, 0..SELF_IMPROVE_CAP
-  unlocks: { gpu2: false, ops: false, tpu: false, quantum: false, immersion: false, cryo: false, hex: false },
+  unlocks: { gpu2: false, ops: false, tpu: false, quantum: false, immersion: false, cryo: false, hex: false, fission: false },
 
   // v0.3 systems
-  tech: { power: 0, cooling: 0, compute: 0 }, // research levels 0..2
+  tech: { power: 0, cooling: 0, compute: 0, durability: 0 }, // research levels 0..2
   debt: 0,          // outstanding loan repayment
   futuresOwed: 0,   // compute revenue still to deliver on sold futures
   // Auto-maintenance: divert a slice of revenue into a repair pool. Simple
@@ -643,6 +655,35 @@ function computeAllHeatMaps() {
 // Auras, all floors at once. A tile with `aura.vertical` also projects onto
 // the vertically adjacent cell (same x,y) one floor up/down — the seam the
 // future networking tiles (#18/#45) will widen into cross-floor orchestration.
+// Life support (#53): per-space-floor boolean coverage. Earth floors return
+// null — the sky is a free life-support field.
+function computeLifeSupportMaps() {
+  return state.floors.map((grid, f) => {
+    if (!isSpaceFloor(f)) return null;
+    const topo = topoOf(f);
+    const sources = [];
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const c = grid[y][x];
+        if (c && c.t === 'life' && c.cond > 0) sources.push({ x, y });
+      }
+    }
+    const map = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+    if (sources.length) {
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          map[y][x] = sources.some((s) => topo.dist(s.x, s.y, x, y) <= LIFE_RANGE);
+        }
+      }
+    }
+    return map;
+  });
+}
+function hasAir(lifeMaps, f, x, y) {
+  const m = lifeMaps[f];
+  return !m || m[y][x];
+}
+
 function computeAllAuraMaps() {
   const nF = state.floors.length;
   const maps = state.floors.map(() => ({
@@ -785,6 +826,8 @@ function toolStat(id) {
   if (id === 'retrain') return `+${t.jobs} jobs`;
   if (id === 'human') return `learns · ≤${HUMAN_MAX_TFLOPS} TFLOPS`;
   if (id === 'botbay') return `auto-repairs`;
+  if (id === 'life') return `air · range ${LIFE_RANGE}`;
+  if (t.power > 0) return `+${t.power} MW`;
   if (id === 'repair') return `fix damage`;
   if (id === 'bull') return `refund 50%`;
   return '';
@@ -808,6 +851,8 @@ function iconSvg(id) {
   if (id === 'retrain') return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M12 4L2 9l10 5 10-5-10-5z" stroke-linejoin="round"/><path d="M6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5" stroke-linecap="round"/></svg>`;
   if (id === 'human')   return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="9" cy="8" r="2.6"/><circle cx="16" cy="9.5" r="2.1"/><path d="M3.5 20v-1.5a4.5 4.5 0 014.5-4.5h2a4.5 4.5 0 014.5 4.5V20M14 14.4a3.8 3.8 0 016.5 2.7V20" stroke-linecap="round"/></svg>`;
   if (id === 'botbay')  return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="6" y="8" width="12" height="10" rx="2"/><circle cx="10" cy="12" r="1.2"/><circle cx="14" cy="12" r="1.2"/><path d="M12 8V5M9 5h6M9 18v2M15 18v2" stroke-linecap="round"/></svg>`;
+  if (id === 'life')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="10" cy="13" r="6"/><circle cx="17" cy="7" r="2.4"/><circle cx="18.5" cy="14" r="1.4"/></svg>`;
+  if (id === 'fission') return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="12" cy="12" r="2"/><path d="M12 9.8V4M13.9 13.1l5 2.9M10.1 13.1l-5 2.9" stroke-linecap="round"/><circle cx="12" cy="12" r="9" stroke-dasharray="3.5 2.5"/></svg>`;
   if (id === 'repair')  return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M14.5 6.5a4 4 0 105.4 5.4L13 18.8a2.1 2.1 0 11-3-3l6.9-6.9a4 4 0 01-2.4-2.4z" stroke-linejoin="round" transform="rotate(90 12 12)"/></svg>`;
   if (id === 'bull')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M4 7l16 0M7 7v12a2 2 0 002 2h6a2 2 0 002-2V7M10 11v6M14 11v6M9 7l1-3h4l1 3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   return '';
@@ -918,6 +963,10 @@ function attemptPlace(x, y) {
     pushTicker("🛰 No air in vacuum — fan walls don't work in space. Use liquid cooling on the walls.", 'bad');
     return;
   }
+  if (id === 'power' && isSpaceFloor(state.floor)) {
+    pushTicker('🛰 No oxygen in vacuum — combustion plants can\'t burn. Use solar or a Fission Core.', 'bad');
+    return;
+  }
   if (existing) {
     pushTicker(`Cell occupied — bulldoze first (press =)`, 'bad');
     return;
@@ -981,6 +1030,8 @@ function tick() {
   // Tally power, cooling, upkeep, jobs across ALL floors — research and
   // condition scale supply; broken tiles supply nothing but bleed half upkeep
   let power = 0, cooling = 0, deskCount = 0, upkeep = 0, jobsCreated = 0;
+  const lifeByFloor = computeLifeSupportMaps();
+  state.lifeMap = lifeByFloor[state.floor];
   forEachFloor((f) => {
     const space = isSpaceFloor(f);
     for (let y = 0; y < ROWS; y++) {
@@ -990,16 +1041,18 @@ function tick() {
         const t = TILE_TYPES[c.t];
         const broken = c.cond <= 0;
         upkeep += (t.upkeep || 0) * (broken ? 0.5 : 1);
-        jobsCreated += t.jobs || 0;
+        // Suffocating people tiles cost upkeep but contribute nothing
+        const suffocating = PEOPLE_TILES.includes(c.t) && !hasAir(lifeByFloor, f, x, y);
+        if (!suffocating) jobsCreated += t.jobs || 0;
         if (broken) continue;
-        if (space && c.t === 'fan') continue; // no air to move in vacuum
+        if (space && (c.t === 'fan' || c.t === 'power')) continue; // no air to move — or to burn
         const s = condScale(c);
         // Orbit gets constant, stronger sunlight; the ground gets the sky's moods
         if (c.t === 'solar') power += t.power * techMult('power') * s * (space ? SPACE_SOLAR_MULT : state.sun);
         else if (t.power > 0) power += t.power * techMult('power') * s;
         // Wall-mounted cooling radiates through the envelope (vacuum doubles down)
         if (t.cooling > 0) cooling += t.cooling * techMult('cooling') * s * wallBonus(f, x, y);
-        if (c.t === 'desk') deskCount++;
+        if (c.t === 'desk' && !suffocating) deskCount++;
       }
     }
   });
@@ -1069,9 +1122,11 @@ function tick() {
   computeAdj *= 1 + state.selfImprove;
 
   // Human tokens: skill-scaled and deliberately OUTSIDE every multiplier —
-  // humans can't be upgraded by tech, desks, or a self-improving AI
-  forEachFloor(() => {
+  // humans can't be upgraded by tech, desks, or a self-improving AI.
+  // Suffocating pods (space, no life support) produce nothing.
+  forEachFloor((f) => {
     for (const pod of cellsOf('human')) {
+      if (!hasAir(lifeByFloor, f, pod.x, pod.y)) continue;
       computeAdj += HUMAN_MAX_TFLOPS * (pod.c.skill || 0) / 100;
     }
   });
@@ -1152,6 +1207,7 @@ function tick() {
           const track = trackOf(c.t);
           const rate = TILE_TYPES[c.t].wear
             * (track ? Math.pow(RESEARCH_WEAR, state.tech[track]) : 1)
+            * Math.pow(DURABILITY_WEAR_MULT, state.tech.durability || 0)
             * (1 + ENTROPY_WEAR_MULT * entropy01)
             * (1 + HEAT_WEAR_MULT * heatByFloor[f][y][x])
             * aurasByFloor[f].wear[y][x]
@@ -1173,6 +1229,7 @@ function tick() {
   // falloff), and pods teach each other across shared edges. Skill only grows.
   forEachFloor((f) => {
     for (const pod of cellsOf('human')) {
+      if (!hasAir(lifeByFloor, f, pod.x, pod.y)) continue; // can't learn while suffocating
       let gain = 0;
       for (const g of cellsByFloor[f]) {
         const d = state.topo.dist(g.x, g.y, pod.x, pod.y);
@@ -1611,6 +1668,16 @@ function drawCell(cx, cy, cell, gx, gy) {
     ctx.restore();
   }
 
+  // Suffocation warning — people without air in space pulse a cold blue veil
+  if (PEOPLE_TILES.includes(cell.t) && state.lifeMap && !state.lifeMap[gy][gx]) {
+    ctx.save();
+    ctx.globalAlpha = 0.35 + 0.2 * Math.sin(state.tick * 0.5);
+    ctx.fillStyle = '#3a7bd5';
+    state.topo.trace(ctx, cx, cy, 1);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // Skill bar for humans — fills up as they learn (the inverse of wear)
   const barY = cy + TILE / 2 - 8;
   const bw = TILE - 24;
@@ -1695,6 +1762,25 @@ function drawGlyph(ctx, cx, cy, id, color) {
       ctx.moveTo(cx - s + 1, cy); ctx.lineTo(cx + s - 1, cy);
       ctx.stroke();
     }
+  } else if (id === 'life') {
+    // bubbles
+    ctx.beginPath(); ctx.arc(cx - 2, cy + 2, 6.5, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx + 6, cy - 5, 3, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx + 8, cy + 4, 1.6, 0, Math.PI * 2); ctx.stroke();
+  } else if (id === 'fission') {
+    // atom core with three spokes and a dashed containment ring
+    ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, Math.PI * 2); ctx.stroke();
+    for (let i = 0; i < 3; i++) {
+      const a = -Math.PI / 2 + (i * 2 * Math.PI) / 3;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * 4, cy + Math.sin(a) * 4);
+      ctx.lineTo(cx + Math.cos(a) * 10, cy + Math.sin(a) * 10);
+      ctx.stroke();
+    }
+    ctx.save();
+    ctx.setLineDash([3, 2.5]);
+    ctx.beginPath(); ctx.arc(cx, cy, 12, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
   } else if (id === 'exch') {
     // counterflow arrows
     ctx.beginPath();
@@ -1875,6 +1961,9 @@ function showCellTooltip(e, x, y, cell) {
     const wb = wallBonus(state.floor, x, y);
     rows += `<div class="tip-row"><span>${isSpaceFloor(state.floor) ? '🛰 Radiator' : '🧱 Wall-mounted'}</span><span class="v">×${wb.toFixed(2)} supply</span></div>`;
   }
+  if (PEOPLE_TILES.includes(cell.t) && state.lifeMap && !state.lifeMap[y][x]) {
+    rows += `<div class="tip-row"><span>🫧 NO AIR</span><span class="v">suffocating — build Life Support (u) within ${LIFE_RANGE}</span></div>`;
+  }
   tooltipEl.innerHTML = `<div class="tip-title">${def.name}${layerBadge(cell.t)}</div><div style="color:var(--text-muted);font-size:11px;margin-top:4px;">${def.desc}</div>${rows}`;
   moveTooltip(e);
 }
@@ -1960,7 +2049,7 @@ function updateAllocation() {
 const researchEl = document.getElementById('research');
 
 function buildResearch() {
-  researchEl.innerHTML = '<div class="fin-status" id="rp-line">Research points: 0</div>';
+  researchEl.innerHTML = ''; // RP total lives in the section title
   for (const key of Object.keys(RESEARCH)) {
     const row = document.createElement('div');
     row.className = 'research-row';
@@ -1992,8 +2081,8 @@ function buyResearch(key) {
 }
 
 function updateResearch() {
-  const rpLine = document.getElementById('rp-line');
-  if (rpLine) rpLine.textContent = `Research points: ${state.rp.toFixed(1)}`;
+  const title = document.getElementById('research-title');
+  if (title) title.textContent = `🔬 Research · ${state.rp.toFixed(1)} RP`;
   for (const row of researchEl.querySelectorAll('.research-row')) {
     const key = row.dataset.track;
     const lvl = state.tech[key];
@@ -2332,6 +2421,8 @@ function loadState() {
     if (snap[k] !== undefined) state[k] = snap[k];
   }
   setActiveFloor(state.floor || 0);
+  // research tracks added after a save was written default to level 0
+  for (const k of Object.keys(RESEARCH)) if (state.tech[k] == null) state.tech[k] = 0;
   return true;
 }
 
