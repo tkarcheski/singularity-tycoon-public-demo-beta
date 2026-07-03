@@ -132,7 +132,7 @@ body {
   color: var(--text-muted);
   margin: 2px 0 0;
 }
-.tools { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.tools { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
 
 .tool {
   display: grid;
@@ -140,7 +140,7 @@ body {
   grid-template-rows: auto auto;
   align-items: center;
   gap: 0 6px;
-  padding: 3px 6px;
+  padding: 2px 6px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
