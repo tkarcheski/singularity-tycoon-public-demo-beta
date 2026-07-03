@@ -4,42 +4,42 @@ on:
   push:
   pull_request:
 
+# Runs on the self-hosted runner on ai1. Dependencies live in a venv cached
+# outside the workspace (~/.cache/stm-ci/venv) so repeat runs are fast;
+# playwright browsers cache in ~/.cache/ms-playwright as usual.
 jobs:
   pytest:
     name: pytest unit suite
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: [self-hosted, ai1]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install deps
+      - name: Install deps (cached venv)
         run: |
-          pip install -r tests/requirements.txt
-          playwright install --with-deps chromium
+          VENV="$HOME/.cache/stm-ci/venv"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q -r tests/requirements.txt
+          "$VENV/bin/playwright" install chromium
       - name: Run pytest
-        run: pytest
+        run: $HOME/.cache/stm-ci/venv/bin/pytest
 
   robot:
     name: robot framework integration
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: [self-hosted, ai1]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - name: Install deps
+      - name: Install deps (cached venv)
+        # NOTE: no --skip-browsers here — RF-Browser's bundled playwright
+        # looks in its own .local-browsers, not pip playwright's cache, so
+        # `rfbrowser init chromium` must install the browser itself.
         run: |
-          pip install -r tests/requirements.txt
-          rfbrowser init --skip-browsers
-          playwright install --with-deps chromium
+          VENV="$HOME/.cache/stm-ci/venv"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q -r tests/requirements.txt
+          "$VENV/bin/rfbrowser" init chromium
       - name: Run robot
-        run: robot --listener tests/integration/listeners/screenshot_listener.py --outputdir results/robot tests/integration
+        run: $HOME/.cache/stm-ci/venv/bin/robot --listener tests/integration/listeners/screenshot_listener.py --outputdir results/robot tests/integration
       - name: Upload robot results
         if: always()
         uses: actions/upload-artifact@v4
