@@ -77,13 +77,18 @@ const HEAT_ENTROPY = 0.35;        // entropy01 contribution of average source-ti
 const RESEARCH_OUTPUT = 1.4;
 const RESEARCH_WEAR = 1.6;
 const RESEARCH = {
-  power:   { name: 'Power',   costs: [30, 150] },
-  cooling: { name: 'Cooling', costs: [25, 125] },
-  compute: { name: 'Compute', costs: [40, 200] },
+  power:   { name: '⚡ Power',   costs: [30, 150] },
+  cooling: { name: '❄️ Cooling', costs: [25, 125] },
+  compute: { name: '🧮 Compute', costs: [40, 200] },
 };
 
 // Allocation — where the AI's tokens go. Selling pays now; research earns RP;
-// self-improvement compounds output but feeds the singularity (entropy).
+// self-improvement compounds output but feeds the singularity (entropy);
+// public compute (UBC) buys goodwill instead of cash.
+const UBC_SENT_PER_TFLOPS = 0.5; // sentiment pts per donated TFLOPS
+const UBC_SENT_CAP = 30;
+const UBI_JOBS_PER_DOLLAR = 0.6; // jobs funded per $/s of public dividend
+const UBI_MAX_SHARE = 0.30;
 const RP_PER_TFLOPS = 0.05;        // RP/s per TFLOPS at 100% research
 const SELF_IMPROVE_RATE = 0.00004; // multiplier growth/s per TFLOPS at 100% self
 const SELF_IMPROVE_CAP = 1.0;      // self-improvement tops out at ×2 output
@@ -135,10 +140,10 @@ const TOOL_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '
 // The palette teaches the stack bottom-up — a loose OSI homage. L3 · NETWORK
 // is reserved for switches/floors/topology (issues #18/#20/#21).
 const LAYERS = [
-  { name: 'L1 · Physical',     tiles: ['solar', 'power', 'fan', 'cooler', 'exch', 'immersion', 'cryo'] },
-  { name: 'L2 · Compute',      tiles: ['gpu1', 'gpu2', 'cpu', 'tpu', 'quantum'] },
-  { name: 'L7 · People & Ops', tiles: ['desk', 'retrain', 'human', 'botbay'] },
-  { name: 'Tools',             tiles: ['repair', 'bull'] },
+  { name: '🔌 L1 · Physical',     tiles: ['solar', 'power', 'fan', 'cooler', 'exch', 'immersion', 'cryo'] },
+  { name: '🧠 L2 · Compute',      tiles: ['gpu1', 'gpu2', 'cpu', 'tpu', 'quantum'] },
+  { name: '👥 L7 · People & Ops', tiles: ['desk', 'retrain', 'human', 'botbay'] },
+  { name: '🛠️ Tools',             tiles: ['repair', 'bull'] },
 ];
 
 // Solar output cycle — the sky has moods (0.2..1.0, ~90s period)
@@ -176,7 +181,8 @@ const state = {
   tokenPrice: REVENUE_PER_TFLOPS, // effective $/TFLOPS after demand × market
 
   // v0.5: token allocation, research points, self-improvement, unlocks
-  alloc: { sell: 1, research: 0, self: 0 }, // normalized shares of compute
+  alloc: { sell: 1, research: 0, self: 0, ubc: 0 }, // normalized shares of compute
+  ubiShare: 0, // fraction of gross revenue paid as public dividend
   rp: 0,             // research points
   selfImprove: 0,    // compounding output bonus, 0..SELF_IMPROVE_CAP
   unlocks: { gpu2: false, ops: false, tpu: false, quantum: false, immersion: false, cryo: false },
@@ -694,15 +700,21 @@ function tick() {
   // Research allocation earns research points
   state.rp += computeAdj * RP_PER_TFLOPS * state.alloc.research * dtS;
 
-  // Jobs ledger: selling compute displaces outside jobs; tiles create them
-  const jobsDisplaced = computeAdj * JOBS_DISPLACED_PER_TFLOPS;
-  const netJobs = jobsCreated - jobsDisplaced;
+  // Jobs ledger: selling compute displaces outside jobs; tiles create them.
+  // Donated (UBC) compute doesn't displace, and the UBI dividend funds jobs
+  // (previous tick's spend — steady-state correct).
+  const ubcShare = state.alloc.ubc || 0;
+  const jobsDisplaced = computeAdj * (1 - ubcShare) * JOBS_DISPLACED_PER_TFLOPS;
+  const jobsFunded = (state.ubiSpend || 0) * UBI_JOBS_PER_DOLLAR;
+  const netJobs = jobsCreated + jobsFunded - jobsDisplaced;
 
-  // Sentiment drifts toward a target set by the jobs balance
+  // Sentiment drifts toward a target set by the jobs balance, plus the
+  // goodwill from donated public compute (free AI for schools and clinics)
+  const ubcSent = Math.min(UBC_SENT_CAP, computeAdj * ubcShare * UBC_SENT_PER_TFLOPS);
   if (state.god.pinSentiment) {
     state.sentiment = 75;
   } else {
-    const target = Math.max(0, Math.min(100, 50 + netJobs));
+    const target = Math.max(0, Math.min(100, 50 + netJobs + ubcSent));
     const drift = SENTIMENT_DRIFT * dtS;
     if (state.sentiment < target) state.sentiment = Math.min(target, state.sentiment + drift);
     else if (state.sentiment > target) state.sentiment = Math.max(target, state.sentiment - drift);
@@ -823,6 +835,9 @@ function tick() {
   const revPerSec = computeAdj * state.tokenPrice * state.alloc.sell;
   const gross = revPerSec * dtS;
   let income = gross;
+  // Universal Basic Income: a share of gross revenue becomes a public dividend
+  state.ubiSpend = revPerSec * (state.ubiShare || 0);
+  income -= state.ubiSpend * dtS;
   if (state.futuresOwed > 0) {
     const withheld = Math.min(state.futuresOwed, gross * FUTURES_REVENUE_SHARE);
     state.futuresOwed -= withheld;
@@ -886,7 +901,7 @@ function tick() {
   state.coolingUsed = coolingUsed;
   state.totalCompute = computeAdj;
   state.upkeep = upkeepAdj;
-  state.revenue = revPerSec - upkeepAdj;
+  state.revenue = revPerSec - state.ubiSpend - upkeepAdj;
   state.jobsCreated = jobsCreated;
   state.jobsDisplaced = jobsDisplaced;
   state.netJobs = netJobs;
@@ -1386,7 +1401,7 @@ function showCellTooltip(e, x, y, cell) {
 
 function layerBadge(id) {
   const layer = LAYERS.find((l) => l.tiles.includes(id));
-  return layer && layer.name !== 'Tools' ? ` <span class="tip-layer">${layer.name}</span>` : '';
+  return layer && !layer.name.includes('Tools') ? ` <span class="tip-layer">${layer.name}</span>` : '';
 }
 
 function moveTooltip(e) {
@@ -1410,7 +1425,7 @@ function pushTicker(text, cls = '') {
 // ---------- Allocation UI ----------
 // Three sliders, normalized to shares: where the AI's tokens go.
 const allocEl = document.getElementById('allocation');
-const ALLOC_LABELS = { sell: 'Sell tokens', research: 'Research', self: 'Self-improve' };
+const ALLOC_LABELS = { sell: '💰 Sell', research: '🔬 Research', self: '🧠 Improve', ubc: '🎁 Public' };
 
 function buildAllocation() {
   allocEl.innerHTML = Object.keys(ALLOC_LABELS).map((k) => `
@@ -1418,10 +1433,20 @@ function buildAllocation() {
       <span class="alloc-name">${ALLOC_LABELS[k]}</span>
       <input type="range" min="0" max="100" value="${k === 'sell' ? 100 : 0}" data-alloc="${k}" />
       <span class="alloc-pct" data-pct="${k}">—</span>
-    </div>`).join('') + '<div class="fin-status" id="alloc-note" hidden></div>';
+    </div>`).join('') + `
+    <div class="alloc-row">
+      <span class="alloc-name">🤝 UBI</span>
+      <input type="range" min="0" max="${UBI_MAX_SHARE * 100}" value="0" data-ubi />
+      <span class="alloc-pct" data-pct="ubi">0%</span>
+    </div>
+    <div class="fin-status" id="alloc-note" hidden></div>`;
   for (const r of allocEl.querySelectorAll('input[data-alloc]')) {
     r.addEventListener('input', readAllocSliders);
   }
+  allocEl.querySelector('input[data-ubi]').addEventListener('input', (e) => {
+    state.ubiShare = +e.target.value / 100;
+    allocEl.querySelector('[data-pct="ubi"]').textContent = `${e.target.value}%`;
+  });
   readAllocSliders();
 }
 
@@ -1443,10 +1468,19 @@ function readAllocSliders() {
 function updateAllocation() {
   const note = document.getElementById('alloc-note');
   if (!note) return;
-  note.hidden = state.selfImprove <= 0;
+  const lines = [];
   if (state.selfImprove > 0) {
-    note.textContent = `Self-improvement: output ×${(1 + state.selfImprove).toFixed(2)}${state.selfImprove >= SELF_IMPROVE_CAP ? ' (MAX)' : ''}`;
+    lines.push(`🧠 Self-improvement: output ×${(1 + state.selfImprove).toFixed(2)}${state.selfImprove >= SELF_IMPROVE_CAP ? ' (MAX)' : ''}`);
   }
+  if ((state.ubiSpend || 0) > 0.005) {
+    lines.push(`🤝 UBI $${state.ubiSpend.toFixed(2)}/s → +${(state.ubiSpend * UBI_JOBS_PER_DOLLAR).toFixed(1)} jobs`);
+  }
+  const ubcTf = state.totalCompute * (state.alloc.ubc || 0);
+  if (ubcTf > 0.05) {
+    lines.push(`🎁 Public compute ${ubcTf.toFixed(1)} TF → +${Math.min(UBC_SENT_CAP, ubcTf * UBC_SENT_PER_TFLOPS).toFixed(0)} mood`);
+  }
+  note.hidden = lines.length === 0;
+  note.innerHTML = lines.join(' · ');
 }
 
 // ---------- Research UI ----------
@@ -1511,12 +1545,12 @@ function buildFinance() {
     <div class="fin-loans"></div>
     <div class="fin-status" data-debt hidden></div>
     <button class="fin-btn" data-futures>
-      <span>Sell compute futures</span>
+      <span>📜 Sell compute futures</span>
       <span class="fin-sub" data-futures-sub></span>
     </button>
     <div class="fin-status" data-owed hidden></div>
     <div class="fin-maint">
-      <span class="fin-maint-label" title="Divert revenue into an automatic repair pool">Auto-maintain</span>
+      <span class="fin-maint-label" title="Divert revenue into an automatic repair pool">🔧 Auto-maintain</span>
       <label><input type="radio" name="maintain" value="0" checked /> off</label>
       <label><input type="radio" name="maintain" value="0.10" /> 10%</label>
       <label><input type="radio" name="maintain" value="0.25" /> 25%</label>
@@ -1538,7 +1572,7 @@ function buildFinance() {
     const btn = document.createElement('button');
     btn.className = 'fin-btn';
     btn.dataset.loan = i;
-    btn.innerHTML = `<span>Borrow $${loan.amount.toLocaleString()}</span><span class="fin-sub">repay $${loan.repay.toLocaleString()}</span>`;
+    btn.innerHTML = `<span>💳 $${loan.amount.toLocaleString()}</span><span class="fin-sub">repay $${loan.repay.toLocaleString()}</span>`;
     btn.addEventListener('click', () => takeLoan(i));
     loansEl.appendChild(btn);
   });
@@ -1757,7 +1791,7 @@ const SAVE_KEYS = [
   'cash', 'grid', 'selectedTool', 'tick',
   'sentiment', 'mood', 'market',
   'alloc', 'rp', 'selfImprove', 'unlocks',
-  'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool',
+  'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool', 'ubiShare',
   'entropy', 'tutStep', 'stats', 'goalUnlocked',
 ];
 
