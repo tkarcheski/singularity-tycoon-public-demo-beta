@@ -213,3 +213,80 @@ def test_space_chapter_no_console_errors(game, errors):
     })()""")
     game.wait_for_timeout(1800)
     assert errors == [], f"errors: {errors[:3]}"
+
+
+# ---------- Review-panel additions ----------
+
+def test_vacuum_wall_bonus_is_1_5(game):
+    launch_station(game)
+    game.evaluate("window.__state.floors.at(-1)[5][5] = { t: 'cooler', cond: 100 }")
+    game.wait_for_timeout(1200)
+    interior = game.evaluate("window.__state.totalCooling")
+    game.evaluate("window.__state.floors.at(-1)[5][5] = null; window.__state.floors.at(-1)[0][0] = { t: 'cooler', cond: 100 }")
+    game.wait_for_timeout(1200)
+    wall = game.evaluate("window.__state.totalCooling")
+    assert abs(wall - interior * 1.5) < 0.5
+
+
+def test_radiation_wear_faster_in_space(game):
+    launch_station(game)
+    game.evaluate("window.__god.entropyMult = 0")
+    game.evaluate("""(() => {
+      window.__state.floors[0][5][5] = { t: 'cpu', cond: 100 };
+      window.__state.floors.at(-1)[5][5] = { t: 'cpu', cond: 100 };
+    })()""")
+    game.wait_for_timeout(3000)
+    ground = game.evaluate("window.__state.floors[0][5][5].cond")
+    space = game.evaluate("window.__state.floors.at(-1)[5][5].cond")
+    assert space < ground  # radiation ×1.25 (plus vacuum heat retention)
+
+
+def test_vertical_effects_reach_upward_too(game):
+    buy_floor2(game)
+    # immersion on F1; heat + wear targets on F2 directly above
+    game.evaluate("""(() => {
+      window.__state.floors[0][5][5] = { t: 'immersion', cond: 100 };
+      window.__state.floors[1][5][5] = { t: 'power', cond: 100 };
+      window.__state.floors[1][5][6] = { t: 'power', cond: 100 };
+    })()""")
+    game.wait_for_timeout(1200)
+    game.click('[data-floor="1"]')
+    game.wait_for_timeout(700)
+    assert game.evaluate("window.__state.auraMaps.wear[5][5]") == 0.7
+    with_bath = game.evaluate("window.__state.heatMap[5][5]")
+    game.evaluate("window.__state.floors[0][5][5] = null")
+    game.wait_for_timeout(1200)
+    without_bath = game.evaluate("window.__state.heatMap[5][5]")
+    assert with_bath < without_bath
+
+
+def test_vacuum_fan_contributes_no_cooling(game):
+    launch_station(game)
+    # a fan smuggled in via state (e.g. an old save) supplies nothing in vacuum
+    game.evaluate("window.__state.floors.at(-1)[5][5] = { t: 'fan', cond: 100 }")
+    game.wait_for_timeout(1200)
+    assert game.evaluate("window.__state.totalCooling") == 0
+
+
+def test_station_does_not_consume_a_tower_rung(game):
+    launch_station(game)  # freeBuild on; station bought at 1 ground floor
+    # next GROUND floor is still F2 at $150k, and the ladder still reaches F5
+    label = game.evaluate("document.querySelector('[data-buy-floor-label]').textContent")
+    assert "Floor 2" in label
+    for expected_ground in (2, 3, 4, 5):
+        game.click("[data-buy-floor]")
+        game.wait_for_timeout(200)
+    assert game.evaluate("window.__state.floors.length") == 6  # 5 ground + 1 station
+    assert game.evaluate("document.querySelector('[data-buy-floor]').hidden") is True
+
+
+def test_vertical_effects_do_not_cross_into_orbit(game):
+    launch_station(game)
+    game.evaluate("window.__state.unlocks.immersion = true")
+    # immersion on the ground floor below the station index; target on station
+    game.evaluate("""(() => {
+      window.__state.floors[0][5][5] = { t: 'immersion', cond: 100 };
+      window.__state.floors.at(-1)[5][5] = { t: 'power', cond: 100 };
+    })()""")
+    game.wait_for_timeout(1200)
+    assert game.evaluate("window.__state.auraMaps.wear[5][5]") == 1

@@ -161,6 +161,7 @@ const VACUUM_WALL_BONUS = 1.5;
 const SPACE_STATION_COST = 250_000;
 const SPACE_SOLAR_MULT = 1.3;   // constant orbital sunlight — no day/night ebb
 const RADIATION_WEAR = 1.25;    // everything wears faster off-planet
+const VACUUM_HEAT_RETAIN = 2;   // no convection: your OWN heat is harder to shed
 
 // ---------- State ----------
 const state = {
@@ -233,9 +234,14 @@ state.floorSpace = [false];    // per-floor vacuum flag — true for space stati
 // Cost of each expansion floor: F2 $150k, F3 $300k, F4 $500k, F5 $750k.
 const FLOOR_COSTS = [150_000, 300_000, 500_000, 750_000];
 const MAX_FLOORS = 1 + FLOOR_COSTS.length;
-// Price of the NEXT floor, or null when the tower is complete.
+// Price of the NEXT floor, or null when the tower is complete. The ladder
+// meters GROUND floors only — the station never consumes a rung or F-number.
+function groundFloorCount() {
+  return state.floors.length - (state.floorSpace || []).filter(Boolean).length;
+}
 function nextFloorCost() {
-  return state.floors.length >= MAX_FLOORS ? null : FLOOR_COSTS[state.floors.length - 1];
+  const n = groundFloorCount();
+  return n >= MAX_FLOORS ? null : FLOOR_COSTS[n - 1];
 }
 
 function newGrid() {
@@ -254,9 +260,10 @@ function updateFloorTabs() {
   if (!tabs) return;
   tabs.hidden = state.floors.length < 2;
   if (tabs.hidden) return;
+  let ground = 0, stations = 0;
   tabs.innerHTML = state.floors.map((_, i) => {
     const icon = isSpaceFloor(i) ? '🛰' : topoOf(i).key === 'hex' ? '⬡' : '🏢';
-    const label = isSpaceFloor(i) ? 'S1' : `F${i + 1}`;
+    const label = isSpaceFloor(i) ? `S${++stations}` : `F${++ground}`;
     return `<button class="floor-tab${i === state.floor ? ' active' : ''}" data-floor="${i}">${icon} ${label}</button>`;
   }).join('');
   for (const btn of tabs.querySelectorAll('[data-floor]')) {
@@ -281,7 +288,7 @@ function forEachFloor(fn) {
 function buyFloor() {
   const cost = nextFloorCost();
   if (cost == null) return;
-  const n = state.floors.length + 1;
+  const n = groundFloorCount() + 1;
   if (!state.god.freeBuild && state.cash < cost) {
     pushTicker(`Floor ${n}: need $${cost.toLocaleString()}`, 'bad');
     return;
@@ -292,7 +299,7 @@ function buyFloor() {
   state.floorSpace.push(false);
   pushTicker(`${state.unlocks.hex ? '⬡' : '🏢'} FLOOR ${n} ONLINE — the datacenter grows upward`, 'good');
   playStinger('research');
-  setActiveFloor(n - 1);
+  setActiveFloor(state.floors.length - 1);
   updateFinance();
 }
 
@@ -596,19 +603,24 @@ function computeAllHeatMaps() {
   for (let f = 0; f < nF; f++) {
     const grid = state.floors[f];
     const topo = topoOf(f);
-    const spread = isSpaceFloor(f) ? 0 : HEAT_SPREAD;
+    const space = isSpaceFloor(f);
+    const spread = space ? 0 : HEAT_SPREAD;
     const src = srcByFloor[f];
     const heat = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
-    // this floor's drains, plus vertical drains reaching from f±1 (one step further)
+    // this floor's drains, plus vertical drains reaching from f±1 (one step
+    // further). The building↔orbit seam is not a floor plate: vertical
+    // effects never cross between ground and space.
     const reach = drainsByFloor[f].map((dr) => ({ ...dr, extra: 0 }));
     for (const vf of [f - 1, f + 1]) {
-      if (vf < 0 || vf >= nF) continue;
+      if (vf < 0 || vf >= nF || isSpaceFloor(vf) !== isSpaceFloor(f)) continue;
       for (const dr of drainsByFloor[vf]) if (dr.vertical) reach.push({ ...dr, extra: 1 });
     }
     for (let y = 0; y < ROWS; y++) {
       for (let x = 0; x < COLS; x++) {
         if (!grid[y][x]) continue;
-        let h = src[y][x];
+        // Vacuum cuts both ways: neighbors can't heat you (spread 0), but your
+        // own heat has nowhere to go without a radiator (retention ×2)
+        let h = src[y][x] * (space ? VACUUM_HEAT_RETAIN : 1);
         for (const [dx, dy] of topo.dirs(x, y)) {
           const nx = x + dx, ny = y + dy;
           if (nx >= 0 && ny >= 0 && nx < COLS && ny < ROWS) h += src[ny][nx] * spread;
@@ -662,7 +674,8 @@ function computeAllAuraMaps() {
         }
         if (aura.vertical) {
           for (const vf of [f - 1, f + 1]) {
-            if (vf >= 0 && vf < nF) apply(vf, x, y, c.t, aura); // straight up/down = distance 1
+            // straight up/down = distance 1; never across the building↔orbit seam
+            if (vf >= 0 && vf < nF && isSpaceFloor(vf) === isSpaceFloor(f)) apply(vf, x, y, c.t, aura);
           }
         }
       }
@@ -1820,6 +1833,7 @@ function showTooltip(e, title, desc, def) {
   if (def?.cost) rows += `<div class="tip-row"><span>Cost</span><span class="v">$${def.cost}</span></div>`;
   if (def?.power) rows += `<div class="tip-row"><span>Power</span><span class="v">${def.power > 0 ? '+' : ''}${def.power} MW</span></div>`;
   if (def?.cooling) rows += `<div class="tip-row"><span>Cooling</span><span class="v">${def.cooling > 0 ? '+' : ''}${def.cooling} kW</span></div>`;
+  if (def?.cooling > 0) rows += `<div class="tip-row"><span>🧱 On a wall</span><span class="v">×${PERIMETER_COOL_BONUS} supply (×${VACUUM_WALL_BONUS} in space)</span></div>`;
   if (def?.compute) rows += `<div class="tip-row"><span>Compute</span><span class="v">${def.compute} TFLOPS</span></div>`;
   if (def?.upkeep) rows += `<div class="tip-row"><span>Upkeep</span><span class="v">$${def.upkeep.toFixed(2)}/s</span></div>`;
   if (def?.jobs) rows += `<div class="tip-row"><span>Jobs</span><span class="v">+${def.jobs}</span></div>`;
@@ -2110,7 +2124,7 @@ function updateFinance() {
     if (cost != null) {
       floorBtn.disabled = !state.god.freeBuild && state.cash < cost;
       const hexNext = state.unlocks.hex;
-      floorBtn.querySelector('[data-buy-floor-label]').textContent = `${hexNext ? '⬡' : '🏢'} Buy Floor ${state.floors.length + 1}`;
+      floorBtn.querySelector('[data-buy-floor-label]').textContent = `${hexNext ? '⬡' : '🏢'} Buy Floor ${groundFloorCount() + 1}`;
       floorBtn.querySelector('[data-buy-floor-sub]').textContent = `$${cost.toLocaleString()} — ${hexNext ? 'hex lattice' : 'grow the tower'}`;
     }
   }
@@ -2311,7 +2325,9 @@ function loadState() {
   if (!snap || snap._v !== 1) return false;
   if (snap.grid && !snap.floors) snap.floors = [snap.grid]; // pre-floors save
   if (snap.floors && !snap.floorTopos) snap.floorTopos = snap.floors.map(() => 'square'); // pre-topology save
-  if (snap.floors && !snap.floorSpace) snap.floorSpace = snap.floors.map(() => false);    // pre-space save
+  // pre-space save (or one round-tripped through an older build): a 'tri'
+  // topo IS a station — derive the vacuum flag rather than stamping false
+  if (snap.floors && !snap.floorSpace) snap.floorSpace = snap.floorTopos.map((t) => t === 'tri');
   for (const k of SAVE_KEYS) {
     if (snap[k] !== undefined) state[k] = snap[k];
   }
