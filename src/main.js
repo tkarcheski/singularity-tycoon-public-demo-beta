@@ -212,7 +212,13 @@ const state = {
 // Floors (#20 v1): state.grid always aliases the active floor's grid so
 // rendering/input/tutorial code stays single-grid; the sim ticks every floor.
 state.floors = [state.grid];
-const FLOOR2_COST = 150_000;
+// Cost of each expansion floor: F2 $150k, F3 $300k, F4 $500k, F5 $750k.
+const FLOOR_COSTS = [150_000, 300_000, 500_000, 750_000];
+const MAX_FLOORS = 1 + FLOOR_COSTS.length;
+// Price of the NEXT floor, or null when the tower is complete.
+function nextFloorCost() {
+  return state.floors.length >= MAX_FLOORS ? null : FLOOR_COSTS[state.floors.length - 1];
+}
 
 function newGrid() {
   return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
@@ -250,16 +256,18 @@ function forEachFloor(fn) {
 }
 
 function buyFloor() {
-  if (state.floors.length >= 2) return;
-  if (!state.god.freeBuild && state.cash < FLOOR2_COST) {
-    pushTicker(`Floor 2: need $${FLOOR2_COST.toLocaleString()}`, 'bad');
+  const cost = nextFloorCost();
+  if (cost == null) return;
+  const n = state.floors.length + 1;
+  if (!state.god.freeBuild && state.cash < cost) {
+    pushTicker(`Floor ${n}: need $${cost.toLocaleString()}`, 'bad');
     return;
   }
-  if (!state.god.freeBuild) state.cash -= FLOOR2_COST;
+  if (!state.god.freeBuild) state.cash -= cost;
   state.floors.push(newGrid());
-  pushTicker('🏢 FLOOR 2 ONLINE — the datacenter grows upward', 'good');
+  pushTicker(`🏢 FLOOR ${n} ONLINE — the datacenter grows upward`, 'good');
   playStinger('research');
-  setActiveFloor(1);
+  setActiveFloor(n - 1);
   updateFinance();
 }
 
@@ -1628,9 +1636,9 @@ function buildFinance() {
   financeEl.innerHTML = `
     <div class="fin-loans"></div>
     <div class="fin-status" data-debt hidden></div>
-    <button class="fin-btn" data-floor2>
-      <span>🏢 Buy Floor 2</span>
-      <span class="fin-sub">$${FLOOR2_COST.toLocaleString()} — double the datacenter</span>
+    <button class="fin-btn" data-buy-floor>
+      <span data-buy-floor-label>🏢 Buy Floor 2</span>
+      <span class="fin-sub" data-buy-floor-sub></span>
     </button>
     <button class="fin-btn" data-futures>
       <span>📜 Sell compute futures</span>
@@ -1665,7 +1673,7 @@ function buildFinance() {
     loansEl.appendChild(btn);
   });
   financeEl.querySelector('[data-futures]').addEventListener('click', sellFutures);
-  financeEl.querySelector('[data-floor2]').addEventListener('click', buyFloor);
+  financeEl.querySelector('[data-buy-floor]').addEventListener('click', buyFloor);
   updateFinance();
 }
 
@@ -1716,10 +1724,15 @@ function updateFinance() {
   // Auto-maintenance is part of the Ops Automation unlock
   const maint = financeEl.querySelector('.fin-maint');
   if (maint) maint.hidden = !state.unlocks.ops && !state.god.freeBuild;
-  const floorBtn = financeEl.querySelector('[data-floor2]');
+  const floorBtn = financeEl.querySelector('[data-buy-floor]');
   if (floorBtn) {
-    floorBtn.hidden = state.floors.length >= 2;
-    floorBtn.disabled = !state.god.freeBuild && state.cash < FLOOR2_COST;
+    const cost = nextFloorCost();
+    floorBtn.hidden = cost == null;
+    if (cost != null) {
+      floorBtn.disabled = !state.god.freeBuild && state.cash < cost;
+      floorBtn.querySelector('[data-buy-floor-label]').textContent = `🏢 Buy Floor ${state.floors.length + 1}`;
+      floorBtn.querySelector('[data-buy-floor-sub]').textContent = `$${cost.toLocaleString()} — grow the tower`;
+    }
   }
 }
 
