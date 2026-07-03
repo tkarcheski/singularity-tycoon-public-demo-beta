@@ -8,12 +8,12 @@ def unlock_hex_and_buy_floor(game):
 
 
 def test_hex_neighbor_sets_by_row_parity(game):
-    even = game.evaluate("window.__topo.hex.dirs(4).length")
-    odd = game.evaluate("window.__topo.hex.dirs(5).length")
+    even = game.evaluate("window.__topo.hex.dirs(5, 4).length")
+    odd = game.evaluate("window.__topo.hex.dirs(5, 5).length")
     assert even == 6 and odd == 6
     # neighbors of (5,4) [even row] and (5,5) [odd row] differ per odd-r offset
-    n_even = game.evaluate("window.__topo.hex.dirs(4).map(([dx,dy]) => `${5+dx},${4+dy}`).sort()")
-    n_odd = game.evaluate("window.__topo.hex.dirs(5).map(([dx,dy]) => `${5+dx},${5+dy}`).sort()")
+    n_even = game.evaluate("window.__topo.hex.dirs(5, 4).map(([dx,dy]) => `${5+dx},${4+dy}`).sort()")
+    n_odd = game.evaluate("window.__topo.hex.dirs(5, 5).map(([dx,dy]) => `${5+dx},${5+dy}`).sort()")
     assert n_even != n_odd
 
 
@@ -23,10 +23,10 @@ def test_hex_distance_is_a_metric(game):
     assert game.evaluate("window.__topo.hex.dist(2, 3, 7, 6)") == game.evaluate(
         "window.__topo.hex.dist(7, 6, 2, 3)")
     all_one = game.evaluate(
-        "window.__topo.hex.dirs(4).every(([dx,dy]) => window.__topo.hex.dist(5, 4, 5+dx, 4+dy) === 1)")
+        "window.__topo.hex.dirs(5, 4).every(([dx,dy]) => window.__topo.hex.dist(5, 4, 5+dx, 4+dy) === 1)")
     assert all_one is True
     all_one_odd = game.evaluate(
-        "window.__topo.hex.dirs(5).every(([dx,dy]) => window.__topo.hex.dist(5, 5, 5+dx, 5+dy) === 1)")
+        "window.__topo.hex.dirs(5, 5).every(([dx,dy]) => window.__topo.hex.dist(5, 5, 5+dx, 5+dy) === 1)")
     assert all_one_odd is True
 
 
@@ -67,7 +67,7 @@ def test_hex_floor_simulates_with_six_neighbor_auras(game):
       g[0][2] = { t: 'cooler', cond: 100 };
       g[4][5] = { t: 'gpu1', cond: 100 };
       // ring the gpu with CPUs on all six hex neighbors (even row 4)
-      for (const [dx, dy] of window.__topo.hex.dirs(4)) {
+      for (const [dx, dy] of window.__topo.hex.dirs(5, 4)) {
         window.__state.grid[4 + dy][5 + dx] = { t: 'cpu', cond: 100 };
       }
     })()""")

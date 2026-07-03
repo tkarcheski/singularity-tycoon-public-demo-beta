@@ -16,7 +16,7 @@ const TILE_TYPES = {
   fan:     { name: 'Fan Wall',        cost: 25,  power: 0,   cooling: 4,  compute: 0,    upkeep: 0.15, jobs: 0, wear: 0.35, drain: [4, 2], color: '#15202b', accent: '#9adcff', desc: 'Air cooling: 4 kW, but only drains heat up close (range 1). Cheap, wears fast.' },
   cooler:  { name: 'Coolant Loop',    cost: 50,  power: -1,  cooling: 10, compute: 0,    upkeep: 0.3,  jobs: 1, wear: 0.25, drain: [8, 5, 2.5], color: '#10293a', accent: '#6ec5ff', desc: 'Provides 10 kW of cooling. Needs 1 MW. Drains heat from nearby tiles — closer is cooler.' },
   exch:    { name: 'Heat Exchanger',  cost: 150, power: -2,  cooling: 18, compute: 0,    upkeep: 0.9,  jobs: 1, wear: 0.22, drain: [6, 4.5, 3, 1.5], color: '#0f3230', accent: '#63e0cf', desc: 'Provides 18 kW and pulls heat from up to 3 tiles away — the wide-area workhorse of a serious farm. Needs 2 MW.' },
-  immersion: { name: 'Immersion Bath', cost: 260, power: -3, cooling: 14, compute: 0,   upkeep: 1.2,  jobs: 1, wear: 0.18, gate: 'immersion', drain: [12, 8], aura: { wearGuard: 0.7, range: 1 }, color: '#0b2b45', accent: '#4fb7ff', desc: 'Dielectric liquid bath: the strongest drain in the game, but only touching its neighbors — which also wear 30% slower while submerged. Needs 3 MW.' },
+  immersion: { name: 'Immersion Bath', cost: 260, power: -3, cooling: 14, compute: 0,   upkeep: 1.2,  jobs: 1, wear: 0.18, gate: 'immersion', drain: [12, 8], vDrain: true, aura: { wearGuard: 0.7, range: 1, vertical: true }, color: '#0b2b45', accent: '#4fb7ff', desc: 'Dielectric liquid bath: the strongest drain in the game, touching its neighbors — and the same spot on the floors above and below. Submerged tiles wear 30% slower. Needs 3 MW.' },
   cryo:    { name: 'Cryo Plant',      cost: 1200, power: -8, cooling: 40, compute: 0,   upkeep: 5.0,  jobs: 2, wear: 0.30, gate: 'cryo', drain: [8, 5, 2.5], color: '#1a2340', accent: '#9db8ff', desc: 'Industrial cryogenics: 40 kW of supply — enough to feed a Quantum Annealer. Needs 8 MW.' },
   gpu1:    { name: 'GPU Rack v1',     cost: 120, power: -4,  cooling: -3, compute: 6,    upkeep: 1.2,  jobs: 1, wear: 0.42, color: '#102a23', accent: '#4af0c0', desc: 'Generates 6 TFLOPS. Needs 4 MW + 3 kW. Clusters: +10% output but +15% heat per adjacent GPU.' },
   gpu2:    { name: 'GPU Rack v2',     cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  jobs: 2, wear: 0.42, gate: 'gpu2', color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Same cluster bonus/heat as v1.' },
@@ -152,6 +152,17 @@ const SOLAR_PERIOD_S = 90;
 const GOAL = 1_000_000;
 const BANKRUPT_AFTER_S = 60; // sim-seconds of negative cash before the run dies
 
+// Wall integration: cooling tiles on the board edge exchange heat through
+// the envelope. In vacuum the wall is a radiator — bigger bonus.
+const PERIMETER_COOL_BONUS = 1.25;
+const VACUUM_WALL_BONUS = 1.5;
+
+// Space (epic #44, tier 1): vacuum physics for station floors
+const SPACE_STATION_COST = 250_000;
+const SPACE_SOLAR_MULT = 1.3;   // constant orbital sunlight — no day/night ebb
+const RADIATION_WEAR = 1.25;    // everything wears faster off-planet
+const VACUUM_HEAT_RETAIN = 2;   // no convection: your OWN heat is harder to shed
+
 // ---------- State ----------
 const state = {
   cash: 500,
@@ -219,12 +230,18 @@ const state = {
 // rendering/input/tutorial code stays single-grid; the sim ticks every floor.
 state.floors = [state.grid];
 state.floorTopos = ['square']; // per-floor lattice key, parallel to floors
+state.floorSpace = [false];    // per-floor vacuum flag — true for space stations
 // Cost of each expansion floor: F2 $150k, F3 $300k, F4 $500k, F5 $750k.
 const FLOOR_COSTS = [150_000, 300_000, 500_000, 750_000];
 const MAX_FLOORS = 1 + FLOOR_COSTS.length;
-// Price of the NEXT floor, or null when the tower is complete.
+// Price of the NEXT floor, or null when the tower is complete. The ladder
+// meters GROUND floors only — the station never consumes a rung or F-number.
+function groundFloorCount() {
+  return state.floors.length - (state.floorSpace || []).filter(Boolean).length;
+}
 function nextFloorCost() {
-  return state.floors.length >= MAX_FLOORS ? null : FLOOR_COSTS[state.floors.length - 1];
+  const n = groundFloorCount();
+  return n >= MAX_FLOORS ? null : FLOOR_COSTS[n - 1];
 }
 
 function newGrid() {
@@ -243,9 +260,12 @@ function updateFloorTabs() {
   if (!tabs) return;
   tabs.hidden = state.floors.length < 2;
   if (tabs.hidden) return;
-  tabs.innerHTML = state.floors.map((_, i) =>
-    `<button class="floor-tab${i === state.floor ? ' active' : ''}" data-floor="${i}">${topoOf(i).key === 'hex' ? '⬡' : '🏢'} F${i + 1}</button>`,
-  ).join('');
+  let ground = 0, stations = 0;
+  tabs.innerHTML = state.floors.map((_, i) => {
+    const icon = isSpaceFloor(i) ? '🛰' : topoOf(i).key === 'hex' ? '⬡' : '🏢';
+    const label = isSpaceFloor(i) ? `S${++stations}` : `F${++ground}`;
+    return `<button class="floor-tab${i === state.floor ? ' active' : ''}" data-floor="${i}">${icon} ${label}</button>`;
+  }).join('');
   for (const btn of tabs.querySelectorAll('[data-floor]')) {
     btn.addEventListener('click', () => setActiveFloor(+btn.dataset.floor));
   }
@@ -268,7 +288,7 @@ function forEachFloor(fn) {
 function buyFloor() {
   const cost = nextFloorCost();
   if (cost == null) return;
-  const n = state.floors.length + 1;
+  const n = groundFloorCount() + 1;
   if (!state.god.freeBuild && state.cash < cost) {
     pushTicker(`Floor ${n}: need $${cost.toLocaleString()}`, 'bad');
     return;
@@ -276,9 +296,32 @@ function buyFloor() {
   if (!state.god.freeBuild) state.cash -= cost;
   state.floors.push(newGrid());
   state.floorTopos.push(state.unlocks.hex ? 'hex' : 'square');
+  state.floorSpace.push(false);
   pushTicker(`${state.unlocks.hex ? '⬡' : '🏢'} FLOOR ${n} ONLINE — the datacenter grows upward`, 'good');
   playStinger('research');
-  setActiveFloor(n - 1);
+  setActiveFloor(state.floors.length - 1);
+  updateFinance();
+}
+
+// The Dyson blueprint opens the door to orbit: one station in this slice,
+// on a triangular lattice, under vacuum rules (epic #44, tier 1).
+function buySpaceStation() {
+  if ((state.floorSpace || []).some(Boolean)) return;
+  if (!state.goalUnlocked) {
+    pushTicker('🛰 Space needs the Dyson Sphere blueprint — reach $1,000,000 first', 'bad');
+    return;
+  }
+  if (!state.god.freeBuild && state.cash < SPACE_STATION_COST) {
+    pushTicker(`Space Station: need $${SPACE_STATION_COST.toLocaleString()}`, 'bad');
+    return;
+  }
+  if (!state.god.freeBuild) state.cash -= SPACE_STATION_COST;
+  state.floors.push(newGrid());
+  state.floorTopos.push('tri');
+  state.floorSpace.push(true);
+  pushTicker('🛰 SPACE STATION ONLINE — no air, endless sun, hard radiation', 'good');
+  playStinger('goal');
+  setActiveFloor(state.floors.length - 1);
   updateFinance();
 }
 
@@ -325,7 +368,7 @@ const TOPOLOGIES = {
   },
   hex: {
     key: 'hex',
-    dirs(y) { return HEX_DIRS[y & 1]; },
+    dirs(x, y) { return HEX_DIRS[y & 1]; },
     dist(ax, ay, bx, by) {
       const a = hexCube(ax, ay), b = hexCube(bx, by);
       const dq = a.q - b.q, dr = a.r - b.r;
@@ -362,12 +405,125 @@ const TOPOLOGIES = {
       ctx.closePath();
     },
   },
+  tri: {
+    // Space tier 1: alternating up/down triangles in the same [ROWS][COLS]
+    // storage — up when (x+y) is even. 3 neighbors: connectivity-poor,
+    // perimeter-rich, exactly the tier-1 constraint from the roadmap.
+    key: 'tri',
+    dirs(x, y) {
+      return (x + y) % 2 === 0
+        ? [[-1, 0], [1, 0], [0, 1]]   // up-triangle: base at the bottom
+        : [[-1, 0], [1, 0], [0, -1]]; // down-triangle: base at the top
+    },
+    dist: triDist,
+    center(x, y) {
+      const up = (x + y) % 2 === 0;
+      return { cx: (x + 1) * TRI_HALFW, cy: y * TRI_H + (up ? (2 * TRI_H) / 3 : TRI_H / 3) };
+    },
+    boardSize() { return { w: (COLS + 1) * TRI_HALFW, h: ROWS * TRI_H }; },
+    pick(px, py) {
+      const gy = Math.floor(py / TRI_H);
+      if (gy < 0 || gy >= ROWS) return null;
+      const approx = Math.floor(px / TRI_HALFW);
+      for (let x = approx - 2; x <= approx + 1; x++) {
+        if (x < 0 || x >= COLS) continue;
+        if (pointInTri(px, py, x, gy)) return { x, y: gy };
+      }
+      return null;
+    },
+    trace(ctx, cx, cy, inset = 0) {
+      const scale = Math.max(0, 1 - inset / (TRI_H / 3));
+      const verts = this._verts(cx, cy);
+      ctx.beginPath();
+      verts.forEach(([vx, vy], i) => {
+        const sx = cx + (vx - cx) * scale, sy = cy + (vy - cy) * scale;
+        if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+      });
+      ctx.closePath();
+    },
+    // Vertex set for the triangle whose CENTROID is at (cx, cy) — orientation
+    // recovered from the centroid's fractional position inside its band.
+    _verts(cx, cy) {
+      const band = Math.floor(cy / TRI_H);
+      const isUp = cy - band * TRI_H > TRI_H / 2; // up centroids sit low in the band
+      const top = band * TRI_H, bottom = (band + 1) * TRI_H;
+      return isUp
+        ? [[cx, top], [cx - TRI_HALFW, bottom], [cx + TRI_HALFW, bottom]]
+        : [[cx - TRI_HALFW, top], [cx + TRI_HALFW, top], [cx, bottom]];
+    },
+  },
 };
+
+// Triangle-cell geometry: side TRI_S, band height TRI_H, half-width TRI_HALFW
+const TRI_S = 72;
+const TRI_H = (TRI_S * Math.sqrt(3)) / 2;
+const TRI_HALFW = TRI_S / 2;
+
+function triVertices(x, y) {
+  const up = (x + y) % 2 === 0;
+  const left = x * TRI_HALFW, right = (x + 2) * TRI_HALFW, mid = (x + 1) * TRI_HALFW;
+  const top = y * TRI_H, bottom = (y + 1) * TRI_H;
+  return up
+    ? [[mid, top], [left, bottom], [right, bottom]]
+    : [[left, top], [right, top], [mid, bottom]];
+}
+
+function pointInTri(px, py, x, y) {
+  const [a, b, c] = triVertices(x, y);
+  const sign = (p, q, r) => (p[0] - r[0]) * (q[1] - r[1]) - (q[0] - r[0]) * (p[1] - r[1]);
+  const d1 = sign([px, py], a, b), d2 = sign([px, py], b, c), d3 = sign([px, py], c, a);
+  const neg = d1 < 0 || d2 < 0 || d3 < 0, pos = d1 > 0 || d2 > 0 || d3 > 0;
+  return !(neg && pos);
+}
+
+// Lattice distance on the triangular grid: memoized BFS over the unbounded
+// lattice (translation-invariant up to cell parity, so the memo stays small).
+const triDistMemo = new Map();
+function triDist(ax, ay, bx, by) {
+  const p = (ax + ay) & 1;
+  const key = `${bx - ax},${by - ay},${p}`;
+  const hit = triDistMemo.get(key);
+  if (hit !== undefined) return hit;
+  const dx = bx - ax, dy = by - ay;
+  const R = Math.abs(dx) + Math.abs(dy) + 2;
+  const seen = new Set(['0,0']);
+  let frontier = [[0, 0]], d = 0;
+  while (frontier.length) {
+    const next = [];
+    for (const [qx, qy] of frontier) {
+      if (qx === dx && qy === dy) { triDistMemo.set(key, d); return d; }
+      const up = ((qx + qy + p) & 1) === 0;
+      const dirs = up ? [[-1, 0], [1, 0], [0, 1]] : [[-1, 0], [1, 0], [0, -1]];
+      for (const [mx, my] of dirs) {
+        const nx = qx + mx, ny = qy + my;
+        if (Math.abs(nx) > R || Math.abs(ny) > R) continue;
+        const k = `${nx},${ny}`;
+        if (!seen.has(k)) { seen.add(k); next.push([nx, ny]); }
+      }
+    }
+    frontier = next;
+    d++;
+  }
+  triDistMemo.set(key, Infinity);
+  return Infinity;
+}
 
 function topoOf(f) {
   return TOPOLOGIES[(state.floorTopos || [])[f]] || TOPOLOGIES.square;
 }
 state.topo = TOPOLOGIES.square; // alias of the active floor's topology, like state.grid
+
+function isPerimeter(x, y) {
+  return x === 0 || y === 0 || x === COLS - 1 || y === ROWS - 1;
+}
+function isSpaceFloor(f) {
+  return !!(state.floorSpace || [])[f];
+}
+// Wall bonus for a cooling tile at (x,y) on floor f — the envelope radiates
+function wallBonus(f, x, y) {
+  if (!isPerimeter(x, y)) return 1;
+  return isSpaceFloor(f) ? VACUUM_WALL_BONUS : PERIMETER_COOL_BONUS;
+}
 window.__topo = TOPOLOGIES; // test handle for lattice math
 
 function cellsOf(...types) {
@@ -383,7 +539,7 @@ function cellsOf(...types) {
 
 function neighborCells(x, y) {
   const out = [];
-  for (const [dx, dy] of state.topo.dirs(y)) {
+  for (const [dx, dy] of state.topo.dirs(x, y)) {
     const nx = x + dx, ny = y + dy;
     if (nx >= 0 && ny >= 0 && nx < COLS && ny < ROWS && state.grid[ny][nx]) {
       out.push({ x: nx, y: ny, c: state.grid[ny][nx] });
@@ -416,68 +572,116 @@ function repairPrice(c) {
 
 // Per-tile heat01 map. Sources emit, neighbors catch spillover, coolant loops
 // drain with distance falloff — a close loop keeps a GPU cool (low wear).
-function computeHeatMap() {
-  const src = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
-  const heat = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      const c = state.grid[y][x];
-      if (c && c.cond > 0) src[y][x] = HEAT_SOURCE[c.t] || 0;
-    }
-  }
-  // Every working cooling tile with a `drain` profile pulls heat with
-  // distance falloff — declarative, so new coolers plug in via TILE_TYPES.
-  const drains = [];
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      const c = state.grid[y][x];
-      if (c && c.cond > 0 && TILE_TYPES[c.t].drain) drains.push({ x, y, drain: TILE_TYPES[c.t].drain });
-    }
-  }
+// Heat, all floors at once so vertical drains (vDrain tiles, e.g. immersion)
+// can reach the same cell one floor up/down at drain[d+1] strength. Vacuum
+// floors get no convective spread — neighbors don't heat each other in space.
+function computeAllHeatMaps() {
+  const nF = state.floors.length;
   const coolMult = techMult('cooling');
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      if (!state.grid[y][x]) continue;
-      let h = src[y][x];
-      for (const [dx, dy] of state.topo.dirs(y)) {
-        const nx = x + dx, ny = y + dy;
-        if (nx >= 0 && ny >= 0 && nx < COLS && ny < ROWS) h += src[ny][nx] * HEAT_SPREAD;
+  // Per-floor heat sources and drain lists (fans are dead in vacuum)
+  const srcByFloor = [], drainsByFloor = [];
+  for (let f = 0; f < nF; f++) {
+    const grid = state.floors[f];
+    const space = isSpaceFloor(f);
+    const src = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+    const drains = [];
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const c = grid[y][x];
+        if (!c || c.cond <= 0) continue;
+        src[y][x] = HEAT_SOURCE[c.t] || 0;
+        const def = TILE_TYPES[c.t];
+        if (def.drain && !(space && c.t === 'fan')) {
+          drains.push({ x, y, drain: def.drain, vertical: !!def.vDrain });
+        }
       }
-      for (const dr of drains) {
-        const d = state.topo.dist(dr.x, dr.y, x, y);
-        if (d < dr.drain.length) h -= dr.drain[d] * coolMult;
-      }
-      heat[y][x] = Math.max(0, Math.min(1, h / HEAT_CAP));
     }
+    srcByFloor.push(src);
+    drainsByFloor.push(drains);
   }
-  return heat;
+  const maps = [];
+  for (let f = 0; f < nF; f++) {
+    const grid = state.floors[f];
+    const topo = topoOf(f);
+    const space = isSpaceFloor(f);
+    const spread = space ? 0 : HEAT_SPREAD;
+    const src = srcByFloor[f];
+    const heat = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+    // this floor's drains, plus vertical drains reaching from f±1 (one step
+    // further). The building↔orbit seam is not a floor plate: vertical
+    // effects never cross between ground and space.
+    const reach = drainsByFloor[f].map((dr) => ({ ...dr, extra: 0 }));
+    for (const vf of [f - 1, f + 1]) {
+      if (vf < 0 || vf >= nF || isSpaceFloor(vf) !== isSpaceFloor(f)) continue;
+      for (const dr of drainsByFloor[vf]) if (dr.vertical) reach.push({ ...dr, extra: 1 });
+    }
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        if (!grid[y][x]) continue;
+        // Vacuum cuts both ways: neighbors can't heat you (spread 0), but your
+        // own heat has nowhere to go without a radiator (retention ×2)
+        let h = src[y][x] * (space ? VACUUM_HEAT_RETAIN : 1);
+        for (const [dx, dy] of topo.dirs(x, y)) {
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < COLS && ny < ROWS) h += src[ny][nx] * spread;
+        }
+        for (const dr of reach) {
+          const d = topo.dist(dr.x, dr.y, x, y) + dr.extra;
+          if (d < dr.drain.length) h -= dr.drain[d] * coolMult;
+        }
+        heat[y][x] = Math.max(0, Math.min(1, h / HEAT_CAP));
+      }
+    }
+    maps.push(heat);
+  }
+  return maps;
 }
 
 // Synergy auras (issue #17 v1): tiles with an `aura` descriptor influence
 // their neighborhood. Returns { boost, wear } grids — boost multiplies
 // compute output (capped), wearGuard multiplies wear rate (floored).
-function computeAuraMaps() {
-  const boost = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
-  const wear = Array.from({ length: ROWS }, () => Array(COLS).fill(1));
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      const c = state.grid[y][x];
-      if (!c || c.cond <= 0) continue;
-      const aura = TILE_TYPES[c.t].aura;
-      if (!aura) continue;
-      for (let ty = 0; ty < ROWS; ty++) {
-        for (let tx = 0; tx < COLS; tx++) {
-          const d = state.topo.dist(tx, ty, x, y);
-          if (d === 0 || d > aura.range) continue;
-          const target = state.grid[ty][tx];
-          if (!target || target.t === c.t) continue; // auras don't self-farm
-          if (aura.boost && isCompute(target.t)) boost[ty][tx] = Math.min(AURA_BOOST_CAP, boost[ty][tx] + aura.boost);
-          if (aura.wearGuard) wear[ty][tx] = Math.max(AURA_WEAR_FLOOR, wear[ty][tx] * aura.wearGuard);
+// Auras, all floors at once. A tile with `aura.vertical` also projects onto
+// the vertically adjacent cell (same x,y) one floor up/down — the seam the
+// future networking tiles (#18/#45) will widen into cross-floor orchestration.
+function computeAllAuraMaps() {
+  const nF = state.floors.length;
+  const maps = state.floors.map(() => ({
+    boost: Array.from({ length: ROWS }, () => Array(COLS).fill(0)),
+    wear: Array.from({ length: ROWS }, () => Array(COLS).fill(1)),
+  }));
+  const apply = (tf, tx, ty, srcType, aura) => {
+    const target = state.floors[tf][ty][tx];
+    if (!target || target.t === srcType) return; // auras don't self-farm
+    const m = maps[tf];
+    if (aura.boost && isCompute(target.t)) m.boost[ty][tx] = Math.min(AURA_BOOST_CAP, m.boost[ty][tx] + aura.boost);
+    if (aura.wearGuard) m.wear[ty][tx] = Math.max(AURA_WEAR_FLOOR, m.wear[ty][tx] * aura.wearGuard);
+  };
+  for (let f = 0; f < nF; f++) {
+    const grid = state.floors[f];
+    const topo = topoOf(f);
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const c = grid[y][x];
+        if (!c || c.cond <= 0) continue;
+        const aura = TILE_TYPES[c.t].aura;
+        if (!aura) continue;
+        for (let ty = 0; ty < ROWS; ty++) {
+          for (let tx = 0; tx < COLS; tx++) {
+            const d = topo.dist(tx, ty, x, y);
+            if (d === 0 || d > aura.range) continue;
+            apply(f, tx, ty, c.t, aura);
+          }
+        }
+        if (aura.vertical) {
+          for (const vf of [f - 1, f + 1]) {
+            // straight up/down = distance 1; never across the building↔orbit seam
+            if (vf >= 0 && vf < nF && isSpaceFloor(vf) === isSpaceFloor(f)) apply(vf, x, y, c.t, aura);
+          }
         }
       }
     }
   }
-  return { boost, wear };
+  return maps;
 }
 function damageCell(x, y, amount) {
   const c = state.grid[y][x];
@@ -710,6 +914,10 @@ function attemptPlace(x, y) {
     pushTicker(`${def.name} is locked — unlock it in the Build panel`, 'bad');
     return;
   }
+  if (id === 'fan' && isSpaceFloor(state.floor)) {
+    pushTicker("🛰 No air in vacuum — fan walls don't work in space. Use liquid cooling on the walls.", 'bad');
+    return;
+  }
   if (existing) {
     pushTicker(`Cell occupied — bulldoze first (press =)`, 'bad');
     return;
@@ -773,7 +981,8 @@ function tick() {
   // Tally power, cooling, upkeep, jobs across ALL floors — research and
   // condition scale supply; broken tiles supply nothing but bleed half upkeep
   let power = 0, cooling = 0, deskCount = 0, upkeep = 0, jobsCreated = 0;
-  forEachFloor(() => {
+  forEachFloor((f) => {
+    const space = isSpaceFloor(f);
     for (let y = 0; y < ROWS; y++) {
       for (let x = 0; x < COLS; x++) {
         const c = state.grid[y][x];
@@ -783,10 +992,13 @@ function tick() {
         upkeep += (t.upkeep || 0) * (broken ? 0.5 : 1);
         jobsCreated += t.jobs || 0;
         if (broken) continue;
+        if (space && c.t === 'fan') continue; // no air to move in vacuum
         const s = condScale(c);
-        if (c.t === 'solar') power += t.power * techMult('power') * s * state.sun;
+        // Orbit gets constant, stronger sunlight; the ground gets the sky's moods
+        if (c.t === 'solar') power += t.power * techMult('power') * s * (space ? SPACE_SOLAR_MULT : state.sun);
         else if (t.power > 0) power += t.power * techMult('power') * s;
-        if (t.cooling > 0) cooling += t.cooling * techMult('cooling') * s;
+        // Wall-mounted cooling radiates through the envelope (vacuum doubles down)
+        if (t.cooling > 0) cooling += t.cooling * techMult('cooling') * s * wallBonus(f, x, y);
         if (c.t === 'desk') deskCount++;
       }
     }
@@ -794,12 +1006,11 @@ function tick() {
 
   // Each working compute tile draws from the SHARED pools; output scales with
   // research, condition, synergy auras, and the GPU adjacency cluster bonus
-  const aurasByFloor = [];
+  const aurasByFloor = computeAllAuraMaps();
   const cellsByFloor = [];
   let powerUsed = 0, coolingUsed = 0, gpuTflops = 0;
   forEachFloor((f) => {
-    const auras = computeAuraMaps();
-    aurasByFloor[f] = auras;
+    const auras = aurasByFloor[f];
     cellsByFloor[f] = [];
     for (let y = 0; y < ROWS; y++) {
       for (let x = 0; x < COLS; x++) {
@@ -902,15 +1113,13 @@ function tick() {
   if (mood === 'protest') computeAdj *= 0.5;
 
   // Heat maps: hot silicon wears faster, and hot floors feed entropy
-  const heatByFloor = [];
+  const heatByFloor = computeAllHeatMaps();
   let heatSum = 0, heatN = 0;
   forEachFloor((f) => {
-    const heatMap = computeHeatMap();
-    heatByFloor[f] = heatMap;
     for (let y = 0; y < ROWS; y++) {
       for (let x = 0; x < COLS; x++) {
         const c = state.grid[y][x];
-        if (c && HEAT_SOURCE[c.t]) { heatSum += heatMap[y][x]; heatN++; }
+        if (c && HEAT_SOURCE[c.t]) { heatSum += heatByFloor[f][y][x]; heatN++; }
       }
     }
   });
@@ -945,7 +1154,8 @@ function tick() {
             * (track ? Math.pow(RESEARCH_WEAR, state.tech[track]) : 1)
             * (1 + ENTROPY_WEAR_MULT * entropy01)
             * (1 + HEAT_WEAR_MULT * heatByFloor[f][y][x])
-            * aurasByFloor[f].wear[y][x];
+            * aurasByFloor[f].wear[y][x]
+            * (isSpaceFloor(f) ? RADIATION_WEAR : 1);
           const before = c.cond;
           c.cond = Math.max(0, c.cond - rate * dtS);
           if (before > 0 && c.cond <= 0) {
@@ -1623,6 +1833,7 @@ function showTooltip(e, title, desc, def) {
   if (def?.cost) rows += `<div class="tip-row"><span>Cost</span><span class="v">$${def.cost}</span></div>`;
   if (def?.power) rows += `<div class="tip-row"><span>Power</span><span class="v">${def.power > 0 ? '+' : ''}${def.power} MW</span></div>`;
   if (def?.cooling) rows += `<div class="tip-row"><span>Cooling</span><span class="v">${def.cooling > 0 ? '+' : ''}${def.cooling} kW</span></div>`;
+  if (def?.cooling > 0) rows += `<div class="tip-row"><span>🧱 On a wall</span><span class="v">×${PERIMETER_COOL_BONUS} supply (×${VACUUM_WALL_BONUS} in space)</span></div>`;
   if (def?.compute) rows += `<div class="tip-row"><span>Compute</span><span class="v">${def.compute} TFLOPS</span></div>`;
   if (def?.upkeep) rows += `<div class="tip-row"><span>Upkeep</span><span class="v">$${def.upkeep.toFixed(2)}/s</span></div>`;
   if (def?.jobs) rows += `<div class="tip-row"><span>Jobs</span><span class="v">+${def.jobs}</span></div>`;
@@ -1659,6 +1870,10 @@ function showCellTooltip(e, x, y, cell) {
     const b = state.auraMaps.boost[y][x], w = state.auraMaps.wear[y][x];
     if (b > 0) rows += `<div class="tip-row"><span>Synergy</span><span class="v">+${Math.round(b * 100)}% out</span></div>`;
     if (w < 1) rows += `<div class="tip-row"><span>Wear guard</span><span class="v">×${w.toFixed(2)}</span></div>`;
+  }
+  if (def.cooling > 0 && isPerimeter(x, y)) {
+    const wb = wallBonus(state.floor, x, y);
+    rows += `<div class="tip-row"><span>${isSpaceFloor(state.floor) ? '🛰 Radiator' : '🧱 Wall-mounted'}</span><span class="v">×${wb.toFixed(2)} supply</span></div>`;
   }
   tooltipEl.innerHTML = `<div class="tip-title">${def.name}${layerBadge(cell.t)}</div><div style="color:var(--text-muted);font-size:11px;margin-top:4px;">${def.desc}</div>${rows}`;
   moveTooltip(e);
@@ -1812,6 +2027,10 @@ function buildFinance() {
         <span class="fin-sub">${UNLOCKS.hex.rp} RP — 6-way floors</span>
       </button>
     </div>
+    <button class="fin-btn" data-space>
+      <span>🛰 Launch Space Station</span>
+      <span class="fin-sub">$${SPACE_STATION_COST.toLocaleString()} — triangle lattice, vacuum rules</span>
+    </button>
     <button class="fin-btn" data-futures>
       <span>📜 Sell compute futures</span>
       <span class="fin-sub" data-futures-sub></span>
@@ -1847,6 +2066,7 @@ function buildFinance() {
   financeEl.querySelector('[data-futures]').addEventListener('click', sellFutures);
   financeEl.querySelector('[data-buy-floor]').addEventListener('click', buyFloor);
   financeEl.querySelector('[data-hex-unlock]').addEventListener('click', () => tryUnlock('hex'));
+  financeEl.querySelector('[data-space]').addEventListener('click', buySpaceStation);
   updateFinance();
 }
 
@@ -1904,7 +2124,7 @@ function updateFinance() {
     if (cost != null) {
       floorBtn.disabled = !state.god.freeBuild && state.cash < cost;
       const hexNext = state.unlocks.hex;
-      floorBtn.querySelector('[data-buy-floor-label]').textContent = `${hexNext ? '⬡' : '🏢'} Buy Floor ${state.floors.length + 1}`;
+      floorBtn.querySelector('[data-buy-floor-label]').textContent = `${hexNext ? '⬡' : '🏢'} Buy Floor ${groundFloorCount() + 1}`;
       floorBtn.querySelector('[data-buy-floor-sub]').textContent = `$${cost.toLocaleString()} — ${hexNext ? 'hex lattice' : 'grow the tower'}`;
     }
   }
@@ -1913,6 +2133,12 @@ function updateFinance() {
     // surfaces once research has begun; gone once unlocked or tower complete
     hexBtn.hidden = state.unlocks.hex || nextFloorCost() == null || (state.rp < 1 && state.tech.compute === 0);
     hexBtn.disabled = !state.god.freeBuild && state.rp < UNLOCKS.hex.rp;
+  }
+  const spaceBtn = financeEl.querySelector('[data-space]');
+  if (spaceBtn) {
+    // the demo's cliffhanger becomes a door: appears with the blueprint
+    spaceBtn.hidden = !state.goalUnlocked || (state.floorSpace || []).some(Boolean);
+    spaceBtn.disabled = !state.god.freeBuild && state.cash < SPACE_STATION_COST;
   }
 }
 
@@ -2078,7 +2304,7 @@ const SAVE_KEYS = [
   'cash', 'floors', 'floor', 'selectedTool', 'tick',
   'sentiment', 'mood', 'market',
   'alloc', 'rp', 'selfImprove', 'unlocks',
-  'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool', 'floorTopos',
+  'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool', 'floorTopos', 'floorSpace',
   'entropy', 'tutStep', 'stats', 'goalUnlocked', 'insolvencyS', 'bankrupt',
 ];
 
@@ -2099,6 +2325,9 @@ function loadState() {
   if (!snap || snap._v !== 1) return false;
   if (snap.grid && !snap.floors) snap.floors = [snap.grid]; // pre-floors save
   if (snap.floors && !snap.floorTopos) snap.floorTopos = snap.floors.map(() => 'square'); // pre-topology save
+  // pre-space save (or one round-tripped through an older build): a 'tri'
+  // topo IS a station — derive the vacuum flag rather than stamping false
+  if (snap.floors && !snap.floorSpace) snap.floorSpace = snap.floorTopos.map((t) => t === 'tri');
   for (const k of SAVE_KEYS) {
     if (snap[k] !== undefined) state[k] = snap[k];
   }
