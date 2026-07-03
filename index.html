@@ -58,6 +58,20 @@
         <canvas id="game" width="960" height="720" tabindex="0"></canvas>
         <div class="floor-tabs" id="floor-tabs" hidden></div>
         <div class="insolvency" id="insolvency" hidden></div>
+        <div class="modal" id="demo-end" hidden>
+          <div class="modal-card demo-end-card">
+            <h2>🚀 DYSON SPHERE BLUEPRINT ACQUIRED</h2>
+            <p class="gameover-blurb">You built a million-dollar mind on Earth. That was the demo.</p>
+            <div id="demo-end-stats"></div>
+            <p class="gameover-blurb">The full game: rebuild it <em>in space</em> — new geometry every tier,
+            from a simple triangle to lattices that never repeat. Mine asteroids. Launch everything.
+            Share your best designs.</p>
+            <div class="demo-end-actions">
+              <button class="primary-btn" id="btn-wishlist"></button>
+              <button class="ghost-btn" id="btn-keep-playing">Keep playing this world</button>
+            </div>
+          </div>
+        </div>
         <div class="modal" id="gameover" hidden>
           <div class="modal-card gameover-card">
             <h2>💀 BANKRUPTCY</h2>

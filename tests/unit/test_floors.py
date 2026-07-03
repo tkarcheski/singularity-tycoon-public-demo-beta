@@ -35,7 +35,9 @@ def test_floor_ladder_prices_and_cap(game):
 
 
 def test_floor_ladder_charges_correct_prices(game):
-    game.evaluate("window.__state.cash = 2000000")
+    # $2M is past the $1M goal — mark it already-celebrated so the demo-end
+    # screen doesn't cover the Finance panel
+    game.evaluate("window.__state.goalUnlocked = true; window.__state.cash = 2000000")
     game.wait_for_timeout(600)
     costs = [150000, 300000, 500000, 750000]
     for cost in costs:
