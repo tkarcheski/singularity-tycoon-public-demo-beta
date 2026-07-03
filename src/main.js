@@ -102,6 +102,7 @@ const UNLOCKS = {
   quantum: { name: 'Quantum Annealer', rp: 120, blurb: 'cryogenic qubit lab' },
   immersion: { name: 'Immersion Bath', cash: 3000, blurb: 'dielectric liquid cooling' },
   cryo: { name: 'Cryo Plant',     rp: 60,     blurb: 'industrial cryogenics' },
+  hex:  { name: 'Hexagonal Lattice', rp: 80,  blurb: 'six-way adjacency — new floors build on hex' },
 };
 
 // Finance — leverage to escape the mid-game stall.
@@ -185,7 +186,7 @@ const state = {
   alloc: { sell: 1, research: 0, self: 0, ubc: 0, ubi: 0 }, // normalized shares of compute
   rp: 0,             // research points
   selfImprove: 0,    // compounding output bonus, 0..SELF_IMPROVE_CAP
-  unlocks: { gpu2: false, ops: false, tpu: false, quantum: false, immersion: false, cryo: false },
+  unlocks: { gpu2: false, ops: false, tpu: false, quantum: false, immersion: false, cryo: false, hex: false },
 
   // v0.3 systems
   tech: { power: 0, cooling: 0, compute: 0 }, // research levels 0..2
@@ -217,6 +218,7 @@ const state = {
 // Floors (#20 v1): state.grid always aliases the active floor's grid so
 // rendering/input/tutorial code stays single-grid; the sim ticks every floor.
 state.floors = [state.grid];
+state.floorTopos = ['square']; // per-floor lattice key, parallel to floors
 // Cost of each expansion floor: F2 $150k, F3 $300k, F4 $500k, F5 $750k.
 const FLOOR_COSTS = [150_000, 300_000, 500_000, 750_000];
 const MAX_FLOORS = 1 + FLOOR_COSTS.length;
@@ -232,6 +234,7 @@ function newGrid() {
 function setActiveFloor(i) {
   state.floor = Math.max(0, Math.min(state.floors.length - 1, i));
   state.grid = state.floors[state.floor];
+  state.topo = topoOf(state.floor);
   updateFloorTabs();
 }
 
@@ -241,7 +244,7 @@ function updateFloorTabs() {
   tabs.hidden = state.floors.length < 2;
   if (tabs.hidden) return;
   tabs.innerHTML = state.floors.map((_, i) =>
-    `<button class="floor-tab${i === state.floor ? ' active' : ''}" data-floor="${i}">🏢 F${i + 1}</button>`,
+    `<button class="floor-tab${i === state.floor ? ' active' : ''}" data-floor="${i}">${topoOf(i).key === 'hex' ? '⬡' : '🏢'} F${i + 1}</button>`,
   ).join('');
   for (const btn of tabs.querySelectorAll('[data-floor]')) {
     btn.addEventListener('click', () => setActiveFloor(+btn.dataset.floor));
@@ -253,10 +256,12 @@ let visualsEnabled = true;
 function forEachFloor(fn) {
   for (let f = 0; f < state.floors.length; f++) {
     state.grid = state.floors[f];
+    state.topo = topoOf(f);
     visualsEnabled = f === state.floor;
     fn(f);
   }
   state.grid = state.floors[state.floor];
+  state.topo = topoOf(state.floor);
   visualsEnabled = true;
 }
 
@@ -270,7 +275,8 @@ function buyFloor() {
   }
   if (!state.god.freeBuild) state.cash -= cost;
   state.floors.push(newGrid());
-  pushTicker(`🏢 FLOOR ${n} ONLINE — the datacenter grows upward`, 'good');
+  state.floorTopos.push(state.unlocks.hex ? 'hex' : 'square');
+  pushTicker(`${state.unlocks.hex ? '⬡' : '🏢'} FLOOR ${n} ONLINE — the datacenter grows upward`, 'good');
   playStinger('research');
   setActiveFloor(n - 1);
   updateFinance();
@@ -279,9 +285,90 @@ function buyFloor() {
 // Programmatic handles for tests and future agent players
 window.__state = state;
 window.__god = state.god;
+// (set below once TOPOLOGIES is defined)
 
 // ---------- Grid helpers ----------
 const NEIGHBOR_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+// ---------- Topology (#21, epic #44) ----------
+// A topology defines the lattice: who neighbors whom, lattice distance, and
+// pixel geometry. Grids stay [ROWS][COLS] arrays — hex uses odd-r offset
+// coordinates in the same storage, so floors and saves are unchanged.
+// Pixel coords in center()/pick()/boardSize() are relative to the grid origin.
+const HEX_W = TILE;                // horizontal spacing (pointy-top)
+const HEX_R = TILE / Math.sqrt(3); // center-to-vertex radius
+const HEX_VSTEP = HEX_R * 1.5;     // vertical row spacing
+const HEX_DIRS = [
+  [[1, 0], [-1, 0], [0, -1], [-1, -1], [0, 1], [-1, 1]], // even rows
+  [[1, 0], [-1, 0], [1, -1], [0, -1], [1, 1], [0, 1]],   // odd rows
+];
+function hexCube(x, y) {
+  return { q: x - (y - (y & 1)) / 2, r: y };
+}
+
+const TOPOLOGIES = {
+  square: {
+    key: 'square',
+    dirs() { return NEIGHBOR_DIRS; },
+    dist(ax, ay, bx, by) { return Math.abs(ax - bx) + Math.abs(ay - by); },
+    center(x, y) { return { cx: x * TILE + TILE / 2, cy: y * TILE + TILE / 2 }; },
+    boardSize() { return { w: COLS * TILE, h: ROWS * TILE }; },
+    pick(px, py) {
+      const gx = Math.floor(px / TILE), gy = Math.floor(py / TILE);
+      return gx >= 0 && gy >= 0 && gx < COLS && gy < ROWS ? { x: gx, y: gy } : null;
+    },
+    trace(ctx, cx, cy, inset = 0) {
+      const h = TILE / 2 - inset;
+      ctx.beginPath();
+      ctx.rect(cx - h, cy - h, h * 2, h * 2);
+    },
+  },
+  hex: {
+    key: 'hex',
+    dirs(y) { return HEX_DIRS[y & 1]; },
+    dist(ax, ay, bx, by) {
+      const a = hexCube(ax, ay), b = hexCube(bx, by);
+      const dq = a.q - b.q, dr = a.r - b.r;
+      return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+    },
+    center(x, y) {
+      return { cx: x * HEX_W + HEX_W / 2 + (y & 1 ? HEX_W / 2 : 0), cy: y * HEX_VSTEP + HEX_R };
+    },
+    boardSize() { return { w: COLS * HEX_W + HEX_W / 2, h: (ROWS - 1) * HEX_VSTEP + HEX_R * 2 }; },
+    pick(px, py) {
+      // nearest center in the 3×3 offset neighborhood of the estimate
+      const gy = Math.round((py - HEX_R) / HEX_VSTEP);
+      let best = null, bestD = Infinity;
+      for (let y = gy - 1; y <= gy + 1; y++) {
+        if (y < 0 || y >= ROWS) continue;
+        const gx = Math.round((px - HEX_W / 2 - (y & 1 ? HEX_W / 2 : 0)) / HEX_W);
+        for (let x = gx - 1; x <= gx + 1; x++) {
+          if (x < 0 || x >= COLS) continue;
+          const c = this.center(x, y);
+          const d = (c.cx - px) ** 2 + (c.cy - py) ** 2;
+          if (d < bestD) { bestD = d; best = { x, y }; }
+        }
+      }
+      return best && bestD <= HEX_R * HEX_R ? best : null;
+    },
+    trace(ctx, cx, cy, inset = 0) {
+      const r = HEX_R - inset;
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 6 + (i * Math.PI) / 3; // pointy-top
+        const vx = cx + r * Math.cos(a), vy = cy + r * Math.sin(a);
+        if (i === 0) ctx.moveTo(vx, vy); else ctx.lineTo(vx, vy);
+      }
+      ctx.closePath();
+    },
+  },
+};
+
+function topoOf(f) {
+  return TOPOLOGIES[(state.floorTopos || [])[f]] || TOPOLOGIES.square;
+}
+state.topo = TOPOLOGIES.square; // alias of the active floor's topology, like state.grid
+window.__topo = TOPOLOGIES; // test handle for lattice math
 
 function cellsOf(...types) {
   const out = [];
@@ -296,7 +383,7 @@ function cellsOf(...types) {
 
 function neighborCells(x, y) {
   const out = [];
-  for (const [dx, dy] of NEIGHBOR_DIRS) {
+  for (const [dx, dy] of state.topo.dirs(y)) {
     const nx = x + dx, ny = y + dy;
     if (nx >= 0 && ny >= 0 && nx < COLS && ny < ROWS && state.grid[ny][nx]) {
       out.push({ x: nx, y: ny, c: state.grid[ny][nx] });
@@ -352,12 +439,12 @@ function computeHeatMap() {
     for (let x = 0; x < COLS; x++) {
       if (!state.grid[y][x]) continue;
       let h = src[y][x];
-      for (const [dx, dy] of NEIGHBOR_DIRS) {
+      for (const [dx, dy] of state.topo.dirs(y)) {
         const nx = x + dx, ny = y + dy;
         if (nx >= 0 && ny >= 0 && nx < COLS && ny < ROWS) h += src[ny][nx] * HEAT_SPREAD;
       }
       for (const dr of drains) {
-        const d = Math.abs(dr.x - x) + Math.abs(dr.y - y);
+        const d = state.topo.dist(dr.x, dr.y, x, y);
         if (d < dr.drain.length) h -= dr.drain[d] * coolMult;
       }
       heat[y][x] = Math.max(0, Math.min(1, h / HEAT_CAP));
@@ -380,7 +467,7 @@ function computeAuraMaps() {
       if (!aura) continue;
       for (let ty = 0; ty < ROWS; ty++) {
         for (let tx = 0; tx < COLS; tx++) {
-          const d = Math.abs(tx - x) + Math.abs(ty - y);
+          const d = state.topo.dist(tx, ty, x, y);
           if (d === 0 || d > aura.range) continue;
           const target = state.grid[ty][tx];
           if (!target || target.t === c.t) continue; // auras don't self-farm
@@ -534,18 +621,16 @@ window.addEventListener('resize', resizeCanvas);
 
 function gridOrigin() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
+  const b = state.topo.boardSize();
   return {
-    x: Math.floor((w - COLS * TILE) / 2),
-    y: Math.floor((h - ROWS * TILE) / 2),
+    x: Math.floor((w - b.w) / 2),
+    y: Math.floor((h - b.h) / 2),
   };
 }
 
 function pickTile(mx, my) {
   const o = gridOrigin();
-  const gx = Math.floor((mx - o.x) / TILE);
-  const gy = Math.floor((my - o.y) / TILE);
-  if (gx < 0 || gy < 0 || gx >= COLS || gy >= ROWS) return null;
-  return { x: gx, y: gy };
+  return state.topo.pick(mx - o.x, my - o.y);
 }
 
 // ---------- Input ----------
@@ -656,8 +741,9 @@ function flashCell(x, y, strength) {
 function emitParticles(gx, gy, count, color) {
   if (!visualsEnabled) return;
   const o = gridOrigin();
-  const cx = o.x + gx * TILE + TILE / 2;
-  const cy = o.y + gy * TILE + TILE / 2;
+  const c = state.topo.center(gx, gy);
+  const cx = o.x + c.cx;
+  const cy = o.y + c.cy;
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2 + Math.random() * 0.6;
     const sp = 60 + Math.random() * 80;
@@ -879,7 +965,7 @@ function tick() {
     for (const pod of cellsOf('human')) {
       let gain = 0;
       for (const g of cellsByFloor[f]) {
-        const d = Math.abs(g.x - pod.x) + Math.abs(g.y - pod.y);
+        const d = state.topo.dist(g.x, g.y, pod.x, pod.y);
         if (d < HUMAN_LEARN_GPU.length) gain += HUMAN_LEARN_GPU[d];
       }
       gain = Math.min(HUMAN_LEARN_CAP, gain);
@@ -1198,19 +1284,19 @@ function render(dt) {
   const o = gridOrigin();
 
   // Grid background panel
+  const board = state.topo.boardSize();
   ctx.fillStyle = 'rgba(20, 28, 50, 0.5)';
-  ctx.fillRect(o.x - 8, o.y - 8, COLS * TILE + 16, ROWS * TILE + 16);
+  ctx.fillRect(o.x - 8, o.y - 8, board.w + 16, board.h + 16);
   ctx.strokeStyle = 'rgba(74, 240, 192, 0.18)';
   ctx.lineWidth = 1;
-  ctx.strokeRect(o.x - 8 + 0.5, o.y - 8 + 0.5, COLS * TILE + 16, ROWS * TILE + 16);
+  ctx.strokeRect(o.x - 8 + 0.5, o.y - 8 + 0.5, board.w + 16, board.h + 16);
 
   // Tiles
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
       const cell = state.grid[y][x];
-      const px = o.x + x * TILE;
-      const py = o.y + y * TILE;
-      drawCell(px, py, cell, x, y);
+      const c = state.topo.center(x, y);
+      drawCell(o.x + c.cx, o.y + c.cy, cell, x, y);
     }
   }
 
@@ -1218,8 +1304,7 @@ function render(dt) {
   if (state.hover.x >= 0) {
     const id = state.selectedTool;
     const def = TILE_TYPES[id];
-    const px = o.x + state.hover.x * TILE;
-    const py = o.y + state.hover.y * TILE;
+    const c = state.topo.center(state.hover.x, state.hover.y);
     ctx.save();
     ctx.globalAlpha = 0.4;
     const canAfford = state.god.freeBuild || state.cash >= def.cost;
@@ -1233,7 +1318,8 @@ function render(dt) {
     } else {
       ctx.fillStyle = def.accent || '#4af0c0';
     }
-    ctx.fillRect(px + 2, py + 2, TILE - 4, TILE - 4);
+    state.topo.trace(ctx, o.x + c.cx, o.y + c.cy, 2);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -1262,21 +1348,26 @@ function render(dt) {
   }
 }
 
-function drawCell(px, py, cell, gx, gy) {
+// (cx, cy) is the cell CENTER in canvas pixels — the topology traces the
+// outline, so square and hex floors share this entire function.
+function drawCell(cx, cy, cell, gx, gy) {
   const id = cell ? cell.t : 'empty';
   const def = TILE_TYPES[id];
   const broken = cell && cell.cond <= 0;
   // Base
   ctx.fillStyle = !cell ? '#0c1124' : def.color;
-  ctx.fillRect(px, py, TILE, TILE);
+  state.topo.trace(ctx, cx, cy, 0);
+  ctx.fill();
   // Subtle inner panel
   if (cell) {
     ctx.fillStyle = 'rgba(255,255,255,0.04)';
-    ctx.fillRect(px + 3, py + 3, TILE - 6, TILE - 6);
+    state.topo.trace(ctx, cx, cy, 3);
+    ctx.fill();
   }
   // Grid lines
   ctx.strokeStyle = 'rgba(74, 240, 192, 0.06)';
-  ctx.strokeRect(px + 0.5, py + 0.5, TILE, TILE);
+  state.topo.trace(ctx, cx, cy, 0);
+  ctx.stroke();
 
   // Pulse from flash
   const flash = state.flashes.get(`${gx},${gy}`) || 0;
@@ -1284,7 +1375,8 @@ function drawCell(px, py, cell, gx, gy) {
     ctx.save();
     ctx.globalAlpha = flash;
     ctx.fillStyle = def.accent;
-    ctx.fillRect(px + 2, py + 2, TILE - 4, TILE - 4);
+    state.topo.trace(ctx, cx, cy, 2);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -1292,7 +1384,7 @@ function drawCell(px, py, cell, gx, gy) {
   if (cell && def.accent) {
     ctx.save();
     if (broken) ctx.globalAlpha = 0.35;
-    drawGlyph(ctx, px + TILE / 2, py + TILE / 2, id, def.accent);
+    drawGlyph(ctx, cx, cy, id, def.accent);
     ctx.restore();
   }
 
@@ -1304,43 +1396,45 @@ function drawCell(px, py, cell, gx, gy) {
     ctx.save();
     ctx.globalAlpha = heat * 0.30;
     ctx.fillStyle = '#ff5a28';
-    ctx.fillRect(px + 1, py + 1, TILE - 2, TILE - 2);
+    state.topo.trace(ctx, cx, cy, 1);
+    ctx.fill();
     ctx.restore();
   }
 
   // Skill bar for humans — fills up as they learn (the inverse of wear)
+  const barY = cy + TILE / 2 - 8;
+  const bw = TILE - 24;
   if (cell.t === 'human') {
     const skill = cell.skill || 0;
     if (skill < 100) {
-      const bw = TILE - 10;
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillRect(px + 5, py + TILE - 8, bw, 3);
+      ctx.fillRect(cx - bw / 2, barY, bw, 3);
       ctx.fillStyle = '#ff9ecf';
-      ctx.fillRect(px + 5, py + TILE - 8, bw * skill / 100, 3);
+      ctx.fillRect(cx - bw / 2, barY, bw * skill / 100, 3);
     }
     return; // humans don't wear, break, or overheat-tint their own bar
   }
 
   // Condition bar (only once it matters)
   if (cell.cond < 100) {
-    const bw = TILE - 10;
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(px + 5, py + TILE - 8, bw, 3);
+    ctx.fillRect(cx - bw / 2, barY, bw, 3);
     ctx.fillStyle = cell.cond >= 70 ? '#4af0c0' : cell.cond >= WORN_AT ? '#ffd24a' : '#ff4f6d';
-    ctx.fillRect(px + 5, py + TILE - 8, bw * Math.max(0, cell.cond) / 100, 3);
+    ctx.fillRect(cx - bw / 2, barY, bw * Math.max(0, cell.cond) / 100, 3);
   }
 
   // Broken: dark veil + red cross
   if (broken) {
     ctx.save();
     ctx.fillStyle = 'rgba(8, 10, 18, 0.55)';
-    ctx.fillRect(px + 1, py + 1, TILE - 2, TILE - 2);
+    state.topo.trace(ctx, cx, cy, 1);
+    ctx.fill();
     ctx.strokeStyle = '#ff4f6d';
     ctx.lineWidth = 2;
     ctx.globalAlpha = 0.5 + 0.3 * Math.sin(state.tick * 0.4 + gx + gy);
     ctx.beginPath();
-    ctx.moveTo(px + 18, py + 18); ctx.lineTo(px + TILE - 18, py + TILE - 18);
-    ctx.moveTo(px + TILE - 18, py + 18); ctx.lineTo(px + 18, py + TILE - 18);
+    ctx.moveTo(cx - 10, cy - 10); ctx.lineTo(cx + 10, cy + 10);
+    ctx.moveTo(cx + 10, cy - 10); ctx.lineTo(cx - 10, cy + 10);
     ctx.stroke();
     ctx.restore();
   }
@@ -1350,8 +1444,8 @@ function drawCell(px, py, cell, gx, gy) {
     ctx.save();
     ctx.fillStyle = '#6ec5ff';
     ctx.globalAlpha = 0.9;
-    ctx.fillRect(px + TILE - 16, py + 6, 3, 9);
-    ctx.fillRect(px + TILE - 10, py + 6, 3, 9);
+    ctx.fillRect(cx + TILE / 2 - 16, cy - TILE / 2 + 6, 3, 9);
+    ctx.fillRect(cx + TILE / 2 - 10, cy - TILE / 2 + 6, 3, 9);
     ctx.restore();
   }
 }
@@ -1546,7 +1640,7 @@ function showCellTooltip(e, x, y, cell) {
   }
   if (cell.t === 'human') {
     const tutors = cellsOf('gpu1', 'gpu2').filter((g) => g.c.cond > 0
-      && Math.abs(g.x - x) + Math.abs(g.y - y) < HUMAN_LEARN_GPU.length).length;
+      && state.topo.dist(g.x, g.y, x, y) < HUMAN_LEARN_GPU.length).length;
     const peers = neighborCells(x, y).filter((n) => n.c.t === 'human').length;
     rows = `<div class="tip-row"><span>Skill</span><span class="v">${Math.round(cell.skill || 0)}%</span></div>`
       + `<div class="tip-row"><span>Output</span><span class="v">${(HUMAN_MAX_TFLOPS * (cell.skill || 0) / 100).toFixed(1)} TFLOPS</span></div>`
@@ -1708,10 +1802,16 @@ function buildFinance() {
   financeEl.innerHTML = `
     <div class="fin-loans"></div>
     <div class="fin-status" data-debt hidden></div>
-    <button class="fin-btn" data-buy-floor>
-      <span data-buy-floor-label>🏢 Buy Floor 2</span>
-      <span class="fin-sub" data-buy-floor-sub></span>
-    </button>
+    <div class="fin-row">
+      <button class="fin-btn" data-buy-floor>
+        <span data-buy-floor-label>🏢 Buy Floor 2</span>
+        <span class="fin-sub" data-buy-floor-sub></span>
+      </button>
+      <button class="fin-btn" data-hex-unlock>
+        <span>⬡ Hex Lattice</span>
+        <span class="fin-sub">${UNLOCKS.hex.rp} RP — 6-way floors</span>
+      </button>
+    </div>
     <button class="fin-btn" data-futures>
       <span>📜 Sell compute futures</span>
       <span class="fin-sub" data-futures-sub></span>
@@ -1746,6 +1846,7 @@ function buildFinance() {
   });
   financeEl.querySelector('[data-futures]').addEventListener('click', sellFutures);
   financeEl.querySelector('[data-buy-floor]').addEventListener('click', buyFloor);
+  financeEl.querySelector('[data-hex-unlock]').addEventListener('click', () => tryUnlock('hex'));
   updateFinance();
 }
 
@@ -1802,9 +1903,16 @@ function updateFinance() {
     floorBtn.hidden = cost == null;
     if (cost != null) {
       floorBtn.disabled = !state.god.freeBuild && state.cash < cost;
-      floorBtn.querySelector('[data-buy-floor-label]').textContent = `🏢 Buy Floor ${state.floors.length + 1}`;
-      floorBtn.querySelector('[data-buy-floor-sub]').textContent = `$${cost.toLocaleString()} — grow the tower`;
+      const hexNext = state.unlocks.hex;
+      floorBtn.querySelector('[data-buy-floor-label]').textContent = `${hexNext ? '⬡' : '🏢'} Buy Floor ${state.floors.length + 1}`;
+      floorBtn.querySelector('[data-buy-floor-sub]').textContent = `$${cost.toLocaleString()} — ${hexNext ? 'hex lattice' : 'grow the tower'}`;
     }
+  }
+  const hexBtn = financeEl.querySelector('[data-hex-unlock]');
+  if (hexBtn) {
+    // surfaces once research has begun; gone once unlocked or tower complete
+    hexBtn.hidden = state.unlocks.hex || nextFloorCost() == null || (state.rp < 1 && state.tech.compute === 0);
+    hexBtn.disabled = !state.god.freeBuild && state.rp < UNLOCKS.hex.rp;
   }
 }
 
@@ -1970,7 +2078,7 @@ const SAVE_KEYS = [
   'cash', 'floors', 'floor', 'selectedTool', 'tick',
   'sentiment', 'mood', 'market',
   'alloc', 'rp', 'selfImprove', 'unlocks',
-  'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool',
+  'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool', 'floorTopos',
   'entropy', 'tutStep', 'stats', 'goalUnlocked', 'insolvencyS', 'bankrupt',
 ];
 
@@ -1990,6 +2098,7 @@ function loadState() {
   try { snap = JSON.parse(raw); } catch (e) { return false; }
   if (!snap || snap._v !== 1) return false;
   if (snap.grid && !snap.floors) snap.floors = [snap.grid]; // pre-floors save
+  if (snap.floors && !snap.floorTopos) snap.floorTopos = snap.floors.map(() => 'square'); // pre-topology save
   for (const k of SAVE_KEYS) {
     if (snap[k] !== undefined) state[k] = snap[k];
   }

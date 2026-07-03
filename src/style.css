@@ -639,6 +639,9 @@ body {
   text-align: left;
 }
 .fin-btn[hidden] { display: none; }
+.fin-row { display: flex; gap: 3px; }
+.fin-row .fin-btn { flex: 1; flex-direction: column; align-items: flex-start; gap: 0; min-width: 0; }
+.fin-row .fin-btn span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .fin-btn:hover:not(:disabled) { border-color: var(--border-hi); background: var(--surface-hi); }
 .fin-btn:disabled { color: var(--text-dim); cursor: default; }
 .fin-sub { color: var(--text-muted); font-family: var(--font-mono); font-size: 10px; }
