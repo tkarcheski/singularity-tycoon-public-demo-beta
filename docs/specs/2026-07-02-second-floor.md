@@ -53,3 +53,10 @@ pytest `test_floors.py`: buy button gated by cash; purchase creates an empty
 second floor and tabs; switching floors shows independent grids; both floors
 produce simultaneously (revenue from F1 while viewing F2); old-format save
 migrates; new save roundtrips floors; zero console errors.
+
+## Revision 2026-07-03 — the full ladder
+
+Tyler's follow-up: floors 3–5 join the ladder. `FLOOR_COSTS = [150k,
+300k, 500k, 750k]`, `MAX_FLOORS = 5`. One Finance button always offers
+the *next* floor at its price and hides when the tower is complete; tabs
+and the multi-floor sim already generalized.

@@ -43,6 +43,9 @@ def test_cpu_orchestration_boosts_adjacent_gpu(game, place):
 
 def test_cryo_plant_powers_a_quantum_annealer(game, place):
     free_build(game)
+    # 90 TF of quantum raises entropy enough for a rare driver-crash event to
+    # knock it offline mid-test — pin the entropy dial to zero to deflake
+    game.evaluate("window.__god.entropyMult = 0")
     game.evaluate("window.__state.unlocks.quantum = true; window.__state.unlocks.cryo = true")
     for x in range(3):
         place("2", x, 0)  # 36 MW

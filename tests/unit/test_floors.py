@@ -1,25 +1,49 @@
-"""Second floor purchase (#20 v1): $150k, shared economy, per-floor grids."""
+"""Floor purchases (#20): the $150k/$300k/$500k/$750k ladder to five floors."""
 
 
 def test_floor_button_gated_by_cash(game):
-    assert game.evaluate("document.querySelector('[data-floor2]').disabled") is True
+    assert game.evaluate("document.querySelector('[data-buy-floor]').disabled") is True
     game.evaluate("window.__state.cash = 200000")
     game.wait_for_timeout(700)
-    assert game.evaluate("document.querySelector('[data-floor2]').disabled") is False
+    assert game.evaluate("document.querySelector('[data-buy-floor]').disabled") is False
 
 
 def test_buy_floor_creates_empty_second_floor(game):
     game.evaluate("window.__state.cash = 200000")
     game.wait_for_timeout(600)
-    game.click("[data-floor2]")
+    game.click("[data-buy-floor]")
     game.wait_for_timeout(300)
     assert game.evaluate("window.__state.floors.length") == 2
     assert game.evaluate("window.__state.cash") < 60000
     assert game.evaluate("window.__state.floor") == 1
     assert game.evaluate("window.__state.grid.flat().every(c => c === null)") is True
-    # tabs appear, button disappears
+    # tabs appear; the button now offers Floor 3
     assert game.evaluate("document.getElementById('floor-tabs').hidden") is False
-    assert game.evaluate("document.querySelector('[data-floor2]').hidden") is True
+    label = game.evaluate("document.querySelector('[data-buy-floor-label]').textContent")
+    assert "Floor 3" in label
+
+
+def test_floor_ladder_prices_and_cap(game):
+    game.evaluate("window.__god.freeBuild = true")
+    for expected_floors in (2, 3, 4, 5):
+        game.click("[data-buy-floor]")
+        game.wait_for_timeout(200)
+        assert game.evaluate("window.__state.floors.length") == expected_floors
+    # tower complete: button gone, five tabs
+    assert game.evaluate("document.querySelector('[data-buy-floor]').hidden") is True
+    assert game.evaluate("document.querySelectorAll('.floor-tab').length") == 5
+
+
+def test_floor_ladder_charges_correct_prices(game):
+    game.evaluate("window.__state.cash = 2000000")
+    game.wait_for_timeout(600)
+    costs = [150000, 300000, 500000, 750000]
+    for cost in costs:
+        before = game.evaluate("window.__state.cash")
+        game.click("[data-buy-floor]")
+        game.wait_for_timeout(200)
+        after = game.evaluate("window.__state.cash")
+        assert abs((before - after) - cost) < 500, f"expected ~${cost}, got {before - after}"
 
 
 def test_floors_hold_independent_grids(game, place):
@@ -27,7 +51,7 @@ def test_floors_hold_independent_grids(game, place):
     place("2", 0, 0)  # plant on F1
     game.evaluate("window.__state.cash = 200000")
     game.wait_for_timeout(600)
-    game.click("[data-floor2]")
+    game.click("[data-buy-floor]")
     game.wait_for_timeout(300)
     assert game.evaluate("window.__state.grid[0][0]") is None  # F2 empty
     place("4", 0, 0)  # cooler on F2
@@ -44,7 +68,7 @@ def test_both_floors_produce_while_viewing_one(game, place):
     place("5", 3, 3)
     game.evaluate("window.__state.cash = 200000")
     game.wait_for_timeout(600)
-    game.click("[data-floor2]")  # switches view to empty F2
+    game.click("[data-buy-floor]")  # switches view to empty F2
     game.wait_for_timeout(1500)
     # F1's farm still supplies and computes
     assert game.evaluate("window.__state.totalCompute") > 0
@@ -54,7 +78,7 @@ def test_both_floors_produce_while_viewing_one(game, place):
 def test_floor_switching_via_tabs(game):
     game.evaluate("window.__state.cash = 200000")
     game.wait_for_timeout(600)
-    game.click("[data-floor2]")
+    game.click("[data-buy-floor]")
     game.wait_for_timeout(300)
     game.click('[data-floor="0"]')
     assert game.evaluate("window.__state.floor") == 0
@@ -86,7 +110,7 @@ def test_two_floor_save_roundtrips(game, place):
     place("2", 0, 0)
     game.evaluate("window.__state.cash = 200000")
     game.wait_for_timeout(600)
-    game.click("[data-floor2]")
+    game.click("[data-buy-floor]")
     game.wait_for_timeout(300)
     place("4", 2, 2)  # cooler on F2
     game.wait_for_timeout(300)
@@ -105,7 +129,7 @@ def test_floors_no_console_errors(game, place, errors):
     place("5", 3, 3)
     game.evaluate("window.__state.cash = 200000")
     game.wait_for_timeout(600)
-    game.click("[data-floor2]")
+    game.click("[data-buy-floor]")
     place("q", 1, 1)
     game.wait_for_timeout(2000)
     assert errors == [], f"errors: {errors[:3]}"
