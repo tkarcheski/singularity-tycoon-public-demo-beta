@@ -17,6 +17,9 @@ const TILE_TYPES = {
   cooler:  { name: 'Coolant Loop',    cost: 50,  power: -1,  cooling: 10, compute: 0,    upkeep: 0.3,  jobs: 1, wear: 0.25, color: '#10293a', accent: '#6ec5ff', desc: 'Provides 10 kW of cooling. Needs 1 MW. Drains heat from nearby tiles — closer is cooler.' },
   gpu1:    { name: 'GPU Rack v1',     cost: 120, power: -4,  cooling: -3, compute: 6,    upkeep: 1.2,  jobs: 1, wear: 0.42, color: '#102a23', accent: '#4af0c0', desc: 'Generates 6 TFLOPS. Needs 4 MW + 3 kW. Clusters: +10% output but +15% heat per adjacent GPU.' },
   gpu2:    { name: 'GPU Rack v2',     cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  jobs: 2, wear: 0.42, gate: 'gpu2', color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Same cluster bonus/heat as v1.' },
+  cpu:     { name: 'CPU Rack',        cost: 60,  power: -2,  cooling: -1, compute: 3,    upkeep: 0.5,  jobs: 1, wear: 0.25, color: '#1b2433', accent: '#8fb8ff', desc: 'Generates 3 TFLOPS. Needs 2 MW + 1 kW. Runs cool, wears slowly, no cluster effects — steady, not scalable.' },
+  tpu:     { name: 'TPU Pod',         cost: 700, power: -12, cooling: -14, compute: 40,  upkeep: 6.0,  jobs: 2, wear: 0.38, gate: 'tpu', color: '#2b1a10', accent: '#ffb35c', desc: 'Generates 40 TFLOPS. Needs 12 MW + 14 kW. Best compute-per-MW in the game, but runs hot — keep coolant close.' },
+  quantum: { name: 'Quantum Annealer', cost: 2500, power: -20, cooling: -30, compute: 90, upkeep: 12.0, jobs: 3, wear: 0.60, gate: 'quantum', color: '#241536', accent: '#d18aff', desc: 'Generates 90 TFLOPS in one cell. Cryogenic: emits little heat but drinks 30 kW of cooling. Exotic silicon — wears fastest of all.' },
   desk:    { name: 'Engineer Desk',   cost: 220, power: -1,  cooling: 0,  compute: 0,    upkeep: 0.5,  jobs: 2, wear: 0.08, multiplier: 1.15, color: '#231a30', accent: '#c89cff', desc: '+15% compute output. Stack up to 3.' },
   retrain: { name: 'Retraining Ctr.', cost: 150, power: -1,  cooling: 0,  compute: 0,    upkeep: 1.0,  jobs: 8, wear: 0.08, color: '#2d2410', accent: '#ffb86b', desc: 'Retrains workers your compute displaced. +8 jobs. Needs 1 MW.' },
   human:   { name: 'Worker Pod',      cost: 100, power: -1,  cooling: 0,  compute: 0,    upkeep: 0.8,  jobs: 4, wear: 0,    color: '#2e1b26', accent: '#ff9ecf', desc: 'Humans output tokens as they learn — up to 3 TFLOPS at full skill. The AI trains them (sit near GPUs); they also teach each other. Cannot be upgraded — or broken.' },
@@ -55,7 +58,7 @@ const GPU_ADJ_HEAT = 0.15;       // +cooling need per adjacent working GPU — c
 // Heat — per-tile temperature. GPUs and plants emit it, coolant loops drain it
 // with distance falloff (closer loop = cooler tile). Heat multiplies wear and
 // feeds entropy; tiles are tinted by temperature.
-const HEAT_SOURCE = { gpu1: 3, gpu2: 8, power: 4 }; // heat emitted by a working tile
+const HEAT_SOURCE = { gpu1: 3, gpu2: 8, power: 4, cpu: 1, tpu: 6, quantum: 2 }; // heat emitted by a working tile
 const HEAT_SPREAD = 0.5;          // fraction of neighbor source heat that bleeds over
 const COOLER_DRAIN = [8, 5, 2.5]; // heat removed at Manhattan distance 0/1/2
 const FAN_DRAIN = [4, 2];         // fans only reach distance 0/1 — air doesn't travel
@@ -85,6 +88,8 @@ const ENTROPY_GRACE_TFLOPS = 30;   // entropy fades in as compute approaches thi
 const UNLOCKS = {
   gpu2: { name: 'GPU Rack v2',    cash: 1500, blurb: 'license next-gen silicon' },
   ops:  { name: 'Ops Automation', rp: 20,     blurb: 'Bot Bays + auto-maintenance' },
+  tpu:  { name: 'TPU Pod',        cash: 8000, blurb: 'custom tensor silicon' },
+  quantum: { name: 'Quantum Annealer', rp: 120, blurb: 'cryogenic qubit lab' },
 };
 
 // Finance — leverage to escape the mid-game stall.
@@ -114,8 +119,10 @@ const UNREST_AT = 40;                   // <: upkeep +25% (power surcharge)
 const PROTEST_AT = 25;                  // <: compute halved + slow building permits
 const PERMIT_DELAY_MS = 4000;           // min gap between builds during protests
 
-const TOOL_ORDER = ['solar', 'power', 'fan', 'cooler', 'gpu1', 'gpu2', 'desk', 'retrain', 'human', 'botbay', 'repair', 'bull'];
-const TOOL_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '='];
+// New compute tiles append at the end (keys q/w/e) so existing hotkeys stay
+// stable — palette regrouping is issue #35's tools-tray rework.
+const TOOL_ORDER = ['solar', 'power', 'fan', 'cooler', 'gpu1', 'gpu2', 'desk', 'retrain', 'human', 'botbay', 'repair', 'bull', 'cpu', 'tpu', 'quantum'];
+const TOOL_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 'q', 'w', 'e'];
 
 // Solar output cycle — the sky has moods (0.2..1.0, ~90s period)
 const SOLAR_PERIOD_S = 90;
@@ -155,7 +162,7 @@ const state = {
   alloc: { sell: 1, research: 0, self: 0 }, // normalized shares of compute
   rp: 0,             // research points
   selfImprove: 0,    // compounding output bonus, 0..SELF_IMPROVE_CAP
-  unlocks: { gpu2: false, ops: false },
+  unlocks: { gpu2: false, ops: false, tpu: false, quantum: false },
 
   // v0.3 systems
   tech: { power: 0, cooling: 0, compute: 0 }, // research levels 0..2
@@ -217,10 +224,14 @@ function condScale(c) { return c.cond <= 0 ? 0 : c.cond < WORN_AT ? 0.6 : 1; }
 function gpuCondScale(c) { return c.cond <= 0 ? 0 : 0.4 + 0.6 * (c.cond / 100); }
 function techMult(track) { return Math.pow(RESEARCH_OUTPUT, state.tech[track]); }
 function isGpu(t) { return t === 'gpu1' || t === 'gpu2'; }
+// Any tile that produces TFLOPS (GPUs, CPU, TPU, quantum). GPUs additionally
+// keep their cluster bonus/heat as the family's identity.
+function isCompute(t) { return (TILE_TYPES[t]?.compute || 0) > 0; }
+const COMPUTE_IDS = Object.keys(TILE_TYPES).filter((t) => TILE_TYPES[t].compute > 0);
 function trackOf(t) {
   if (t === 'power' || t === 'solar') return 'power';
   if (t === 'cooler' || t === 'fan') return 'cooling';
-  if (isGpu(t)) return 'compute';
+  if (isCompute(t)) return 'compute';
   return null;
 }
 function repairPrice(c) {
@@ -351,7 +362,7 @@ function toolStat(id) {
   if (id === 'power') return `+${t.power} MW`;
   if (id === 'fan') return `+${t.cooling} kW air`;
   if (id === 'cooler') return `+${t.cooling} kW`;
-  if (id === 'gpu1' || id === 'gpu2') return `+${t.compute} TFLOPS`;
+  if (t.compute > 0) return `+${t.compute} TFLOPS`;
   if (id === 'desk') return `+15% compute`;
   if (id === 'retrain') return `+${t.jobs} jobs`;
   if (id === 'human') return `learns · ≤${HUMAN_MAX_TFLOPS} TFLOPS`;
@@ -369,6 +380,9 @@ function iconSvg(id) {
   if (id === 'cooler')  return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M12 3v18M3 12h18M5 5l14 14M19 5L5 19" stroke-linecap="round"/></svg>`;
   if (id === 'gpu1')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="12" r="2"/></svg>`;
   if (id === 'gpu2')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><circle cx="8" cy="7.5" r="1.4"/><circle cx="16" cy="7.5" r="1.4"/><circle cx="8" cy="16.5" r="1.4"/><circle cx="16" cy="16.5" r="1.4"/></svg>`;
+  if (id === 'cpu')     return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="6" y="6" width="12" height="12" rx="1.5"/><rect x="9.5" y="9.5" width="5" height="5"/><path d="M9 6V3M15 6V3M9 21v-3M15 21v-3M6 9H3M6 15H3M21 9h-3M21 15h-3" stroke-linecap="round"/></svg>`;
+  if (id === 'tpu')     return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9.3h16M4 14.6h16M9.3 4v16M14.6 4v16"/></svg>`;
+  if (id === 'quantum') return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="12" cy="12" r="1.8"/><ellipse cx="12" cy="12" rx="9" ry="3.8"/><ellipse cx="12" cy="12" rx="9" ry="3.8" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="9" ry="3.8" transform="rotate(120 12 12)"/></svg>`;
   if (id === 'desk')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="12" cy="7" r="3"/><path d="M5 21v-2a4 4 0 014-4h6a4 4 0 014 4v2" stroke-linecap="round"/></svg>`;
   if (id === 'retrain') return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M12 4L2 9l10 5 10-5-10-5z" stroke-linejoin="round"/><path d="M6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5" stroke-linecap="round"/></svg>`;
   if (id === 'human')   return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="9" cy="8" r="2.6"/><circle cx="16" cy="9.5" r="2.1"/><path d="M3.5 20v-1.5a4.5 4.5 0 014.5-4.5h2a4.5 4.5 0 014.5 4.5V20M14 14.4a3.8 3.8 0 016.5 2.7V20" stroke-linecap="round"/></svg>`;
@@ -563,10 +577,12 @@ function tick() {
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
       const c = state.grid[y][x];
-      if (!c || !isGpu(c.t) || c.cond <= 0 || offline.has(`${x},${y}`)) continue;
+      if (!c || !isCompute(c.t) || c.cond <= 0 || offline.has(`${x},${y}`)) continue;
       const t = TILE_TYPES[c.t];
-      // Clusters: +output per adjacent working GPU, but packed silicon runs hot
-      const adjGpus = Math.min(3, neighborCells(x, y).filter((n) => isGpu(n.c.t) && n.c.cond > 0).length);
+      // Clusters (GPUs only): +output per adjacent working GPU, but packed silicon runs hot
+      const adjGpus = isGpu(c.t)
+        ? Math.min(3, neighborCells(x, y).filter((n) => isGpu(n.c.t) && n.c.cond > 0).length)
+        : 0;
       const needP = Math.abs(t.power); // negative => draw
       const needC = Math.abs(t.cooling) * (1 + GPU_ADJ_HEAT * adjGpus);
       if (power - powerUsed >= needP && cooling - coolingUsed >= needC) {
@@ -834,13 +850,13 @@ function maybeEntropyEvent(entropy01, now) {
   if (Math.random() >= EVENT_CHANCE * Math.pow(entropy01, 1.5)) return;
   const plants = cellsOf('power');
   const coolers = cellsOf('cooler');
-  const gpus = cellsOf('gpu1', 'gpu2').filter((g) => g.c.cond > 0);
+  const gpus = cellsOf(...COMPUTE_IDS).filter((g) => g.c.cond > 0);
   const bays = cellsOf('botbay');
 
   const pool = [];
   if (plants.length >= 2) pool.push('surge');
   if (coolers.length >= 1) pool.push('leak');
-  if (gpus.length >= 1 && (state.tech.compute >= 1 || gpus.some((g) => g.c.t === 'gpu2'))) pool.push('crash');
+  if (gpus.length >= 1 && (state.tech.compute >= 1 || gpus.some((g) => TILE_TYPES[g.c.t].gate))) pool.push('crash');
   if (state.entropy > 70 && gpus.length >= 1) pool.push('brownout');
   if (state.entropy > 50 && bays.length >= 1) pool.push('botGlitch');
   if (!pool.length) return;
@@ -857,9 +873,9 @@ function maybeEntropyEvent(entropy01, now) {
     const cl = pick(coolers);
     damageCell(cl.x, cl.y, 25);
     for (const n of neighborCells(cl.x, cl.y)) {
-      if (isGpu(n.c.t)) damageCell(n.x, n.y, 10);
+      if (isCompute(n.c.t)) damageCell(n.x, n.y, 10);
     }
-    pushTicker('💧 Coolant leak — loop and adjacent GPUs damaged', 'bad');
+    pushTicker('💧 Coolant leak — loop and adjacent silicon damaged', 'bad');
   } else if (kind === 'crash') {
     const g = pick(gpus);
     state.effects.push({ kind: 'crash', x: g.x, y: g.y, until: now + 8000 });
@@ -1124,6 +1140,37 @@ function drawGlyph(ctx, cx, cy, id, color) {
     if (id === 'gpu2') {
       ctx.beginPath();
       ctx.moveTo(cx - s + 1, cy); ctx.lineTo(cx + s - 1, cy);
+      ctx.stroke();
+    }
+  } else if (id === 'cpu') {
+    // chip: die + pins
+    ctx.strokeRect(cx - 7, cy - 7, 14, 14);
+    ctx.strokeRect(cx - 3, cy - 3, 6, 6);
+    ctx.beginPath();
+    for (const d of [-4, 0, 4]) {
+      ctx.moveTo(cx + d, cy - 7); ctx.lineTo(cx + d, cy - s + 1);
+      ctx.moveTo(cx + d, cy + 7); ctx.lineTo(cx + d, cy + s - 1);
+      ctx.moveTo(cx - 7, cy + d); ctx.lineTo(cx - s + 1, cy + d);
+      ctx.moveTo(cx + 7, cy + d); ctx.lineTo(cx + s - 1, cy + d);
+    }
+    ctx.stroke();
+  } else if (id === 'tpu') {
+    // systolic array: square with grid
+    ctx.strokeRect(cx - s + 2, cy - s + 2, (s - 2) * 2, (s - 2) * 2);
+    ctx.beginPath();
+    for (const d of [-3.3, 3.3]) {
+      ctx.moveTo(cx - s + 2, cy + d); ctx.lineTo(cx + s - 2, cy + d);
+      ctx.moveTo(cx + d, cy - s + 2); ctx.lineTo(cx + d, cy + s - 2);
+    }
+    ctx.stroke();
+  } else if (id === 'quantum') {
+    // atom: nucleus + orbits
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+    ctx.stroke();
+    for (const rot of [0, Math.PI / 3, (2 * Math.PI) / 3]) {
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, s - 1, 4.5, rot, 0, Math.PI * 2);
       ctx.stroke();
     }
   } else if (id === 'desk') {
