@@ -57,6 +57,15 @@
       <main class="stage">
         <canvas id="game" width="960" height="720" tabindex="0"></canvas>
         <div class="floor-tabs" id="floor-tabs" hidden></div>
+        <div class="insolvency" id="insolvency" hidden></div>
+        <div class="modal" id="gameover" hidden>
+          <div class="modal-card gameover-card">
+            <h2>💀 BANKRUPTCY</h2>
+            <p class="gameover-blurb">The creditors seized the datacenter. The singularity will have to wait.</p>
+            <div id="gameover-stats"></div>
+            <button class="primary-btn" id="btn-start-over">🔄 Start over</button>
+          </div>
+        </div>
         <div class="ticker" id="ticker"></div>
         <div class="goal" id="goal">
           <div class="goal-label">Goal</div>

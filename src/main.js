@@ -149,6 +149,7 @@ const LAYERS = [
 const SOLAR_PERIOD_S = 90;
 
 const GOAL = 1_000_000;
+const BANKRUPT_AFTER_S = 60; // sim-seconds of negative cash before the run dies
 
 // ---------- State ----------
 const state = {
@@ -202,7 +203,11 @@ const state = {
 
   // tutorial & lifetime stats
   tutStep: 0,
-  stats: { manualRepairs: 0 },
+  stats: { manualRepairs: 0, peakCash: 500 },
+
+  // fail state (#28)
+  insolvencyS: 0,  // sim-seconds spent below $0 — bankruptcy at BANKRUPT_AFTER_S
+  bankrupt: false,
 
   particles: [],
   flashes: new Map(), // "x,y" -> flash strength
@@ -953,6 +958,21 @@ function tick() {
   }
   const upkeepThisTick = upkeepAdj * dtS;
   state.cash += income - upkeepThisTick;
+  if (state.cash > (state.stats.peakCash || 0)) state.stats.peakCash = state.cash;
+
+  // Insolvency (#28): below $0 a countdown runs; recover (bulldoze refunds,
+  // a loan) and it clears. Sustained insolvency ends the run. freeBuild suspends.
+  if (state.cash < 0 && !state.god.freeBuild && !state.bankrupt) {
+    if (state.insolvencyS === 0) {
+      pushTicker(`⚠ INSOLVENT — sell tiles or take a loan. Bankruptcy in ${BANKRUPT_AFTER_S}s`, 'bad');
+      playStinger('alarm');
+    }
+    state.insolvencyS += dtS;
+    if (state.insolvencyS >= BANKRUPT_AFTER_S) declareBankruptcy();
+  } else if (state.cash >= 0 && state.insolvencyS > 0) {
+    state.insolvencyS = 0;
+    pushTicker('Back in the black — creditors stand down', 'good');
+  }
 
   // …and the pool continuously heals the most-damaged tile it can afford
   // (manual repair rate ×0.8 — bays at ×0.6 stay the better deal).
@@ -1076,8 +1096,36 @@ function announceMood(mood) {
   if (mood === 'protest') pushTicker('PROTESTS outside the datacenter — output halved, permits delayed', 'bad');
 }
 
+function declareBankruptcy() {
+  if (state.bankrupt) return;
+  state.bankrupt = true;
+  playStinger('breakdown');
+  const el = document.getElementById('gameover');
+  if (!el) return;
+  let floors = state.floors.length;
+  document.getElementById('gameover-stats').innerHTML = `
+    <div class="tip-row"><span>Peak cash</span><span class="v">$${Math.floor(state.stats.peakCash || 0).toLocaleString()}</span></div>
+    <div class="tip-row"><span>Peak compute</span><span class="v">${state.totalCompute.toFixed(1)} TFLOPS</span></div>
+    <div class="tip-row"><span>Floors built</span><span class="v">${floors}</span></div>
+    <div class="tip-row"><span>Run length</span><span class="v">${Math.round(state.tick * TICK_MS / 1000 / 60)} min</span></div>`;
+  el.hidden = false;
+}
+
+function updateInsolvencyBanner() {
+  const el = document.getElementById('insolvency');
+  if (!el) return;
+  const active = state.insolvencyS > 0 && !state.bankrupt;
+  el.hidden = !active;
+  if (active) {
+    const left = Math.max(0, Math.ceil(BANKRUPT_AFTER_S - state.insolvencyS));
+    el.textContent = `⚠ INSOLVENT — sell tiles (=) or take a loan · bankruptcy in ${left}s`;
+  }
+}
+
 function updateHUD() {
   hudCash.textContent = `$${Math.floor(state.cash).toLocaleString()}`;
+  hudCash.classList.toggle('neg', state.cash < 0);
+  updateInsolvencyBanner();
   hudCompute.textContent = `${state.totalCompute.toFixed(1)} TFLOPS`;
   hudPower.textContent = `${Math.round(state.powerUsed)} / ${Math.round(state.totalPower)} MW`;
   hudCooling.textContent = `${Math.round(state.coolingUsed)} / ${Math.round(state.totalCooling)} kW`;
@@ -1899,7 +1947,7 @@ const SAVE_KEYS = [
   'sentiment', 'mood', 'market',
   'alloc', 'rp', 'selfImprove', 'unlocks',
   'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool',
-  'entropy', 'tutStep', 'stats', 'goalUnlocked',
+  'entropy', 'tutStep', 'stats', 'goalUnlocked', 'insolvencyS', 'bankrupt',
 ];
 
 function saveState() {
@@ -1945,6 +1993,18 @@ document.getElementById('btn-new-game').addEventListener('click', () => {
   suspendAutoSave = true;
   location.reload();
 });
+
+// Bankruptcy is final — Start over wipes the save without a confirm dialog
+document.getElementById('btn-start-over').addEventListener('click', () => {
+  clearSave();
+  suspendAutoSave = true;
+  location.reload();
+});
+// A save that went bankrupt before the tab closed re-shows the overlay on boot
+if (state.bankrupt) {
+  state.bankrupt = false;
+  declareBankruptcy();
+}
 
 // ---------- Boot ----------
 resizeCanvas();
