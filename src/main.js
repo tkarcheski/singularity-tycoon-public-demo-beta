@@ -13,11 +13,14 @@ const TILE_TYPES = {
   empty:   { name: 'Empty',           cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#0e1320', desc: '' },
   solar:   { name: 'Solar Array',     cost: 40,  power: 4,   cooling: 0,  compute: 0,    upkeep: 0.1,  jobs: 1, wear: 0.06, color: '#2e2a0e', accent: '#ffe98a', desc: 'Up to 4 MW that ebbs with the sky. Cheap and low-maintenance, but big footprint per MW.' },
   power:   { name: 'Power Plant',     cost: 80,  power: 12,  cooling: 0,  compute: 0,    upkeep: 0.6,  jobs: 2, wear: 0.18, color: '#3a2b10', accent: '#ffd24a', desc: 'Supplies 12 MW. Adjacent tiles connect automatically.' },
-  fan:     { name: 'Fan Wall',        cost: 25,  power: 0,   cooling: 4,  compute: 0,    upkeep: 0.15, jobs: 0, wear: 0.35, color: '#15202b', accent: '#9adcff', desc: 'Air cooling: 4 kW, but only drains heat up close (range 1). Cheap, wears fast.' },
-  cooler:  { name: 'Coolant Loop',    cost: 50,  power: -1,  cooling: 10, compute: 0,    upkeep: 0.3,  jobs: 1, wear: 0.25, color: '#10293a', accent: '#6ec5ff', desc: 'Provides 10 kW of cooling. Needs 1 MW. Drains heat from nearby tiles — closer is cooler.' },
+  fan:     { name: 'Fan Wall',        cost: 25,  power: 0,   cooling: 4,  compute: 0,    upkeep: 0.15, jobs: 0, wear: 0.35, drain: [4, 2], color: '#15202b', accent: '#9adcff', desc: 'Air cooling: 4 kW, but only drains heat up close (range 1). Cheap, wears fast.' },
+  cooler:  { name: 'Coolant Loop',    cost: 50,  power: -1,  cooling: 10, compute: 0,    upkeep: 0.3,  jobs: 1, wear: 0.25, drain: [8, 5, 2.5], color: '#10293a', accent: '#6ec5ff', desc: 'Provides 10 kW of cooling. Needs 1 MW. Drains heat from nearby tiles — closer is cooler.' },
+  exch:    { name: 'Heat Exchanger',  cost: 150, power: -2,  cooling: 18, compute: 0,    upkeep: 0.9,  jobs: 1, wear: 0.22, drain: [6, 4.5, 3, 1.5], color: '#0f3230', accent: '#63e0cf', desc: 'Provides 18 kW and pulls heat from up to 3 tiles away — the wide-area workhorse of a serious farm. Needs 2 MW.' },
+  immersion: { name: 'Immersion Bath', cost: 260, power: -3, cooling: 14, compute: 0,   upkeep: 1.2,  jobs: 1, wear: 0.18, gate: 'immersion', drain: [12, 8], aura: { wearGuard: 0.7, range: 1 }, color: '#0b2b45', accent: '#4fb7ff', desc: 'Dielectric liquid bath: the strongest drain in the game, but only touching its neighbors — which also wear 30% slower while submerged. Needs 3 MW.' },
+  cryo:    { name: 'Cryo Plant',      cost: 1200, power: -8, cooling: 40, compute: 0,   upkeep: 5.0,  jobs: 2, wear: 0.30, gate: 'cryo', drain: [8, 5, 2.5], color: '#1a2340', accent: '#9db8ff', desc: 'Industrial cryogenics: 40 kW of supply — enough to feed a Quantum Annealer. Needs 8 MW.' },
   gpu1:    { name: 'GPU Rack v1',     cost: 120, power: -4,  cooling: -3, compute: 6,    upkeep: 1.2,  jobs: 1, wear: 0.42, color: '#102a23', accent: '#4af0c0', desc: 'Generates 6 TFLOPS. Needs 4 MW + 3 kW. Clusters: +10% output but +15% heat per adjacent GPU.' },
   gpu2:    { name: 'GPU Rack v2',     cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  jobs: 2, wear: 0.42, gate: 'gpu2', color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Same cluster bonus/heat as v1.' },
-  cpu:     { name: 'CPU Rack',        cost: 60,  power: -2,  cooling: -1, compute: 3,    upkeep: 0.5,  jobs: 1, wear: 0.25, color: '#1b2433', accent: '#8fb8ff', desc: 'Generates 3 TFLOPS. Needs 2 MW + 1 kW. Runs cool, wears slowly, no cluster effects — steady, not scalable.' },
+  cpu:     { name: 'CPU Rack',        cost: 60,  power: -2,  cooling: -1, compute: 3,    upkeep: 0.5,  jobs: 1, wear: 0.25, aura: { boost: 0.06, range: 1 }, color: '#1b2433', accent: '#8fb8ff', desc: 'Generates 3 TFLOPS. Needs 2 MW + 1 kW. Runs cool, wears slowly — and orchestrates: adjacent GPUs/TPUs/quantum get +6% output each.' },
   tpu:     { name: 'TPU Pod',         cost: 700, power: -12, cooling: -14, compute: 40,  upkeep: 6.0,  jobs: 2, wear: 0.38, gate: 'tpu', color: '#2b1a10', accent: '#ffb35c', desc: 'Generates 40 TFLOPS. Needs 12 MW + 14 kW. Best compute-per-MW in the game, but runs hot — keep coolant close.' },
   quantum: { name: 'Quantum Annealer', cost: 2500, power: -20, cooling: -30, compute: 90, upkeep: 12.0, jobs: 3, wear: 0.60, gate: 'quantum', color: '#241536', accent: '#d18aff', desc: 'Generates 90 TFLOPS in one cell. Cryogenic: emits little heat but drinks 30 kW of cooling. Exotic silicon — wears fastest of all.' },
   desk:    { name: 'Engineer Desk',   cost: 220, power: -1,  cooling: 0,  compute: 0,    upkeep: 0.5,  jobs: 2, wear: 0.08, multiplier: 1.15, color: '#231a30', accent: '#c89cff', desc: '+15% compute output. Stack up to 3.' },
@@ -60,8 +63,11 @@ const GPU_ADJ_HEAT = 0.15;       // +cooling need per adjacent working GPU — c
 // feeds entropy; tiles are tinted by temperature.
 const HEAT_SOURCE = { gpu1: 3, gpu2: 8, power: 4, cpu: 1, tpu: 6, quantum: 2 }; // heat emitted by a working tile
 const HEAT_SPREAD = 0.5;          // fraction of neighbor source heat that bleeds over
-const COOLER_DRAIN = [8, 5, 2.5]; // heat removed at Manhattan distance 0/1/2
-const FAN_DRAIN = [4, 2];         // fans only reach distance 0/1 — air doesn't travel
+// Heat drain profiles live on TILE_TYPES as `drain: [d0, d1, ...]` — heat
+// removed at Manhattan distance 0/1/2/... per cooling tile.
+// Synergy auras live on TILE_TYPES as `aura: { boost|wearGuard, range }`.
+const AURA_BOOST_CAP = 0.25;   // max total output boost a tile can receive
+const AURA_WEAR_FLOOR = 0.5;   // wear-guard stacking never protects past ×0.5
 const HEAT_CAP = 10;              // net heat that maps to heat01 = 1.0
 const HEAT_WEAR_MULT = 1.0;       // wear ×(1 + this × heat01)
 const HEAT_ENTROPY = 0.35;        // entropy01 contribution of average source-tile heat
@@ -90,6 +96,8 @@ const UNLOCKS = {
   ops:  { name: 'Ops Automation', rp: 20,     blurb: 'Bot Bays + auto-maintenance' },
   tpu:  { name: 'TPU Pod',        cash: 8000, blurb: 'custom tensor silicon' },
   quantum: { name: 'Quantum Annealer', rp: 120, blurb: 'cryogenic qubit lab' },
+  immersion: { name: 'Immersion Bath', cash: 3000, blurb: 'dielectric liquid cooling' },
+  cryo: { name: 'Cryo Plant',     rp: 60,     blurb: 'industrial cryogenics' },
 };
 
 // Finance — leverage to escape the mid-game stall.
@@ -119,10 +127,19 @@ const UNREST_AT = 40;                   // <: upkeep +25% (power surcharge)
 const PROTEST_AT = 25;                  // <: compute halved + slow building permits
 const PERMIT_DELAY_MS = 4000;           // min gap between builds during protests
 
-// New compute tiles append at the end (keys q/w/e) so existing hotkeys stay
-// stable — palette regrouping is issue #35's tools-tray rework.
-const TOOL_ORDER = ['solar', 'power', 'fan', 'cooler', 'gpu1', 'gpu2', 'desk', 'retrain', 'human', 'botbay', 'repair', 'bull', 'cpu', 'tpu', 'quantum'];
-const TOOL_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 'q', 'w', 'e'];
+// New tiles append at the end (keys q/w/e, r/t/y) so existing hotkeys stay
+// stable. Display grouping comes from each tile's `layer`, not this order.
+const TOOL_ORDER = ['solar', 'power', 'fan', 'cooler', 'gpu1', 'gpu2', 'desk', 'retrain', 'human', 'botbay', 'repair', 'bull', 'cpu', 'tpu', 'quantum', 'exch', 'immersion', 'cryo'];
+const TOOL_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 'q', 'w', 'e', 'r', 't', 'y'];
+
+// The palette teaches the stack bottom-up — a loose OSI homage. L3 · NETWORK
+// is reserved for switches/floors/topology (issues #18/#20/#21).
+const LAYERS = [
+  { name: 'L1 · Physical',     tiles: ['solar', 'power', 'fan', 'cooler', 'exch', 'immersion', 'cryo'] },
+  { name: 'L2 · Compute',      tiles: ['gpu1', 'gpu2', 'cpu', 'tpu', 'quantum'] },
+  { name: 'L7 · People & Ops', tiles: ['desk', 'retrain', 'human', 'botbay'] },
+  { name: 'Tools',             tiles: ['repair', 'bull'] },
+];
 
 // Solar output cycle — the sky has moods (0.2..1.0, ~90s period)
 const SOLAR_PERIOD_S = 90;
@@ -162,7 +179,7 @@ const state = {
   alloc: { sell: 1, research: 0, self: 0 }, // normalized shares of compute
   rp: 0,             // research points
   selfImprove: 0,    // compounding output bonus, 0..SELF_IMPROVE_CAP
-  unlocks: { gpu2: false, ops: false, tpu: false, quantum: false },
+  unlocks: { gpu2: false, ops: false, tpu: false, quantum: false, immersion: false, cryo: false },
 
   // v0.3 systems
   tech: { power: 0, cooling: 0, compute: 0 }, // research levels 0..2
@@ -249,8 +266,15 @@ function computeHeatMap() {
       if (c && c.cond > 0) src[y][x] = HEAT_SOURCE[c.t] || 0;
     }
   }
-  const coolers = cellsOf('cooler').filter((cl) => cl.c.cond > 0);
-  const fans = cellsOf('fan').filter((f) => f.c.cond > 0);
+  // Every working cooling tile with a `drain` profile pulls heat with
+  // distance falloff — declarative, so new coolers plug in via TILE_TYPES.
+  const drains = [];
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const c = state.grid[y][x];
+      if (c && c.cond > 0 && TILE_TYPES[c.t].drain) drains.push({ x, y, drain: TILE_TYPES[c.t].drain });
+    }
+  }
   const coolMult = techMult('cooling');
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
@@ -260,18 +284,41 @@ function computeHeatMap() {
         const nx = x + dx, ny = y + dy;
         if (nx >= 0 && ny >= 0 && nx < COLS && ny < ROWS) h += src[ny][nx] * HEAT_SPREAD;
       }
-      for (const cl of coolers) {
-        const d = Math.abs(cl.x - x) + Math.abs(cl.y - y);
-        if (d < COOLER_DRAIN.length) h -= COOLER_DRAIN[d] * coolMult;
-      }
-      for (const f of fans) {
-        const d = Math.abs(f.x - x) + Math.abs(f.y - y);
-        if (d < FAN_DRAIN.length) h -= FAN_DRAIN[d] * coolMult;
+      for (const dr of drains) {
+        const d = Math.abs(dr.x - x) + Math.abs(dr.y - y);
+        if (d < dr.drain.length) h -= dr.drain[d] * coolMult;
       }
       heat[y][x] = Math.max(0, Math.min(1, h / HEAT_CAP));
     }
   }
   return heat;
+}
+
+// Synergy auras (issue #17 v1): tiles with an `aura` descriptor influence
+// their neighborhood. Returns { boost, wear } grids — boost multiplies
+// compute output (capped), wearGuard multiplies wear rate (floored).
+function computeAuraMaps() {
+  const boost = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+  const wear = Array.from({ length: ROWS }, () => Array(COLS).fill(1));
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const c = state.grid[y][x];
+      if (!c || c.cond <= 0) continue;
+      const aura = TILE_TYPES[c.t].aura;
+      if (!aura) continue;
+      for (let ty = 0; ty < ROWS; ty++) {
+        for (let tx = 0; tx < COLS; tx++) {
+          const d = Math.abs(tx - x) + Math.abs(ty - y);
+          if (d === 0 || d > aura.range) continue;
+          const target = state.grid[ty][tx];
+          if (!target || target.t === c.t) continue; // auras don't self-farm
+          if (aura.boost && isCompute(target.t)) boost[ty][tx] = Math.min(AURA_BOOST_CAP, boost[ty][tx] + aura.boost);
+          if (aura.wearGuard) wear[ty][tx] = Math.max(AURA_WEAR_FLOOR, wear[ty][tx] * aura.wearGuard);
+        }
+      }
+    }
+  }
+  return { boost, wear };
 }
 function damageCell(x, y, amount) {
   const c = state.grid[y][x];
@@ -304,37 +351,45 @@ const hudToken = document.getElementById('hud-token');
 // ---------- Init ----------
 function buildToolbar() {
   toolsEl.innerHTML = '';
-  for (const id of TOOL_ORDER) {
-    const t = TILE_TYPES[id];
-    const locked = t.gate && !state.unlocks[t.gate] && !state.god.freeBuild;
-    const btn = document.createElement('button');
-    btn.className = 'tool' + (id === state.selectedTool ? ' selected' : '') + (locked ? ' locked' : '');
-    btn.dataset.tool = id;
-    const u = t.gate && UNLOCKS[t.gate];
-    const costLabel = locked
-      ? `🔒 ${u.cash != null ? '$' + u.cash.toLocaleString() : u.rp + ' RP'}`
-      : id === 'bull' ? '↶' : '$' + t.cost;
-    btn.innerHTML = `
-      <span class="icon">${iconSvg(id)}</span>
-      <span class="meta">
-        <span class="name">${t.name}</span>
-        <span class="sub">${locked ? `unlock: ${u.blurb}` : toolStat(id)}</span>
-      </span>
-      <span class="cost">${costLabel}</span>
-    `;
-    btn.addEventListener('click', () => {
-      if (t.gate && !state.unlocks[t.gate] && !state.god.freeBuild) {
-        tryUnlock(t.gate);
-        return;
-      }
-      state.selectedTool = id;
-      buildToolbar();
-    });
-    btn.addEventListener('mouseenter', (e) => showTooltip(e, t.name, t.desc, t));
-    btn.addEventListener('mousemove', moveTooltip);
-    btn.addEventListener('mouseleave', hideTooltip);
-    toolsEl.appendChild(btn);
+  for (const layer of LAYERS) {
+    const head = document.createElement('div');
+    head.className = 'tool-layer';
+    head.textContent = layer.name;
+    toolsEl.appendChild(head);
+    for (const id of layer.tiles) addToolButton(id);
   }
+}
+
+function addToolButton(id) {
+  const t = TILE_TYPES[id];
+  const locked = t.gate && !state.unlocks[t.gate] && !state.god.freeBuild;
+  const btn = document.createElement('button');
+  btn.className = 'tool' + (id === state.selectedTool ? ' selected' : '') + (locked ? ' locked' : '');
+  btn.dataset.tool = id;
+  const u = t.gate && UNLOCKS[t.gate];
+  const costLabel = locked
+    ? `🔒 ${u.cash != null ? '$' + u.cash.toLocaleString() : u.rp + ' RP'}`
+    : id === 'bull' ? '↶' : '$' + t.cost;
+  btn.innerHTML = `
+    <span class="icon">${iconSvg(id)}</span>
+    <span class="meta">
+      <span class="name">${t.name}</span>
+      <span class="sub">${locked ? `unlock: ${u.blurb}` : toolStat(id)}</span>
+    </span>
+    <span class="cost">${costLabel}</span>
+  `;
+  btn.addEventListener('click', () => {
+    if (t.gate && !state.unlocks[t.gate] && !state.god.freeBuild) {
+      tryUnlock(t.gate);
+      return;
+    }
+    state.selectedTool = id;
+    buildToolbar();
+  });
+  btn.addEventListener('mouseenter', (e) => showTooltip(e, t.name + layerBadge(id), t.desc, t));
+  btn.addEventListener('mousemove', moveTooltip);
+  btn.addEventListener('mouseleave', hideTooltip);
+  toolsEl.appendChild(btn);
 }
 
 // Everything beyond the minute-zero kit is earned — hardware costs cash,
@@ -361,7 +416,7 @@ function toolStat(id) {
   if (id === 'solar') return `≤${t.power} MW ☀`;
   if (id === 'power') return `+${t.power} MW`;
   if (id === 'fan') return `+${t.cooling} kW air`;
-  if (id === 'cooler') return `+${t.cooling} kW`;
+  if (t.cooling > 0) return `+${t.cooling} kW`;
   if (t.compute > 0) return `+${t.compute} TFLOPS`;
   if (id === 'desk') return `+15% compute`;
   if (id === 'retrain') return `+${t.jobs} jobs`;
@@ -383,6 +438,9 @@ function iconSvg(id) {
   if (id === 'cpu')     return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="6" y="6" width="12" height="12" rx="1.5"/><rect x="9.5" y="9.5" width="5" height="5"/><path d="M9 6V3M15 6V3M9 21v-3M15 21v-3M6 9H3M6 15H3M21 9h-3M21 15h-3" stroke-linecap="round"/></svg>`;
   if (id === 'tpu')     return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9.3h16M4 14.6h16M9.3 4v16M14.6 4v16"/></svg>`;
   if (id === 'quantum') return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="12" cy="12" r="1.8"/><ellipse cx="12" cy="12" rx="9" ry="3.8"/><ellipse cx="12" cy="12" rx="9" ry="3.8" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="9" ry="3.8" transform="rotate(120 12 12)"/></svg>`;
+  if (id === 'exch')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M4 7h13l-3-3M20 17H7l3 3" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12h16" stroke-dasharray="2 2"/></svg>`;
+  if (id === 'immersion') return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M4 9c2-2 4 2 6 0s4 2 6 0 3 1 4 0" stroke-linecap="round"/><path d="M5 9v9a2 2 0 002 2h10a2 2 0 002-2V9" stroke-linecap="round"/><rect x="9" y="12" width="6" height="5" rx="0.8"/></svg>`;
+  if (id === 'cryo')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M12 2v20M12 12l8-4.6M12 12L4 7.4M12 12l8 4.6M12 12L4 16.6M9.5 3.8l2.5 1.7 2.5-1.7M9.5 20.2l2.5-1.7 2.5 1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   if (id === 'desk')    return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="12" cy="7" r="3"/><path d="M5 21v-2a4 4 0 014-4h6a4 4 0 014 4v2" stroke-linecap="round"/></svg>`;
   if (id === 'retrain') return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><path d="M12 4L2 9l10 5 10-5-10-5z" stroke-linejoin="round"/><path d="M6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5" stroke-linecap="round"/></svg>`;
   if (id === 'human')   return `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.6"><circle cx="9" cy="8" r="2.6"/><circle cx="16" cy="9.5" r="2.1"/><path d="M3.5 20v-1.5a4.5 4.5 0 014.5-4.5h2a4.5 4.5 0 014.5 4.5V20M14 14.4a3.8 3.8 0 016.5 2.7V20" stroke-linecap="round"/></svg>`;
@@ -570,8 +628,10 @@ function tick() {
     }
   }
 
-  // Each working GPU draws from the global pools; output scales with research,
-  // condition, and the adjacency cluster bonus
+  // Each working compute tile draws from the global pools; output scales with
+  // research, condition, synergy auras, and the GPU adjacency cluster bonus
+  const auras = computeAuraMaps();
+  state.auraMaps = auras;
   let powerUsed = 0, coolingUsed = 0, gpuTflops = 0;
   const computeCells = [];
   for (let y = 0; y < ROWS; y++) {
@@ -588,20 +648,22 @@ function tick() {
       if (power - powerUsed >= needP && cooling - coolingUsed >= needC) {
         powerUsed += needP;
         coolingUsed += needC;
-        let out = t.compute * techMult('compute') * gpuCondScale(c) * (1 + GPU_ADJ_BONUS * adjGpus);
+        let out = t.compute * techMult('compute') * gpuCondScale(c) * (1 + GPU_ADJ_BONUS * adjGpus) * (1 + auras.boost[y][x]);
         if (brownout) out *= 0.8;
         gpuTflops += out;
         computeCells.push({ x, y });
       }
     }
   }
-  // Coolant loops and bot bays draw power after GPUs (never starve compute)
+  // Cooling tiles and bot bays draw power after compute (never starve compute)
   const poweredBays = [];
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
       const c = state.grid[y][x];
       if (!c || c.cond <= 0) continue;
-      if (c.t === 'cooler' && power - powerUsed >= 1) powerUsed += 1;
+      const t = TILE_TYPES[c.t];
+      const coolDraw = t.cooling > 0 ? Math.abs(Math.min(0, t.power)) : 0;
+      if (coolDraw && power - powerUsed >= coolDraw) powerUsed += coolDraw;
       if (c.t === 'botbay' && !offline.has(`${x},${y}`) && power - powerUsed >= 2) {
         powerUsed += 2;
         poweredBays.push({ x, y });
@@ -697,7 +759,8 @@ function tick() {
         const rate = TILE_TYPES[c.t].wear
           * (track ? Math.pow(RESEARCH_WEAR, state.tech[track]) : 1)
           * (1 + ENTROPY_WEAR_MULT * entropy01)
-          * (1 + HEAT_WEAR_MULT * heatMap[y][x]);
+          * (1 + HEAT_WEAR_MULT * heatMap[y][x])
+          * auras.wear[y][x];
         const before = c.cond;
         c.cond = Math.max(0, c.cond - rate * dtS);
         if (before > 0 && c.cond <= 0) {
@@ -1142,6 +1205,37 @@ function drawGlyph(ctx, cx, cy, id, color) {
       ctx.moveTo(cx - s + 1, cy); ctx.lineTo(cx + s - 1, cy);
       ctx.stroke();
     }
+  } else if (id === 'exch') {
+    // counterflow arrows
+    ctx.beginPath();
+    ctx.moveTo(cx - s + 1, cy - 5); ctx.lineTo(cx + s - 3, cy - 5); ctx.lineTo(cx + s - 7, cy - 9);
+    ctx.moveTo(cx + s - 1, cy + 5); ctx.lineTo(cx - s + 3, cy + 5); ctx.lineTo(cx - s + 7, cy + 9);
+    ctx.stroke();
+  } else if (id === 'immersion') {
+    // tank with wavy surface and a submerged rack
+    ctx.beginPath();
+    ctx.moveTo(cx - s + 2, cy - 4);
+    ctx.quadraticCurveTo(cx - s / 2, cy - 8, cx, cy - 4);
+    ctx.quadraticCurveTo(cx + s / 2, cy, cx + s - 2, cy - 4);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - s + 3, cy - 4); ctx.lineTo(cx - s + 3, cy + s - 3);
+    ctx.lineTo(cx + s - 3, cy + s - 3); ctx.lineTo(cx + s - 3, cy - 4);
+    ctx.stroke();
+    ctx.strokeRect(cx - 4, cy, 8, 6);
+  } else if (id === 'cryo') {
+    // snowflake
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(a) * s, cy + Math.sin(a) * s);
+      ctx.moveTo(cx + Math.cos(a) * 7, cy + Math.sin(a) * 7);
+      ctx.lineTo(cx + Math.cos(a + 0.5) * 10, cy + Math.sin(a + 0.5) * 10);
+      ctx.moveTo(cx + Math.cos(a) * 7, cy + Math.sin(a) * 7);
+      ctx.lineTo(cx + Math.cos(a - 0.5) * 10, cy + Math.sin(a - 0.5) * 10);
+      ctx.stroke();
+    }
   } else if (id === 'cpu') {
     // chip: die + pins
     ctx.strokeRect(cx - 7, cy - 7, 14, 14);
@@ -1281,8 +1375,18 @@ function showCellTooltip(e, x, y, cell) {
     const adjGpus = Math.min(3, neighborCells(x, y).filter((n) => isGpu(n.c.t) && n.c.cond > 0).length);
     if (adjGpus) rows += `<div class="tip-row"><span>Cluster</span><span class="v">+${adjGpus * 10}% out · +${Math.round(adjGpus * GPU_ADJ_HEAT * 100)}% cooling need</span></div>`;
   }
-  tooltipEl.innerHTML = `<div class="tip-title">${def.name}</div><div style="color:var(--text-muted);font-size:11px;margin-top:4px;">${def.desc}</div>${rows}`;
+  if (state.auraMaps) {
+    const b = state.auraMaps.boost[y][x], w = state.auraMaps.wear[y][x];
+    if (b > 0) rows += `<div class="tip-row"><span>Synergy</span><span class="v">+${Math.round(b * 100)}% out</span></div>`;
+    if (w < 1) rows += `<div class="tip-row"><span>Wear guard</span><span class="v">×${w.toFixed(2)}</span></div>`;
+  }
+  tooltipEl.innerHTML = `<div class="tip-title">${def.name}${layerBadge(cell.t)}</div><div style="color:var(--text-muted);font-size:11px;margin-top:4px;">${def.desc}</div>${rows}`;
   moveTooltip(e);
+}
+
+function layerBadge(id) {
+  const layer = LAYERS.find((l) => l.tiles.includes(id));
+  return layer && layer.name !== 'Tools' ? ` <span class="tip-layer">${layer.name}</span>` : '';
 }
 
 function moveTooltip(e) {

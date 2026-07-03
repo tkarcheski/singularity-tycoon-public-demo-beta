@@ -8,10 +8,10 @@ Test Teardown    Close Game
 
 
 *** Test Cases ***
-Boots Cleanly With Fifteen Tools
-    [Documentation]    The shell renders all fifteen build tools and starts the tutorial.
+Boots Cleanly With Eighteen Tools
+    [Documentation]    The shell renders all eighteen build tools and starts the tutorial.
     ${count}=    Get Element Count    css=#tools .tool
-    Should Be Equal As Integers    ${count}    15
+    Should Be Equal As Integers    ${count}    18
     ${step}=     Get Text             css=#tut-progress
     Should Be Equal    ${step}    1 / 9
 
