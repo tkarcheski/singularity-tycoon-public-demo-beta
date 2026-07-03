@@ -1036,6 +1036,7 @@ function tick() {
       const gy = Math.floor(Math.random() * ROWS);
       emitParticles(gx, gy, 3, '#4af0c0');
     }
+    showDemoEnd();
   }
 
   updateHUD();
@@ -1094,6 +1095,29 @@ function announceMood(mood) {
   if (mood === 'neutral') pushTicker('Public mood is neutral — the city is watching', '');
   if (mood === 'unrest') pushTicker('Layoff headlines spread — power surcharge imposed (+25% upkeep)', 'warn');
   if (mood === 'protest') pushTicker('PROTESTS outside the datacenter — output halved, permits delayed', 'bad');
+}
+
+// Where the paid game will live. Empty until the Steam page exists — the
+// end-of-demo button reads "coming soon" until this is set.
+const STEAM_STORE_URL = '';
+
+function showDemoEnd() {
+  const el = document.getElementById('demo-end');
+  if (!el) return;
+  document.getElementById('demo-end-stats').innerHTML = `
+    <div class="tip-row"><span>Final compute</span><span class="v">${state.totalCompute.toFixed(1)} TFLOPS</span></div>
+    <div class="tip-row"><span>Floors built</span><span class="v">${state.floors.length}</span></div>
+    <div class="tip-row"><span>Public opinion</span><span class="v">${Math.round(state.sentiment)}%</span></div>
+    <div class="tip-row"><span>Run length</span><span class="v">${Math.round(state.tick * TICK_MS / 1000 / 60)} min</span></div>`;
+  const wl = document.getElementById('btn-wishlist');
+  if (STEAM_STORE_URL) {
+    wl.textContent = '⭐ Wishlist the full game on Steam';
+    wl.addEventListener('click', () => window.open(STEAM_STORE_URL, '_blank'));
+  } else {
+    wl.textContent = '⭐ Full game coming to Steam';
+    wl.disabled = true;
+  }
+  el.hidden = false;
 }
 
 function declareBankruptcy() {
@@ -1999,6 +2023,9 @@ document.getElementById('btn-start-over').addEventListener('click', () => {
   clearSave();
   suspendAutoSave = true;
   location.reload();
+});
+document.getElementById('btn-keep-playing').addEventListener('click', () => {
+  document.getElementById('demo-end').hidden = true;
 });
 // A save that went bankrupt before the tab closed re-shows the overlay on boot
 if (state.bankrupt) {
