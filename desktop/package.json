@@ -17,6 +17,7 @@
   "build": {
     "appId": "com.tkarcheski.singularitytycoon",
     "productName": "Singularity Tycoon",
+    "artifactName": "SingularityTycoon-${version}-${os}.${ext}",
     "directories": {
       "output": "dist"
     },
