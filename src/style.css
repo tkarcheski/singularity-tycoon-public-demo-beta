@@ -759,3 +759,12 @@ body {
 .research-open { padding: 5px 10px; }
 .palette-foot { padding-top: 4px; }
 .palette-foot .ghost-btn { padding: 6px 10px; }
+.fin-frate {
+  display: flex; align-items: center; gap: 5px;
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-muted);
+  padding: 2px 4px;
+}
+.fin-frate-label { color: var(--text); font-size: 11px; margin-right: 2px; }
+.fin-frate label { display: inline-flex; gap: 2px; align-items: center; cursor: pointer; white-space: nowrap; }
+.fin-frate input { accent-color: var(--accent); }
+.fin-frate[hidden] { display: none; }

@@ -49,4 +49,4 @@ def test_futures_pays_advance_and_records_delivery(game, place, click_cell):
     cash_before = game.evaluate("window.__state.cash")
     game.click("[data-futures]")
     assert game.evaluate("window.__state.cash") > cash_before + 1000
-    assert game.evaluate("window.__state.futuresOwed") > 0
+    assert game.evaluate("window.__state.futures.reduce((a,c) => a + c.owed, 0)") > 0
