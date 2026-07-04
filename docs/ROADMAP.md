@@ -99,3 +99,21 @@ board (precomputed neighbor lists) rather than a general tri-lattice engine.
 - Economy behavior during minigames (pause / normal / reduced tick).
 - Multiplayer phase 2+ scope (shared research commons design).
 - Price revisit checkpoint: after first 5,000 wishlists or Next Fest, whichever first.
+
+## Revision 2026-07-04 — the full OSI ladder (Tyler's design session)
+
+The layer plan is now explicit, replacing the loose L1/L2/L7 homage:
+
+| Layer | Theme | Status |
+|---|---|---|
+| L1 · PHYSICAL | power, cooling, walls, floors, vacuum | shipped, deepening (#61: per-floor power + Power Transfer blocks, distance-based transmission loss) |
+| L2 · COMPUTE | silicon families, degradation physics | shipped; degraded machines now lose FLOPS **and draw more power** |
+| L3 · NETWORKING | machines talk: CPUs link GPU groups, linked-cluster size bonuses; station comms isolated | #62 (absorbs #18/#23/#19) |
+| L4 · DATA | agents: self-improvement beyond ×2 must be SAVED into deployed data blocks; local agents join clusters like human workers | #63 |
+| L5 · ROBOTICS | physical robots repair and cut maintenance | #64 (evolves #34) |
+| L6 · APPLICATION | what the compute runs | #65 (placeholder) |
+| L7 · BUSINESS | markets, contracts, competition | #65 (placeholder) |
+
+Balance directive: maintenance must cost — ≥7.5% Maintain allocation to
+hold steady, more to catch up (shipped); robots (L5) are how you buy that
+number back down.
