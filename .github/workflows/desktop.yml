@@ -12,8 +12,13 @@ on:
   workflow_dispatch:
 
 # Builds the Electron AppImage on the ai1 self-hosted runner, smoke-boots the
-# PACKAGED binary headless (CDP), and uploads the artifact. Electron binaries
-# and builder tools cache in ~/.cache on the runner, so warm runs are fast.
+# PACKAGED binary headless (CDP), uploads the artifact, and — on master —
+# publishes it to the rolling `desktop-latest` GitHub Release so the current
+# build is always one click away on the Releases page. Electron binaries and
+# builder tools cache in ~/.cache on the runner, so warm runs are fast.
+permissions:
+  contents: write
+
 jobs:
   appimage:
     name: electron appimage
@@ -47,3 +52,15 @@ jobs:
           path: desktop/dist/*.AppImage
           retention-days: 14
           compression-level: 0
+      - name: Publish rolling release (master only)
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view desktop-latest >/dev/null 2>&1 || \
+            gh release create desktop-latest --prerelease \
+              --title "🖥 Singularity Tycoon — desktop (latest master)" \
+              --notes "Rolling desktop build."
+          gh release upload desktop-latest desktop/dist/*.AppImage --clobber
+          gh release edit desktop-latest \
+            --notes "Rolling desktop build from master. Linux AppImage: download, \`chmod +x\`, run. Windows/macOS need their own runners (desktop/README.md). Commit: ${GITHUB_SHA} · $(date -u +%Y-%m-%dT%H:%MZ)"
