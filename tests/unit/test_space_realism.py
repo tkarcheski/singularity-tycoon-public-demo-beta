@@ -136,7 +136,7 @@ def test_durability_research_slows_wear(game):
 
 
 def test_research_tree_has_core_and_space_branches(game):
-    assert game.evaluate("document.querySelectorAll('.research-row').length") == 9
+    assert game.evaluate("document.querySelectorAll('.research-row').length") == 11
     names = game.evaluate("[...document.querySelectorAll('.research-name')].map(e => e.textContent)")
     assert any("Durability" in n for n in names)
     assert any("Shielding" in n for n in names)

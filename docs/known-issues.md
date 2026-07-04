@@ -41,3 +41,15 @@ Refreshing the page loses all progress. A ~10-line `localStorage` save (grid + c
 - Flavor text says *"Adjacent tiles connect automatically"* but adjacency does nothing — pools are global.
 - The starfield drifts on the sim tick (2 px/s) and is effectively static.
 - Repo hygiene: no LICENSE; `.gitignore` covers only `node_modules/`.
+
+---
+
+## Status update — 2026-07-04
+
+Items above are historical (v0.1 audit). Current state:
+
+- **#2 (no fail state): FIXED** — insolvency countdown + bankruptcy overlay (PR #49).
+- **#4 (music overlay blocks grid):** superseded — the music prompt no longer intercepts grid clicks.
+- **#5 (no persistence): FIXED** — localStorage autosave with versioned snapshots and migrations.
+- **Adjacency flavor text:** now true — synergy auras, GPU clusters, wall bonuses, and vertical immersion effects all exist.
+- Open balance watch-items: maintenance ≥7.5% retune (2026-07-04) is fresh — verify in playtest; vacuum heat retention ×2 makes dense stations spicy by design.

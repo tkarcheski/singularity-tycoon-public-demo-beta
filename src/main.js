@@ -30,7 +30,7 @@ const TILE_TYPES = {
   life:    { name: 'Life Support',    cost: 400, power: -3,  cooling: 0,  compute: 0,    upkeep: 1.5,  jobs: 0, wear: 0.2,  color: '#0e2a33', accent: '#7ee7ff', desc: 'Air, water, warmth — a breathable bubble reaching 2 tiles. In space, people tiles outside a field suffocate and produce nothing. On Earth, the sky does this for free.' },
   fission: { name: 'Fission Core',    cost: 1500, power: 30, cooling: 0,  compute: 0,    upkeep: 6.0,  jobs: 2, wear: 0.25, gate: 'fission', color: '#2e1a10', accent: '#ffd24a', desc: 'Supplies 30 MW anywhere — the atom doesn\'t need air. Emits serious heat (12): in vacuum, with nowhere for heat to go, reactor placement is the puzzle.' },
   repair:  { name: 'Repair',          cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#13241c', accent: '#7dffa8', desc: 'Fix a damaged tile for 30% of its build cost, scaled by damage.' },
-  bull:    { name: 'Bulldoze',        cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#2a1414', accent: '#ff4f6d', desc: 'Refund 50% of build cost.' },
+  bull:    { name: 'Bulldoze',        cost: 0,   power: 0,   cooling: 0,  compute: 0,    upkeep: 0,    jobs: 0, wear: 0,    color: '#2a1414', accent: '#ff4f6d', desc: 'Refund 50% of build cost — ♻ Recovery research salvages up to 75%.' },
 };
 
 const REVENUE_PER_TFLOPS = 1.20; // base $/sec per TFLOPS at neutral demand (4× the v0.2
@@ -56,8 +56,14 @@ const PRICE_HISTORY_LEN = 120; // ~60s of sparkline at the 500ms tick
 const WORN_AT = 40;              // below: output ×0.6
 const REPAIR_COST_FRAC = 0.30;   // of build cost at full damage
 const BOT_REPAIR_DISCOUNT = 0.6; // bots pay 60% of the manual rate
-const BOT_HEAL = 15;             // condition restored per bot visit
-const BOT_PERIOD_TICKS = 8;      // one visit per bay per 4s
+const BOT_HEAL = 15;             // condition restored per bot visit (base)
+const BOT_PERIOD_TICKS = 6;      // one visit per bay per 3s (#34 buff)
+// 🤖 Robotics research (foreshadows L5, #64): stronger, busier repair bots
+const BOT_HEAL_PER_LEVEL = 8;    // +heal per Robotics level
+function botHeal() { return BOT_HEAL + BOT_HEAL_PER_LEVEL * (state.tech.robotics || 0); }
+function botTargetsPerVisit() { return 1 + ((state.tech.robotics || 0) >= 2 ? 1 : 0); }
+// ♻ Recovery research (#12): salvage more when tearing down
+function bulldozeRefundRate() { return 0.5 + 0.125 * (state.tech.recovery || 0); } // 50% → 62.5% → 75%
 // Maintain allocation pricing (rebalanced 2026-07-04: 1% was too easy —
 // holding steady should demand ≥7.5% of compute, catching up costs extra;
 // L5 robots are the future way to buy this back down)
@@ -96,6 +102,8 @@ const RESEARCH = {
   cooling: { name: '❄️ Cooling', costs: [25, 125], desc: 'Loop, exchanger and fan supply ×1.4 per level — pushed harder, they wear ×1.6.' },
   compute: { name: '🧮 Compute', costs: [40, 200], desc: 'All silicon outputs ×1.4 per level — overclocked chips wear ×1.6.' },
   durability: { name: '🔧 Durability', costs: [35, 175], desc: 'Better materials everywhere: all wear ×0.75 per level.' },
+  robotics: { name: '🤖 Robotics', costs: [45, 220], desc: 'Bot bays heal +8 per level; level II bots service two tiles per pass. (L5 begins here.)' },
+  recovery: { name: '♻ Recovery', costs: [30, 140], desc: 'Careful teardown: bulldoze and overhaul refunds +12.5% per level (50% → 75%).' },
   contracts: { name: '📜 Contracts', costs: [60, 300], desc: 'A deeper futures desk: +2 simultaneous contracts per level (1 → 3 → 5).' },
   // 🛰 SPACE branch — locked until the Dyson blueprint
   shielding: { name: '🛡 Rad-hard Shielding', costs: [120, 400], space: true, desc: 'Radiation-hardened everything: space wear ×0.8 per level.' },
@@ -228,7 +236,7 @@ const state = {
   unlocks: { gpu2: false, ops: false, tpu: false, quantum: false, immersion: false, cryo: false, hex: false, fission: false },
 
   // v0.3 systems
-  tech: { power: 0, cooling: 0, compute: 0, durability: 0, shielding: 0, radiators: 0, recyclers: 0, panels: 0, contracts: 0 }, // research levels 0..2
+  tech: { power: 0, cooling: 0, compute: 0, durability: 0, robotics: 0, recovery: 0, contracts: 0, shielding: 0, radiators: 0, recyclers: 0, panels: 0 }, // research levels 0..2
   debt: 0,          // outstanding loan repayment
   futures: [],      // open futures contracts: [{ owed, total }] — FIFO delivery
   futuresRate: 0.5, // player-set share of gross revenue withheld for delivery
@@ -305,7 +313,7 @@ function overhaulFloor() {
   let refund = 0, count = 0;
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
-      if (grid[y][x]) { refund += Math.floor(TILE_TYPES[grid[y][x].t].cost * 0.5); count++; }
+      if (grid[y][x]) { refund += Math.floor(TILE_TYPES[grid[y][x].t].cost * bulldozeRefundRate()); count++; }
     }
   }
   if (!count) { pushTicker('This floor is already a clean slab', ''); return; }
@@ -977,11 +985,11 @@ function attemptPlace(x, y) {
 
   if (id === 'bull') {
     if (!existing) return;
-    const refund = Math.floor(TILE_TYPES[existing.t].cost * 0.5);
+    const refund = Math.floor(TILE_TYPES[existing.t].cost * bulldozeRefundRate());
     state.cash += refund;
     state.grid[y][x] = null;
     flashCell(x, y, 1);
-    pushTicker(`Bulldozed ${TILE_TYPES[existing.t].name} (+$${refund})`, 'warn');
+    pushTicker(`${state.tech.recovery > 0 ? 'Recovered' : 'Bulldozed'} ${TILE_TYPES[existing.t].name} (+$${refund})`, 'warn');
     return;
   }
 
@@ -1295,28 +1303,31 @@ function tick() {
     }
   });
 
-  // Bot bays: each powered bay repairs the most-damaged other tile on ITS
-  // floor every 4s
+  // Bot bays: each powered bay repairs the most-damaged tile(s) on ITS floor
+  // every 3s. Robotics research makes bots heal harder and, at level II,
+  // service two tiles per pass.
   if (poweredBays.length && state.tick % BOT_PERIOD_TICKS === 0) {
     forEachFloor((f) => {
       for (const bay of poweredBays) {
         if (bay.f !== f) continue;
-        let target = null;
-        for (let y = 0; y < ROWS; y++) {
-          for (let x = 0; x < COLS; x++) {
-            const c = state.grid[y][x];
-            if (!c || c.cond >= 100 || (x === bay.x && y === bay.y)) continue;
-            if (!target || c.cond < target.c.cond) target = { x, y, c };
+        for (let visit = 0; visit < botTargetsPerVisit(); visit++) {
+          let target = null;
+          for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+              const c = state.grid[y][x];
+              if (!c || c.cond >= 100 || (x === bay.x && y === bay.y)) continue;
+              if (!target || c.cond < target.c.cond) target = { x, y, c };
+            }
           }
+          if (!target) break;
+          const heal = Math.min(botHeal(), 100 - target.c.cond);
+          const price = Math.ceil(TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * (heal / 100) * BOT_REPAIR_DISCOUNT);
+          if (!state.god.freeBuild && state.cash < price) break;
+          if (!state.god.freeBuild) state.cash -= price;
+          target.c.cond += heal;
+          emitParticles(target.x, target.y, 5, '#9aa5ff');
+          flashCell(target.x, target.y, 0.8);
         }
-        if (!target) continue;
-        const heal = Math.min(BOT_HEAL, 100 - target.c.cond);
-        const price = Math.ceil(TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * (heal / 100) * BOT_REPAIR_DISCOUNT);
-        if (!state.god.freeBuild && state.cash < price) continue;
-        if (!state.god.freeBuild) state.cash -= price;
-        target.c.cond += heal;
-        emitParticles(target.x, target.y, 3, '#9aa5ff');
-        flashCell(target.x, target.y, 0.6);
       }
     });
   }
@@ -2505,15 +2516,17 @@ modalBody.innerHTML = `
     <li><strong>Jobs &amp; Public mood:</strong> selling compute displaces jobs in the city; your buildings (especially <strong>Retraining Centers</strong>) create them. A happy city <strong>buys more tokens</strong> — the Token \$ price in the HUD rises and falls with sentiment (plus market wobble). Let it slide and you'll face surcharges, halved output, and permit delays.</li>
     <li><strong>Heat:</strong> GPUs and Power Plants run hot (tiles glow red); heat accelerates wear and feeds entropy. Coolant Loops drain heat with distance falloff — the closer the loop, the cooler the silicon.</li>
     <li><strong>Wear &amp; repair:</strong> everything degrades — GPU output fades with condition, broken tiles stop. Repair by hand (press <kbd>8</kbd>) or place <strong>Bot Bays</strong> to automate it. GPU clusters compute up to 30% more but need more cooling.</li>
-    <li><strong>Research:</strong> upgrade Power, Cooling, or Compute — each level boosts output ×1.4 but the exotic tech wears ×1.6 faster.</li>
-    <li><strong>Allocation:</strong> decide where your AI's tokens go — <em>Sell</em> for cash, <em>Research</em> for research points (buys tech and unlocks), or <em>Self-improve</em> for compounding output that feeds entropy. The singularity dial is yours.</li>
-    <li><strong>Unlocks:</strong> anything marked 🔒 in the Build panel is earned — hardware costs cash, capabilities cost research points. Ops Automation opens Bot Bays; the 🔧 Maintain allocation funds automatic repairs.</li>
-    <li><strong>Finance:</strong> take a loan (repaid from revenue, with interest) or sell compute futures once you're big enough. Leverage is how you escape the early grind.</li>
-    <li><strong>Entropy:</strong> the more compute you run, the faster things wear and the weirder the failures get. The machine pushes back.</li>
-    <li><strong>Worker Pods:</strong> humans output tokens as they learn — the AI trains them when they sit near working GPUs, and they teach each other. They can't be upgraded, but they also never break.</li>
-    <li>Press <kbd>1</kbd>–<kbd>0</kbd>, <kbd>-</kbd> (repair), <kbd>=</kbd> (bulldoze) to pick tools. <kbd>M</kbd> to mute. Use the Music panel to swap vibes.</li>
+    <li><strong>Research (🔬 button):</strong> a full tree — the CORE branch (Power/Cooling/Compute at output ×1.4, wear ×1.6 per level, plus 🔧 Durability, 🤖 Robotics, ♻ Recovery, 📜 Contracts) and a 🛰 SPACE branch that opens with the Dyson blueprint (shielding, radiators, recyclers, orbital panels).</li>
+    <li><strong>Allocation:</strong> six sliders decide where the AI's tokens go — <em>Sell</em> for cash, <em>Research</em> for RP, <em>Self-improve</em> for compounding output that feeds entropy, <em>Public</em> compute and <em>UBI</em> to keep the city happy (happier city → higher Token $), and <em>Maintain</em> to fund automatic repairs (letting things slip costs a catch-up premium).</li>
+    <li><strong>Floors &amp; walls:</strong> buy floors in Finance ($150k → $750k); switch with the tabs or <kbd>PgUp</kbd>/<kbd>PgDn</kbd>; 🏗 Overhaul clears the floor for salvage. Cooling tiles on the board edge radiate through the wall (×1.25). ⬡ Hex floors (research) pack six neighbors; Immersion Baths chill the same spot on floors above and below.</li>
+    <li><strong>🛰 Space:</strong> the blueprint unlocks a station on a triangular lattice under vacuum rules — no fans or combustion, your own heat lingers (×2), radiator walls shine (×1.5), the sun never sets, radiation gnaws, and people need 🫧 Life Support to function. ☢️ Fission Cores power anything anywhere — if you can cool them.</li>
+    <li><strong>Finance:</strong> loans repay themselves from revenue; sell 📜 compute futures once you're big enough — set your own delivery rate (10–100%) and research Contracts for up to five at once. Watch the Token $ sparkline and sell forward at peaks ↗.</li>
+    <li><strong>Fail state:</strong> below $0 the creditors start a 60-second countdown — recover or it's 💀 bankruptcy.</li>
+    <li><strong>Entropy:</strong> the more compute you run, the faster things wear and the weirder the failures get. Damaged machines also leak — output falls AND power draw rises. The machine pushes back.</li>
+    <li><strong>Worker Pods:</strong> humans output tokens as they learn near working compute, and teach each other. They can't be upgraded, but they also never break.</li>
+    <li>Hover any build button for its full story. Hotkeys <kbd>1</kbd>–<kbd>0</kbd> <kbd>-</kbd> <kbd>=</kbd> <kbd>q</kbd>–<kbd>i</kbd> pick tools; <kbd>M</kbd> mutes.</li>
   </ul>
-  <p>Reach <strong>$1,000,000</strong> to unlock the Dyson Sphere blueprint — the prologue to the full game.</p>
+  <p>Reach <strong>$1,000,000</strong> to unlock the Dyson Sphere blueprint — the door to space, and the prologue to the full game.</p>
 `;
 btnHelp.addEventListener('click', () => { modal.hidden = false; });
 modalClose.addEventListener('click', () => { modal.hidden = true; });
