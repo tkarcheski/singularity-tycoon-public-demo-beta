@@ -1,0 +1,49 @@
+name: desktop
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "src/**"
+      - "index.html"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+
+# Builds the Electron AppImage on the ai1 self-hosted runner, smoke-boots the
+# PACKAGED binary headless (CDP), and uploads the artifact. Electron binaries
+# and builder tools cache in ~/.cache on the runner, so warm runs are fast.
+jobs:
+  appimage:
+    name: electron appimage
+    runs-on: [self-hosted, ai1]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install shell deps
+        working-directory: desktop
+        run: |
+          npm ci --no-audit --no-fund
+          node node_modules/electron/install.js || true
+          ./scripts/ensure-electron.sh
+      - name: Build AppImage
+        working-directory: desktop
+        run: npm run dist
+      - name: Smoke-boot packaged binary
+        working-directory: desktop
+        run: |
+          VENV="$HOME/.cache/stm-ci/venv"
+          [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
+          "$VENV/bin/pip" install -q playwright
+          "$VENV/bin/python" scripts/smoke.py
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: singularity-tycoon-appimage
+          path: desktop/dist/*.AppImage
+          retention-days: 14
+          compression-level: 0
