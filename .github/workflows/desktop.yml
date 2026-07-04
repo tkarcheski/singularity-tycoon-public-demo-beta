@@ -3,6 +3,7 @@ name: desktop
 on:
   push:
     branches: [master]
+    tags: ["v*"]
   pull_request:
     paths:
       - "desktop/**"
@@ -56,15 +57,25 @@ jobs:
           path: desktop/dist/*.AppImage
           retention-days: 14
           compression-level: 0
-      - name: Publish rolling release (master only)
+      - name: Publish release
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view desktop-latest >/dev/null 2>&1 || \
-            gh release create desktop-latest --prerelease \
-              --title "🖥 Singularity Tycoon — desktop (latest master)" \
-              --notes "Rolling desktop build."
-          gh release upload desktop-latest desktop/dist/*.AppImage --clobber
-          gh release edit desktop-latest \
-            --notes "Rolling desktop build from master. Linux AppImage: download, \`chmod +x\`, run. Windows/macOS need their own runners (desktop/README.md). Commit: ${GITHUB_SHA} · $(date -u +%Y-%m-%dT%H:%MZ)"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # Versioned release: attach the build to the pushed tag
+            TAG="${GITHUB_REF_NAME}"
+            gh release view "$TAG" >/dev/null 2>&1 || \
+              gh release create "$TAG" --title "Singularity Tycoon $TAG" \
+                --notes "Desktop build for $TAG. Linux AppImage: download, \`chmod +x\`, run."
+            gh release upload "$TAG" desktop/dist/*.AppImage --clobber
+          else
+            # Rolling release: always the newest master build
+            gh release view desktop-latest >/dev/null 2>&1 || \
+              gh release create desktop-latest --prerelease \
+                --title "🖥 Singularity Tycoon — desktop (latest master)" \
+                --notes "Rolling desktop build."
+            gh release upload desktop-latest desktop/dist/*.AppImage --clobber
+            gh release edit desktop-latest \
+              --notes "Rolling desktop build from master. Linux AppImage: download, \`chmod +x\`, run. Windows/macOS need their own runners (desktop/README.md). Commit: ${GITHUB_SHA} · $(date -u +%Y-%m-%dT%H:%MZ)"
+          fi
