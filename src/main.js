@@ -58,6 +58,14 @@ const REPAIR_COST_FRAC = 0.30;   // of build cost at full damage
 const BOT_REPAIR_DISCOUNT = 0.6; // bots pay 60% of the manual rate
 const BOT_HEAL = 15;             // condition restored per bot visit
 const BOT_PERIOD_TICKS = 8;      // one visit per bay per 4s
+// Maintain allocation pricing (rebalanced 2026-07-04: 1% was too easy —
+// holding steady should demand ≥7.5% of compute, catching up costs extra;
+// L5 robots are the future way to buy this back down)
+const MAINTAIN_RATE = 2.2;       // pool pays 2.2× the manual per-point rate
+const CATCHUP_PREMIUM = 1.5;     // tiles already worn (< WORN_AT) cost extra
+// Degradation physics: damaged silicon leaks — output falls (gpuCondScale)
+// AND power draw rises toward +60% as condition approaches zero
+const DEGRADE_POWER_RISE = 0.6;
 const GPU_ADJ_BONUS = 0.10;      // +compute per adjacent working GPU, cap 3
 const GPU_ADJ_HEAT = 0.15;       // +cooling need per adjacent working GPU — clusters run hot
 
@@ -1113,7 +1121,8 @@ function tick() {
         const adjGpus = isGpu(c.t)
           ? Math.min(3, neighborCells(x, y).filter((n) => isGpu(n.c.t) && n.c.cond > 0).length)
           : 0;
-        const needP = Math.abs(t.power); // negative => draw
+        // Damaged silicon leaks: draw rises toward +60% as condition falls
+        const needP = Math.abs(t.power) * (1 + DEGRADE_POWER_RISE * (1 - c.cond / 100));
         const needC = Math.abs(t.cooling) * (1 + GPU_ADJ_HEAT * adjGpus);
         if (power - powerUsed >= needP && cooling - coolingUsed >= needC) {
           powerUsed += needP;
@@ -1367,8 +1376,10 @@ function tick() {
     pushTicker('Back in the black — creditors stand down', 'good');
   }
 
-  // …and the pool continuously heals the most-damaged tile it can afford
-  // (manual repair rate ×0.8 — bays at ×0.6 stay the better deal).
+  // …and the pool continuously heals the most-damaged tile it can afford.
+  // Outsourced upkeep is pricey (MAINTAIN_RATE × manual), and tiles that
+  // were let slip below WORN_AT pay a catch-up premium — bays (×0.6) and
+  // future L5 robots are how you make maintenance cheap again.
   if (state.maintainPool > 0) {
     let target = null;
     forEachFloor((f) => {
@@ -1379,21 +1390,14 @@ function tick() {
         }
       }
     });
-    if (target && target.f !== state.floor) {
-      // heal silently on the unseen floor
-      const perPoint = TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * 0.01 * 0.8;
+    if (target) {
+      const premium = target.c.cond < WORN_AT ? CATCHUP_PREMIUM : 1;
+      const perPoint = TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * 0.01 * MAINTAIN_RATE * premium;
       const points = Math.min(100 - target.c.cond, state.maintainPool / perPoint);
       if (points > 0.1) {
         target.c.cond += points;
         state.maintainPool -= points * perPoint;
-      }
-    } else if (target) {
-      const perPoint = TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * 0.01 * 0.8;
-      const points = Math.min(100 - target.c.cond, state.maintainPool / perPoint);
-      if (points > 0.1) {
-        target.c.cond += points;
-        state.maintainPool -= points * perPoint;
-        if (state.tick % 8 === 0) {
+        if (target.f === state.floor && state.tick % 8 === 0) {
           emitParticles(target.x, target.y, 2, '#7dffa8');
         }
       }
@@ -1696,19 +1700,22 @@ function drawCell(cx, cy, cell, gx, gy) {
   const id = cell ? cell.t : 'empty';
   const def = TILE_TYPES[id];
   const broken = cell && cell.cond <= 0;
-  // Base
+  const tri = state.topo.key === 'tri';
+  // Base — non-square lattices get a visible seam between cells so dense
+  // builds don't blend into one mass (playtest: "overlapping, hard to see")
+  const seam = state.topo.key === 'square' ? 0 : 1.2;
   ctx.fillStyle = !cell ? '#0c1124' : def.color;
-  state.topo.trace(ctx, cx, cy, 0);
+  state.topo.trace(ctx, cx, cy, seam);
   ctx.fill();
   // Subtle inner panel
   if (cell) {
     ctx.fillStyle = 'rgba(255,255,255,0.04)';
-    state.topo.trace(ctx, cx, cy, 3);
+    state.topo.trace(ctx, cx, cy, seam + 3);
     ctx.fill();
   }
-  // Grid lines
-  ctx.strokeStyle = 'rgba(74, 240, 192, 0.06)';
-  state.topo.trace(ctx, cx, cy, 0);
+  // Grid lines — brighter off-square, where orientation carries information
+  ctx.strokeStyle = state.topo.key === 'square' ? 'rgba(74, 240, 192, 0.06)' : 'rgba(74, 240, 192, 0.16)';
+  state.topo.trace(ctx, cx, cy, seam);
   ctx.stroke();
 
   // Pulse from flash
@@ -1722,10 +1729,16 @@ function drawCell(cx, cy, cell, gx, gy) {
     ctx.restore();
   }
 
-  // Glyph
+  // Glyph — scaled down on triangles, whose inradius is smaller than a
+  // square's half-width; anchored slightly toward the shape's fat side
   if (cell && def.accent) {
     ctx.save();
     if (broken) ctx.globalAlpha = 0.35;
+    if (tri) {
+      ctx.translate(cx, cy);
+      ctx.scale(0.72, 0.72);
+      ctx.translate(-cx, -cy);
+    }
     drawGlyph(ctx, cx, cy, id, def.accent);
     ctx.restore();
   }
@@ -1753,9 +1766,11 @@ function drawCell(cx, cy, cell, gx, gy) {
     ctx.restore();
   }
 
-  // Skill bar for humans — fills up as they learn (the inverse of wear)
-  const barY = cy + TILE / 2 - 8;
-  const bw = TILE - 24;
+  // Skill bar for humans — fills up as they learn (the inverse of wear).
+  // Bars must stay INSIDE the cell: triangles are shorter below the centroid
+  // than squares, so their bar hugs the glyph instead of the cell edge.
+  const barY = tri ? cy + 10 : cy + TILE / 2 - 8;
+  const bw = tri ? TILE - 36 : TILE - 24;
   if (cell.t === 'human') {
     const skill = cell.skill || 0;
     if (skill < 100) {
@@ -1791,13 +1806,15 @@ function drawCell(cx, cy, cell, gx, gy) {
     ctx.restore();
   }
 
-  // Offline (driver crash / bot glitch): pause bars top-right
+  // Offline (driver crash / bot glitch): pause bars (inside the cell on tri)
   if (state.effects.some((ef) => (ef.f || 0) === state.floor && ef.x === gx && ef.y === gy && (ef.kind === 'crash' || ef.kind === 'botGlitch'))) {
     ctx.save();
     ctx.fillStyle = '#6ec5ff';
     ctx.globalAlpha = 0.9;
-    ctx.fillRect(cx + TILE / 2 - 16, cy - TILE / 2 + 6, 3, 9);
-    ctx.fillRect(cx + TILE / 2 - 10, cy - TILE / 2 + 6, 3, 9);
+    const obX = tri ? cx + 6 : cx + TILE / 2 - 16;
+    const obY = tri ? cy - 8 : cy - TILE / 2 + 6;
+    ctx.fillRect(obX, obY, 3, 9);
+    ctx.fillRect(obX + 6, obY, 3, 9);
     ctx.restore();
   }
 }
