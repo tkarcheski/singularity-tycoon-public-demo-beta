@@ -19,7 +19,10 @@ def test_loan_grants_cash_and_sets_debt(game, place):
     cash_before = game.evaluate("window.__state.cash")
     game.click('[data-loan="0"]')
     assert game.evaluate("window.__state.cash") - cash_before >= 999
-    assert game.evaluate("window.__state.debt") == 1300
+    # a sim tick may land between the click and this read — the $0.5/s
+    # minimum repayment can already have shaved a hair off the debt
+    debt = game.evaluate("window.__state.debt")
+    assert 1295 <= debt <= 1300
 
 
 def test_debt_repays_from_revenue_over_time(game, place):
