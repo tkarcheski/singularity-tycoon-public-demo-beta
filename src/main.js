@@ -2459,15 +2459,17 @@ modalBody.innerHTML = `
     <li><strong>Jobs &amp; Public mood:</strong> selling compute displaces jobs in the city; your buildings (especially <strong>Retraining Centers</strong>) create them. A happy city <strong>buys more tokens</strong> — the Token \$ price in the HUD rises and falls with sentiment (plus market wobble). Let it slide and you'll face surcharges, halved output, and permit delays.</li>
     <li><strong>Heat:</strong> GPUs and Power Plants run hot (tiles glow red); heat accelerates wear and feeds entropy. Coolant Loops drain heat with distance falloff — the closer the loop, the cooler the silicon.</li>
     <li><strong>Wear &amp; repair:</strong> everything degrades — GPU output fades with condition, broken tiles stop. Repair by hand (press <kbd>8</kbd>) or place <strong>Bot Bays</strong> to automate it. GPU clusters compute up to 30% more but need more cooling.</li>
-    <li><strong>Research:</strong> upgrade Power, Cooling, or Compute — each level boosts output ×1.4 but the exotic tech wears ×1.6 faster.</li>
-    <li><strong>Allocation:</strong> decide where your AI's tokens go — <em>Sell</em> for cash, <em>Research</em> for research points (buys tech and unlocks), or <em>Self-improve</em> for compounding output that feeds entropy. The singularity dial is yours.</li>
-    <li><strong>Unlocks:</strong> anything marked 🔒 in the Build panel is earned — hardware costs cash, capabilities cost research points. Ops Automation opens Bot Bays; the 🔧 Maintain allocation funds automatic repairs.</li>
-    <li><strong>Finance:</strong> take a loan (repaid from revenue, with interest) or sell compute futures once you're big enough. Leverage is how you escape the early grind.</li>
-    <li><strong>Entropy:</strong> the more compute you run, the faster things wear and the weirder the failures get. The machine pushes back.</li>
-    <li><strong>Worker Pods:</strong> humans output tokens as they learn — the AI trains them when they sit near working GPUs, and they teach each other. They can't be upgraded, but they also never break.</li>
-    <li>Press <kbd>1</kbd>–<kbd>0</kbd>, <kbd>-</kbd> (repair), <kbd>=</kbd> (bulldoze) to pick tools. <kbd>M</kbd> to mute. Use the Music panel to swap vibes.</li>
+    <li><strong>Research (🔬 button):</strong> a full tree — the CORE branch (Power/Cooling/Compute at output ×1.4, wear ×1.6 per level, plus 🔧 Durability, 🤖 Robotics, ♻ Recovery, 📜 Contracts) and a 🛰 SPACE branch that opens with the Dyson blueprint (shielding, radiators, recyclers, orbital panels).</li>
+    <li><strong>Allocation:</strong> six sliders decide where the AI's tokens go — <em>Sell</em> for cash, <em>Research</em> for RP, <em>Self-improve</em> for compounding output that feeds entropy, <em>Public</em> compute and <em>UBI</em> to keep the city happy (happier city → higher Token $), and <em>Maintain</em> to fund automatic repairs (letting things slip costs a catch-up premium).</li>
+    <li><strong>Floors &amp; walls:</strong> buy floors in Finance ($150k → $750k); switch with the tabs or <kbd>PgUp</kbd>/<kbd>PgDn</kbd>; 🏗 Overhaul clears the floor for salvage. Cooling tiles on the board edge radiate through the wall (×1.25). ⬡ Hex floors (research) pack six neighbors; Immersion Baths chill the same spot on floors above and below.</li>
+    <li><strong>🛰 Space:</strong> the blueprint unlocks a station on a triangular lattice under vacuum rules — no fans or combustion, your own heat lingers (×2), radiator walls shine (×1.5), the sun never sets, radiation gnaws, and people need 🫧 Life Support to function. ☢️ Fission Cores power anything anywhere — if you can cool them.</li>
+    <li><strong>Finance:</strong> loans repay themselves from revenue; sell 📜 compute futures once you're big enough — set your own delivery rate (10–100%) and research Contracts for up to five at once. Watch the Token $ sparkline and sell forward at peaks ↗.</li>
+    <li><strong>Fail state:</strong> below $0 the creditors start a 60-second countdown — recover or it's 💀 bankruptcy.</li>
+    <li><strong>Entropy:</strong> the more compute you run, the faster things wear and the weirder the failures get. Damaged machines also leak — output falls AND power draw rises. The machine pushes back.</li>
+    <li><strong>Worker Pods:</strong> humans output tokens as they learn near working compute, and teach each other. They can't be upgraded, but they also never break.</li>
+    <li>Hover any build button for its full story. Hotkeys <kbd>1</kbd>–<kbd>0</kbd> <kbd>-</kbd> <kbd>=</kbd> <kbd>q</kbd>–<kbd>i</kbd> pick tools; <kbd>M</kbd> mutes.</li>
   </ul>
-  <p>Reach <strong>$1,000,000</strong> to unlock the Dyson Sphere blueprint — the prologue to the full game.</p>
+  <p>Reach <strong>$1,000,000</strong> to unlock the Dyson Sphere blueprint — the door to space, and the prologue to the full game.</p>
 `;
 btnHelp.addEventListener('click', () => { modal.hidden = false; });
 modalClose.addEventListener('click', () => { modal.hidden = true; });
