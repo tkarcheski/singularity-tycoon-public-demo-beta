@@ -96,6 +96,8 @@ body {
   border-radius: var(--r-sm);
   min-width: 86px;
 }
+.hud-cell canvas { display: block; margin-top: 2px; opacity: 0.9;
+}
 .hud-label {
   font-size: 9px;
   color: var(--text-muted);
