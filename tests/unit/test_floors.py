@@ -31,7 +31,7 @@ def test_floor_ladder_prices_and_cap(game):
         assert game.evaluate("window.__state.floors.length") == expected_floors
     # tower complete: button gone, five tabs
     assert game.evaluate("document.querySelector('[data-buy-floor]').hidden") is True
-    assert game.evaluate("document.querySelectorAll('.floor-tab').length") == 5
+    assert game.evaluate("document.querySelectorAll('.floor-tab[data-floor]').length") == 5
 
 
 def test_floor_ladder_charges_correct_prices(game):

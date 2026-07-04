@@ -84,10 +84,15 @@ const HEAT_ENTROPY = 0.35;        // entropy01 contribution of average source-ti
 const RESEARCH_OUTPUT = 1.4;
 const RESEARCH_WEAR = 1.6;
 const RESEARCH = {
-  power:   { name: '⚡ Power',   costs: [30, 150] },
-  cooling: { name: '❄️ Cooling', costs: [25, 125] },
-  compute: { name: '🧮 Compute', costs: [40, 200] },
-  durability: { name: '🔧 Durability', costs: [35, 175] },
+  power:   { name: '⚡ Power',   costs: [30, 150], desc: 'Turbine and array output ×1.4 per level — but hotter machines wear ×1.6.' },
+  cooling: { name: '❄️ Cooling', costs: [25, 125], desc: 'Loop, exchanger and fan supply ×1.4 per level — pushed harder, they wear ×1.6.' },
+  compute: { name: '🧮 Compute', costs: [40, 200], desc: 'All silicon outputs ×1.4 per level — overclocked chips wear ×1.6.' },
+  durability: { name: '🔧 Durability', costs: [35, 175], desc: 'Better materials everywhere: all wear ×0.75 per level.' },
+  // 🛰 SPACE branch — locked until the Dyson blueprint
+  shielding: { name: '🛡 Rad-hard Shielding', costs: [120, 400], space: true, desc: 'Radiation-hardened everything: space wear ×0.8 per level.' },
+  radiators: { name: '♨ Radiator Alloys',    costs: [100, 350], space: true, desc: 'Better emissivity: vacuum wall-cooling bonus +0.25 per level.' },
+  recyclers: { name: '🫧 Closed-loop Recyclers', costs: [90, 300], space: true, desc: 'Air and water go further: life-support range +1 per level.' },
+  panels:    { name: '☀ Orbital Panels',     costs: [80, 280], space: true, desc: 'Thin-film arrays: orbital solar multiplier +0.2 per level.' },
 };
 // Durability research: everything wears ×0.75 per level — the counterweight
 // to the output tracks' wear penalty (×1.6/level). First step toward the
@@ -109,7 +114,7 @@ const ENTROPY_GRACE_TFLOPS = 30;   // entropy fades in as compute approaches thi
 // Unlocks — everything beyond the minute-zero kit is earned.
 const UNLOCKS = {
   gpu2: { name: 'GPU Rack v2',    cash: 1500, blurb: 'license next-gen silicon' },
-  ops:  { name: 'Ops Automation', rp: 20,     blurb: 'Bot Bays + auto-maintenance' },
+  ops:  { name: 'Ops Automation', rp: 20,     blurb: 'repair Bot Bays' },
   tpu:  { name: 'TPU Pod',        cash: 8000, blurb: 'custom tensor silicon' },
   quantum: { name: 'Quantum Annealer', rp: 120, blurb: 'cryogenic qubit lab' },
   immersion: { name: 'Immersion Bath', cash: 3000, blurb: 'dielectric liquid cooling' },
@@ -208,19 +213,16 @@ const state = {
   priceHistory: [], // rolling window for the HUD sparkline (#22), not saved
 
   // v0.5: token allocation, research points, self-improvement, unlocks
-  alloc: { sell: 1, research: 0, self: 0, ubc: 0, ubi: 0 }, // normalized shares of compute
+  alloc: { sell: 1, research: 0, self: 0, ubc: 0, ubi: 0, maintain: 0 }, // normalized shares of compute
   rp: 0,             // research points
   selfImprove: 0,    // compounding output bonus, 0..SELF_IMPROVE_CAP
   unlocks: { gpu2: false, ops: false, tpu: false, quantum: false, immersion: false, cryo: false, hex: false, fission: false },
 
   // v0.3 systems
-  tech: { power: 0, cooling: 0, compute: 0, durability: 0 }, // research levels 0..2
+  tech: { power: 0, cooling: 0, compute: 0, durability: 0, shielding: 0, radiators: 0, recyclers: 0, panels: 0 }, // research levels 0..2
   debt: 0,          // outstanding loan repayment
   futuresOwed: 0,   // compute revenue still to deliver on sold futures
-  // Auto-maintenance: divert a slice of revenue into a repair pool. Simple
-  // first cut of the planned token-allocation system (sell vs maintain vs research).
-  maintainShare: 0,  // 0 | 0.10 | 0.25 of gross revenue
-  maintainPool: 0,   // accumulated maintenance budget ($)
+  maintainPool: 0,  // accumulated maintenance budget ($), fed by the Maintain allocation
   entropy: 0,       // 0..100, derived from compute
   effects: [],      // timed debuffs: { kind, x?, y?, until }
 
@@ -267,22 +269,41 @@ function setActiveFloor(i) {
   state.grid = state.floors[state.floor];
   state.topo = topoOf(state.floor);
   updateFloorTabs();
+  buildToolbar(); // palette availability follows the floor (vacuum disables fan/plant)
 }
 
 function updateFloorTabs() {
   const tabs = document.getElementById('floor-tabs');
   if (!tabs) return;
-  tabs.hidden = state.floors.length < 2;
-  if (tabs.hidden) return;
   let ground = 0, stations = 0;
+  tabs.hidden = false;
   tabs.innerHTML = state.floors.map((_, i) => {
     const icon = isSpaceFloor(i) ? '🛰' : topoOf(i).key === 'hex' ? '⬡' : '🏢';
     const label = isSpaceFloor(i) ? `S${++stations}` : `F${++ground}`;
     return `<button class="floor-tab${i === state.floor ? ' active' : ''}" data-floor="${i}">${icon} ${label}</button>`;
-  }).join('');
+  }).join('') + '<button class="floor-tab floor-overhaul" id="btn-overhaul" title="Bulldoze every tile on this floor for a 50% refund">🏗 Overhaul</button>';
   for (const btn of tabs.querySelectorAll('[data-floor]')) {
     btn.addEventListener('click', () => setActiveFloor(+btn.dataset.floor));
   }
+  tabs.querySelector('#btn-overhaul').addEventListener('click', overhaulFloor);
+}
+
+// Rebuild from a clean slab: bulldoze every tile on the ACTIVE floor at the
+// standard 50% refund. The floor itself (and its topology) stays yours.
+function overhaulFloor() {
+  const grid = state.grid;
+  let refund = 0, count = 0;
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (grid[y][x]) { refund += Math.floor(TILE_TYPES[grid[y][x].t].cost * 0.5); count++; }
+    }
+  }
+  if (!count) { pushTicker('This floor is already a clean slab', ''); return; }
+  if (!confirm(`Overhaul this floor? All ${count} tiles are bulldozed for a $${refund.toLocaleString()} refund.`)) return;
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) grid[y][x] = null;
+  state.cash += refund;
+  pushTicker(`🏗 FLOOR OVERHAULED — ${count} tiles cleared, +$${refund.toLocaleString()} salvaged`, 'warn');
+  playStinger('research');
 }
 
 // While the sim visits a non-visible floor, visual effects are muted.
@@ -533,10 +554,18 @@ function isPerimeter(x, y) {
 function isSpaceFloor(f) {
   return !!(state.floorSpace || [])[f];
 }
+// 🛰 Space research dials (all default to the base constants at level 0)
+const SHIELD_WEAR_MULT = 0.8;   // per Rad-hard Shielding level
+const RADIATOR_STEP = 0.25;     // vacuum wall bonus per Radiator Alloys level
+const PANEL_STEP = 0.2;         // orbital solar per Orbital Panels level
+function radiationWear() { return RADIATION_WEAR * Math.pow(SHIELD_WEAR_MULT, state.tech.shielding || 0); }
+function vacuumWallBonus() { return VACUUM_WALL_BONUS + RADIATOR_STEP * (state.tech.radiators || 0); }
+function lifeRange() { return LIFE_RANGE + (state.tech.recyclers || 0); }
+function spaceSolarMult() { return SPACE_SOLAR_MULT + PANEL_STEP * (state.tech.panels || 0); }
 // Wall bonus for a cooling tile at (x,y) on floor f — the envelope radiates
 function wallBonus(f, x, y) {
   if (!isPerimeter(x, y)) return 1;
-  return isSpaceFloor(f) ? VACUUM_WALL_BONUS : PERIMETER_COOL_BONUS;
+  return isSpaceFloor(f) ? vacuumWallBonus() : PERIMETER_COOL_BONUS;
 }
 window.__topo = TOPOLOGIES; // test handle for lattice math
 
@@ -674,7 +703,7 @@ function computeLifeSupportMaps() {
     if (sources.length) {
       for (let y = 0; y < ROWS; y++) {
         for (let x = 0; x < COLS; x++) {
-          map[y][x] = sources.some((s) => topo.dist(s.x, s.y, x, y) <= LIFE_RANGE);
+          map[y][x] = sources.some((s) => topo.dist(s.x, s.y, x, y) <= lifeRange());
         }
       }
     }
@@ -766,15 +795,19 @@ function buildToolbar() {
   }
 }
 
+// Tiles physics forbids on space floors — visibly disabled in the palette
+const SPACE_BLOCKED = { fan: 'no air to move', power: 'no oxygen to burn' };
+
 function addToolButton(id) {
   const t = TILE_TYPES[id];
   const locked = t.gate && !state.unlocks[t.gate] && !state.god.freeBuild;
+  const blocked = SPACE_BLOCKED[id] && isSpaceFloor(state.floor);
   const btn = document.createElement('button');
-  btn.className = 'tool' + (id === state.selectedTool ? ' selected' : '') + (locked ? ' locked' : '');
+  btn.className = 'tool' + (id === state.selectedTool ? ' selected' : '') + (locked ? ' locked' : '') + (blocked ? ' disabled' : '');
   btn.dataset.tool = id;
   const u = t.gate && UNLOCKS[t.gate];
-  const costLabel = locked
-    ? `🔒 ${u.cash != null ? '$' + u.cash.toLocaleString() : u.rp + ' RP'}`
+  const costLabel = blocked ? '🚫'
+    : locked ? `🔒 ${u.cash != null ? '$' + u.cash.toLocaleString() : u.rp + ' RP'}`
     : id === 'bull' ? '↶' : '$' + t.cost;
   btn.innerHTML = `
     <span class="icon">${iconSvg(id)}</span>
@@ -785,6 +818,10 @@ function addToolButton(id) {
     <span class="cost">${costLabel}</span>
   `;
   btn.addEventListener('click', () => {
+    if (blocked) {
+      pushTicker(`🛰 ${t.name}: ${SPACE_BLOCKED[id]} in vacuum`, 'bad');
+      return;
+    }
     if (t.gate && !state.unlocks[t.gate] && !state.god.freeBuild) {
       tryUnlock(t.gate);
       return;
@@ -792,7 +829,7 @@ function addToolButton(id) {
     state.selectedTool = id;
     buildToolbar();
   });
-  btn.addEventListener('mouseenter', (e) => showTooltip(e, t.name + layerBadge(id), t.desc, t));
+  btn.addEventListener('mouseenter', (e) => showTooltip(e, t.name + layerBadge(id), blocked ? `🚫 ${SPACE_BLOCKED[id]} in vacuum. ${t.desc}` : t.desc, t));
   btn.addEventListener('mousemove', moveTooltip);
   btn.addEventListener('mouseleave', hideTooltip);
   toolsEl.appendChild(btn);
@@ -1050,7 +1087,7 @@ function tick() {
         if (space && (c.t === 'fan' || c.t === 'power')) continue; // no air to move — or to burn
         const s = condScale(c);
         // Orbit gets constant, stronger sunlight; the ground gets the sky's moods
-        if (c.t === 'solar') power += t.power * techMult('power') * s * (space ? SPACE_SOLAR_MULT : state.sun);
+        if (c.t === 'solar') power += t.power * techMult('power') * s * (space ? spaceSolarMult() : state.sun);
         else if (t.power > 0) power += t.power * techMult('power') * s;
         // Wall-mounted cooling radiates through the envelope (vacuum doubles down)
         if (t.cooling > 0) cooling += t.cooling * techMult('cooling') * s * wallBonus(f, x, y);
@@ -1213,7 +1250,7 @@ function tick() {
             * (1 + ENTROPY_WEAR_MULT * entropy01)
             * (1 + HEAT_WEAR_MULT * heatByFloor[f][y][x])
             * aurasByFloor[f].wear[y][x]
-            * (isSpaceFloor(f) ? RADIATION_WEAR : 1);
+            * (isSpaceFloor(f) ? radiationWear() : 1);
           const before = c.cond;
           c.cond = Math.max(0, c.cond - rate * dtS);
           if (before > 0 && c.cond <= 0) {
@@ -1309,12 +1346,9 @@ function tick() {
       pushTicker('Loan repaid in full — the bank sends a fruit basket', 'good');
     }
   }
-  // Auto-maintenance: diverted revenue accumulates into a repair pool…
-  if (state.maintainShare > 0) {
-    const diverted = gross * state.maintainShare;
-    state.maintainPool += diverted;
-    income -= diverted;
-  }
+  // Maintain allocation (moved from the old Finance radios): that slice of
+  // compute is sold and the proceeds accumulate into the repair pool…
+  state.maintainPool += computeAdj * state.tokenPrice * (state.alloc.maintain || 0) * dtS;
   const upkeepThisTick = upkeepAdj * dtS;
   state.cash += income - upkeepThisTick;
   if (state.cash > (state.stats.peakCash || 0)) state.stats.peakCash = state.cash;
@@ -2003,7 +2037,7 @@ function showCellTooltip(e, x, y, cell) {
     rows += `<div class="tip-row"><span>${isSpaceFloor(state.floor) ? '🛰 Radiator' : '🧱 Wall-mounted'}</span><span class="v">×${wb.toFixed(2)} supply</span></div>`;
   }
   if (PEOPLE_TILES.includes(cell.t) && state.lifeMap && !state.lifeMap[y][x]) {
-    rows += `<div class="tip-row"><span>🫧 NO AIR</span><span class="v">suffocating — build Life Support (u) within ${LIFE_RANGE}</span></div>`;
+    rows += `<div class="tip-row"><span>🫧 NO AIR</span><span class="v">suffocating — build Life Support (u) within ${lifeRange()}</span></div>`;
   }
   tooltipEl.innerHTML = `<div class="tip-title">${def.name}${layerBadge(cell.t)}</div><div style="color:var(--text-muted);font-size:11px;margin-top:4px;">${def.desc}</div>${rows}`;
   moveTooltip(e);
@@ -2037,7 +2071,7 @@ function pushTicker(text, cls = '') {
 // full member of the group — its share is sold and the proceeds paid out
 // as a public dividend, so it rebalances against the others with no cap.
 const allocEl = document.getElementById('allocation');
-const ALLOC_LABELS = { sell: '💰 Sell', research: '🔬 Research', self: '🧠 Improve', ubc: '🎁 Public', ubi: '🤝 UBI' };
+const ALLOC_LABELS = { sell: '💰 Sell', research: '🔬 Research', self: '🧠 Improve', ubc: '🎁 Public', ubi: '🤝 UBI', maintain: '🔧 Maintain' };
 
 function buildAllocation() {
   // Seed slider positions from state.alloc so a restored save keeps its mix
@@ -2082,33 +2116,59 @@ function updateAllocation() {
   if (ubcTf > 0.05) {
     lines.push(`🎁 Public compute ${ubcTf.toFixed(1)} TF → +${Math.min(UBC_SENT_CAP, ubcTf * UBC_SENT_PER_TFLOPS).toFixed(0)} mood`);
   }
+  if ((state.alloc.maintain || 0) > 0 || state.maintainPool > 1) {
+    lines.push(`🔧 Repair pool $${Math.floor(state.maintainPool).toLocaleString()}`);
+  }
   note.hidden = lines.length === 0;
-  note.innerHTML = lines.join(' · ');
+  note.textContent = lines.join(' · '); note.title = lines.join('\n');
 }
 
 // ---------- Research UI ----------
 const researchEl = document.getElementById('research');
 
 function buildResearch() {
-  researchEl.innerHTML = ''; // RP total lives in the section title
+  researchEl.innerHTML = '';
+  let lastBranch = null;
   for (const key of Object.keys(RESEARCH)) {
+    const branch = RESEARCH[key].space ? '🛰 SPACE — beyond the blueprint' : 'CORE';
+    if (branch !== lastBranch) {
+      const head = document.createElement('div');
+      head.className = 'research-branch';
+      head.textContent = branch;
+      researchEl.appendChild(head);
+      lastBranch = branch;
+    }
     const row = document.createElement('div');
     row.className = 'research-row';
     row.dataset.track = key;
     row.innerHTML = `
-      <span class="research-name">${RESEARCH[key].name}</span>
+      <div class="research-main">
+        <span class="research-name">${RESEARCH[key].name}</span>
+        <span class="research-desc">${RESEARCH[key].desc || ''}</span>
+      </div>
       <span class="research-pips" data-pips></span>
       <button class="research-btn" data-buy></button>
     `;
     row.querySelector('[data-buy]').addEventListener('click', () => buyResearch(key));
     researchEl.appendChild(row);
   }
+  document.getElementById('btn-research').addEventListener('click', () => {
+    document.getElementById('research-modal').hidden = false;
+    updateResearch();
+  });
+  document.getElementById('research-close').addEventListener('click', () => {
+    document.getElementById('research-modal').hidden = true;
+  });
   updateResearch();
 }
 
 function buyResearch(key) {
   const lvl = state.tech[key];
   if (lvl >= RESEARCH[key].costs.length) return;
+  if (RESEARCH[key].space && !state.goalUnlocked) {
+    pushTicker('🛰 Space research needs the Dyson Sphere blueprint first', 'bad');
+    return;
+  }
   const cost = RESEARCH[key].costs[lvl];
   if (!state.god.freeBuild && state.rp < cost) {
     pushTicker(`Need ${cost} RP for ${RESEARCH[key].name} ${['II', 'III'][lvl]} — allocate compute to Research`, 'bad');
@@ -2116,21 +2176,26 @@ function buyResearch(key) {
   }
   if (!state.god.freeBuild) state.rp -= cost;
   state.tech[key]++;
-  pushTicker(`★ ${RESEARCH[key].name} ${['II', 'III'][lvl]} researched — output ×1.4, wear ×1.6`, 'good');
+  pushTicker(`★ ${RESEARCH[key].name} ${['II', 'III'][lvl]} researched — ${RESEARCH[key].desc || ''}`, 'good');
   playStinger('research');
   updateResearch();
 }
 
 function updateResearch() {
-  const title = document.getElementById('research-title');
-  if (title) title.textContent = `🔬 Research · ${state.rp.toFixed(1)} RP`;
+  const openBtn = document.getElementById('btn-research');
+  if (openBtn) openBtn.textContent = `🔬 Research · ${state.rp.toFixed(1)} RP`;
+  const title = document.getElementById('research-modal-title');
+  if (title) title.textContent = `🔬 RESEARCH — ${state.rp.toFixed(1)} RP`;
   for (const row of researchEl.querySelectorAll('.research-row')) {
     const key = row.dataset.track;
     const lvl = state.tech[key];
     const pips = row.querySelector('[data-pips]');
     pips.textContent = ['I', 'II', 'III'].map((r, i) => (i <= lvl ? '●' : '○')).join(' ');
     const btn = row.querySelector('[data-buy]');
-    if (lvl >= RESEARCH[key].costs.length) {
+    if (RESEARCH[key].space && !state.goalUnlocked) {
+      btn.textContent = '🔒';
+      btn.disabled = true;
+    } else if (lvl >= RESEARCH[key].costs.length) {
       btn.textContent = 'MAX';
       btn.disabled = true;
     } else {
@@ -2166,30 +2231,13 @@ function buildFinance() {
       <span class="fin-sub" data-futures-sub></span>
     </button>
     <div class="fin-status" data-owed hidden></div>
-    <div class="fin-maint">
-      <span class="fin-maint-label" title="Divert revenue into an automatic repair pool">🔧 Auto-maintain</span>
-      <label><input type="radio" name="maintain" value="0" checked /> off</label>
-      <label><input type="radio" name="maintain" value="0.10" /> 10%</label>
-      <label><input type="radio" name="maintain" value="0.25" /> 25%</label>
-    </div>
   `;
-  for (const radio of financeEl.querySelectorAll('input[name="maintain"]')) {
-    radio.addEventListener('change', () => {
-      state.maintainShare = parseFloat(radio.value);
-      pushTicker(
-        state.maintainShare > 0
-          ? `Auto-maintenance: ${Math.round(state.maintainShare * 100)}% of revenue diverted to repairs`
-          : 'Auto-maintenance off',
-        'warn',
-      );
-    });
-  }
   const loansEl = financeEl.querySelector('.fin-loans');
   LOANS.forEach((loan, i) => {
     const btn = document.createElement('button');
     btn.className = 'fin-btn';
     btn.dataset.loan = i;
-    btn.innerHTML = `<span>💳 $${loan.amount.toLocaleString()}</span><span class="fin-sub">repay $${loan.repay.toLocaleString()}</span>`;
+    btn.innerHTML = `<span>💳 $${loan.amount.toLocaleString()}</span><span class="fin-sub" title="repay $${loan.repay.toLocaleString()}">↩$${loan.repay.toLocaleString()}</span>`;
     btn.addEventListener('click', () => takeLoan(i));
     loansEl.appendChild(btn);
   });
@@ -2244,9 +2292,6 @@ function updateFinance() {
     : `+$${advance.toLocaleString()} now`;
   owedEl.hidden = state.futuresOwed <= 0;
   if (state.futuresOwed > 0) owedEl.textContent = `Delivering: $${Math.ceil(state.futuresOwed).toLocaleString()} left`;
-  // Auto-maintenance is part of the Ops Automation unlock
-  const maint = financeEl.querySelector('.fin-maint');
-  if (maint) maint.hidden = !state.unlocks.ops && !state.god.freeBuild;
   const floorBtn = financeEl.querySelector('[data-buy-floor]');
   if (floorBtn) {
     const cost = nextFloorCost();
@@ -2405,7 +2450,7 @@ modalBody.innerHTML = `
     <li><strong>Wear &amp; repair:</strong> everything degrades — GPU output fades with condition, broken tiles stop. Repair by hand (press <kbd>8</kbd>) or place <strong>Bot Bays</strong> to automate it. GPU clusters compute up to 30% more but need more cooling.</li>
     <li><strong>Research:</strong> upgrade Power, Cooling, or Compute — each level boosts output ×1.4 but the exotic tech wears ×1.6 faster.</li>
     <li><strong>Allocation:</strong> decide where your AI's tokens go — <em>Sell</em> for cash, <em>Research</em> for research points (buys tech and unlocks), or <em>Self-improve</em> for compounding output that feeds entropy. The singularity dial is yours.</li>
-    <li><strong>Unlocks:</strong> anything marked 🔒 in the Build panel is earned — hardware costs cash, capabilities cost research points. Ops Automation opens Bot Bays and auto-maintenance.</li>
+    <li><strong>Unlocks:</strong> anything marked 🔒 in the Build panel is earned — hardware costs cash, capabilities cost research points. Ops Automation opens Bot Bays; the 🔧 Maintain allocation funds automatic repairs.</li>
     <li><strong>Finance:</strong> take a loan (repaid from revenue, with interest) or sell compute futures once you're big enough. Leverage is how you escape the early grind.</li>
     <li><strong>Entropy:</strong> the more compute you run, the faster things wear and the weirder the failures get. The machine pushes back.</li>
     <li><strong>Worker Pods:</strong> humans output tokens as they learn — the AI trains them when they sit near working GPUs, and they teach each other. They can't be upgraded, but they also never break.</li>
@@ -2434,7 +2479,7 @@ const SAVE_KEYS = [
   'cash', 'floors', 'floor', 'selectedTool', 'tick',
   'sentiment', 'mood', 'market',
   'alloc', 'rp', 'selfImprove', 'unlocks',
-  'tech', 'debt', 'futuresOwed', 'maintainShare', 'maintainPool', 'floorTopos', 'floorSpace',
+  'tech', 'debt', 'futuresOwed', 'maintainPool', 'floorTopos', 'floorSpace',
   'entropy', 'tutStep', 'stats', 'goalUnlocked', 'insolvencyS', 'bankrupt',
 ];
 
@@ -2509,6 +2554,7 @@ buildToolbar();
 buildAllocation();
 buildResearch();
 buildFinance();
+updateFloorTabs();
 updateHUD();
 updateTutorial();
 requestAnimationFrame(loop);

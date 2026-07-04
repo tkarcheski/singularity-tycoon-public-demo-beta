@@ -135,7 +135,11 @@ def test_durability_research_slows_wear(game):
     assert slowed_loss < base_loss * 0.75
 
 
-def test_research_panel_has_four_tracks(game):
-    assert game.evaluate("document.querySelectorAll('.research-row').length") == 4
+def test_research_tree_has_core_and_space_branches(game):
+    assert game.evaluate("document.querySelectorAll('.research-row').length") == 8
     names = game.evaluate("[...document.querySelectorAll('.research-name')].map(e => e.textContent)")
     assert any("Durability" in n for n in names)
+    assert any("Shielding" in n for n in names)
+    # space tracks locked until the blueprint
+    locked = game.evaluate("document.querySelector('.research-row[data-track=\"shielding\"] [data-buy]').textContent")
+    assert "🔒" in locked
