@@ -48,6 +48,7 @@ const DEMAND_PER_SENTIMENT = 0.008; // +0.008× per sentiment point (×1.0 at 50
 const MARKET_WOBBLE = 0.012;      // random walk step per tick
 const MARKET_REVERT = 0.01;       // pull toward 1.0 per tick
 const MARKET_MIN = 0.85, MARKET_MAX = 1.15;
+const PRICE_HISTORY_LEN = 120; // ~60s of sparkline at the 500ms tick
 
 // Wear & repair — equipment degrades; exotic tech degrades faster.
 const WORN_AT = 40;              // below: output ×0.6
@@ -192,6 +193,7 @@ const state = {
   market: 1,      // mean-reverting wobble around 1.0
   sun: 1,         // solar output factor, 0.2..1.0 over ~90s
   tokenPrice: REVENUE_PER_TFLOPS, // effective $/TFLOPS after demand × market
+  priceHistory: [], // rolling window for the HUD sparkline (#22), not saved
 
   // v0.5: token allocation, research points, self-improvement, unlocks
   alloc: { sell: 1, research: 0, self: 0, ubc: 0, ubi: 0 }, // normalized shares of compute
@@ -1220,6 +1222,10 @@ function tick() {
     state.market + (Math.random() - 0.5) * MARKET_WOBBLE + (1 - state.market) * MARKET_REVERT));
   const demand = DEMAND_BASE + DEMAND_PER_SENTIMENT * state.sentiment;
   state.tokenPrice = REVENUE_PER_TFLOPS * demand * state.market * state.god.revenueMult;
+  state.priceHistory.push(state.tokenPrice);
+  if (state.priceHistory.length > PRICE_HISTORY_LEN) {
+    state.priceHistory.splice(0, state.priceHistory.length - PRICE_HISTORY_LEN);
+  }
 
   // Revenue (only the SOLD share of compute, at the live token price)
   const revPerSec = computeAdj * state.tokenPrice * state.alloc.sell;
@@ -1442,6 +1448,37 @@ function updateInsolvencyBanner() {
   }
 }
 
+// Token price sparkline (#22): ride the demand curve instead of reading one
+// number. Dashed line = base price; the curve colors by where you are now.
+function drawSparkline() {
+  const cv = document.getElementById('token-spark');
+  if (!cv) return;
+  const c2 = cv.getContext('2d');
+  const hist = state.priceHistory;
+  c2.clearRect(0, 0, cv.width, cv.height);
+  if (hist.length < 2) return;
+  const lo = Math.min(...hist, REVENUE_PER_TFLOPS) * 0.98;
+  const hi = Math.max(...hist, REVENUE_PER_TFLOPS) * 1.02;
+  const yOf = (v) => cv.height - 1 - ((v - lo) / (hi - lo)) * (cv.height - 2);
+  // base price line
+  c2.strokeStyle = 'rgba(255,255,255,0.25)';
+  c2.setLineDash([2, 2]);
+  c2.beginPath();
+  c2.moveTo(0, yOf(REVENUE_PER_TFLOPS));
+  c2.lineTo(cv.width, yOf(REVENUE_PER_TFLOPS));
+  c2.stroke();
+  c2.setLineDash([]);
+  // the curve
+  c2.strokeStyle = state.tokenPrice >= REVENUE_PER_TFLOPS ? '#4af0c0' : '#ff4f6d';
+  c2.lineWidth = 1.2;
+  c2.beginPath();
+  hist.forEach((v, i) => {
+    const x = (i / (PRICE_HISTORY_LEN - 1)) * cv.width;
+    if (i === 0) c2.moveTo(x, yOf(v)); else c2.lineTo(x, yOf(v));
+  });
+  c2.stroke();
+}
+
 function updateHUD() {
   hudCash.textContent = `$${Math.floor(state.cash).toLocaleString()}`;
   hudCash.classList.toggle('neg', state.cash < 0);
@@ -1464,9 +1501,13 @@ function updateHUD() {
   hudDebt.classList.toggle('neg', state.debt > 0);
   hudEntropy.textContent = `${Math.round(state.entropy)}%`;
   hudEntropy.classList.toggle('neg', state.entropy > 70);
-  hudToken.textContent = `$${state.tokenPrice.toFixed(2)}`;
+  const hist = state.priceHistory;
+  const mean = hist.length > 10 ? hist.reduce((a, b) => a + b, 0) / hist.length : state.tokenPrice;
+  const trend = state.tokenPrice > mean * 1.02 ? ' ↗' : state.tokenPrice < mean * 0.98 ? ' ↘' : ' →';
+  hudToken.textContent = `$${state.tokenPrice.toFixed(2)}${trend}`;
   hudToken.classList.toggle('pos', state.tokenPrice >= REVENUE_PER_TFLOPS * 1.1);
   hudToken.classList.toggle('neg', state.tokenPrice < REVENUE_PER_TFLOPS * 0.9);
+  drawSparkline();
   goalBarFill.style.width = Math.min(100, (state.cash / GOAL) * 100) + '%';
   updateResearch();
   updateFinance();
