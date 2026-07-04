@@ -2,7 +2,15 @@ name: playtest
 
 on:
   push:
+    branches: [master]
   pull_request:
+
+# One run per ref: a new push to the same PR cancels the superseded run —
+# the single ai1 runner stops contending with itself (which widened sim-tick
+# windows enough to flake timing-sensitive tests).
+concurrency:
+  group: playtest-${{ github.ref }}
+  cancel-in-progress: true
 
 # Runs on the self-hosted runner on ai1. Dependencies live in a venv cached
 # outside the workspace (~/.cache/stm-ci/venv) so repeat runs are fast;

@@ -11,6 +11,10 @@ on:
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
 
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
 # Builds the Electron AppImage on the ai1 self-hosted runner, smoke-boots the
 # PACKAGED binary headless (CDP), uploads the artifact, and — on master —
 # publishes it to the rolling `desktop-latest` GitHub Release so the current
