@@ -2,3 +2,5 @@ node_modules/
 .claude/
 __pycache__/
 .pytest_cache/
+desktop/node_modules/
+desktop/dist/

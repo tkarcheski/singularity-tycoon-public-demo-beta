@@ -1,0 +1,52 @@
+{
+  "name": "singularity-tycoon-desktop",
+  "productName": "Singularity Tycoon",
+  "version": "0.7.0",
+  "description": "Singularity Tycoon — build an AI datacenter empire, then rebuild it in space.",
+  "main": "electron-main.js",
+  "author": "tkarcheski",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.tkarcheski.singularitytycoon",
+    "productName": "Singularity Tycoon",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron-main.js",
+      "preload.js",
+      {
+        "from": "..",
+        "to": "app",
+        "filter": [
+          "index.html",
+          "src/**/*",
+          "tools/serve.py",
+          "!**/node_modules"
+        ]
+      }
+    ],
+    "linux": {
+      "target": "AppImage",
+      "category": "Game"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.games"
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}
