@@ -64,6 +64,14 @@ function botHeal() { return BOT_HEAL + BOT_HEAL_PER_LEVEL * (state.tech.robotics
 function botTargetsPerVisit() { return 1 + ((state.tech.robotics || 0) >= 2 ? 1 : 0); }
 // ♻ Recovery research (#12): salvage more when tearing down
 function bulldozeRefundRate() { return 0.5 + 0.125 * (state.tech.recovery || 0); } // 50% → 62.5% → 75%
+// Maintain allocation pricing (rebalanced 2026-07-04: 1% was too easy —
+// holding steady should demand ≥7.5% of compute, catching up costs extra;
+// L5 robots are the future way to buy this back down)
+const MAINTAIN_RATE = 2.2;       // pool pays 2.2× the manual per-point rate
+const CATCHUP_PREMIUM = 1.5;     // tiles already worn (< WORN_AT) cost extra
+// Degradation physics: damaged silicon leaks — output falls (gpuCondScale)
+// AND power draw rises toward +60% as condition approaches zero
+const DEGRADE_POWER_RISE = 0.6;
 const GPU_ADJ_BONUS = 0.10;      // +compute per adjacent working GPU, cap 3
 const GPU_ADJ_HEAT = 0.15;       // +cooling need per adjacent working GPU — clusters run hot
 
@@ -96,6 +104,7 @@ const RESEARCH = {
   durability: { name: '🔧 Durability', costs: [35, 175], desc: 'Better materials everywhere: all wear ×0.75 per level.' },
   robotics: { name: '🤖 Robotics', costs: [45, 220], desc: 'Bot bays heal +8 per level; level II bots service two tiles per pass. (L5 begins here.)' },
   recovery: { name: '♻ Recovery', costs: [30, 140], desc: 'Careful teardown: bulldoze and overhaul refunds +12.5% per level (50% → 75%).' },
+  contracts: { name: '📜 Contracts', costs: [60, 300], desc: 'A deeper futures desk: +2 simultaneous contracts per level (1 → 3 → 5).' },
   // 🛰 SPACE branch — locked until the Dyson blueprint
   shielding: { name: '🛡 Rad-hard Shielding', costs: [120, 400], space: true, desc: 'Radiation-hardened everything: space wear ×0.8 per level.' },
   radiators: { name: '♨ Radiator Alloys',    costs: [100, 350], space: true, desc: 'Better emissivity: vacuum wall-cooling bonus +0.25 per level.' },
@@ -227,9 +236,10 @@ const state = {
   unlocks: { gpu2: false, ops: false, tpu: false, quantum: false, immersion: false, cryo: false, hex: false, fission: false },
 
   // v0.3 systems
-  tech: { power: 0, cooling: 0, compute: 0, durability: 0, robotics: 0, recovery: 0, shielding: 0, radiators: 0, recyclers: 0, panels: 0 }, // research levels 0..2
+  tech: { power: 0, cooling: 0, compute: 0, durability: 0, robotics: 0, recovery: 0, contracts: 0, shielding: 0, radiators: 0, recyclers: 0, panels: 0 }, // research levels 0..2
   debt: 0,          // outstanding loan repayment
-  futuresOwed: 0,   // compute revenue still to deliver on sold futures
+  futures: [],      // open futures contracts: [{ owed, total }] — FIFO delivery
+  futuresRate: 0.5, // player-set share of gross revenue withheld for delivery
   maintainPool: 0,  // accumulated maintenance budget ($), fed by the Maintain allocation
   entropy: 0,       // 0..100, derived from compute
   effects: [],      // timed debuffs: { kind, x?, y?, until }
@@ -1121,7 +1131,8 @@ function tick() {
         const adjGpus = isGpu(c.t)
           ? Math.min(3, neighborCells(x, y).filter((n) => isGpu(n.c.t) && n.c.cond > 0).length)
           : 0;
-        const needP = Math.abs(t.power); // negative => draw
+        // Damaged silicon leaks: draw rises toward +60% as condition falls
+        const needP = Math.abs(t.power) * (1 + DEGRADE_POWER_RISE * (1 - c.cond / 100));
         const needC = Math.abs(t.cooling) * (1 + GPU_ADJ_HEAT * adjGpus);
         if (power - powerUsed >= needP && cooling - coolingUsed >= needC) {
           powerUsed += needP;
@@ -1339,13 +1350,22 @@ function tick() {
   // Universal Basic Income: the UBI allocation share is sold too, but the
   // proceeds are paid straight out as a public dividend (funds jobs above)
   state.ubiSpend = computeAdj * state.tokenPrice * (state.alloc.ubi || 0);
-  if (state.futuresOwed > 0) {
-    const withheld = Math.min(state.futuresOwed, gross * FUTURES_REVENUE_SHARE);
-    state.futuresOwed -= withheld;
-    income -= withheld;
-    if (state.futuresOwed <= 0) {
-      state.futuresOwed = 0;
-      pushTicker('Compute futures delivered — full revenue restored', 'good');
+  // Futures delivery: the player chooses how hard to service contracts —
+  // pay back early at 100% withholding or take their time at 10%. FIFO.
+  if (state.futures.length > 0) {
+    let budget = gross * state.futuresRate;
+    while (budget > 0 && state.futures.length > 0) {
+      const c = state.futures[0];
+      const pay = Math.min(c.owed, budget);
+      c.owed -= pay;
+      budget -= pay;
+      income -= pay;
+      if (c.owed <= 0.001) {
+        state.futures.shift();
+        pushTicker(`📜 Futures contract delivered${state.futures.length ? ` — ${state.futures.length} still open` : ' — full revenue restored'}`, 'good');
+      } else {
+        break;
+      }
     }
   }
   if (state.debt > 0) {
@@ -1378,8 +1398,10 @@ function tick() {
     pushTicker('Back in the black — creditors stand down', 'good');
   }
 
-  // …and the pool continuously heals the most-damaged tile it can afford
-  // (manual repair rate ×0.8 — bays at ×0.6 stay the better deal).
+  // …and the pool continuously heals the most-damaged tile it can afford.
+  // Outsourced upkeep is pricey (MAINTAIN_RATE × manual), and tiles that
+  // were let slip below WORN_AT pay a catch-up premium — bays (×0.6) and
+  // future L5 robots are how you make maintenance cheap again.
   if (state.maintainPool > 0) {
     let target = null;
     forEachFloor((f) => {
@@ -1390,21 +1412,14 @@ function tick() {
         }
       }
     });
-    if (target && target.f !== state.floor) {
-      // heal silently on the unseen floor
-      const perPoint = TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * 0.01 * 0.8;
+    if (target) {
+      const premium = target.c.cond < WORN_AT ? CATCHUP_PREMIUM : 1;
+      const perPoint = TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * 0.01 * MAINTAIN_RATE * premium;
       const points = Math.min(100 - target.c.cond, state.maintainPool / perPoint);
       if (points > 0.1) {
         target.c.cond += points;
         state.maintainPool -= points * perPoint;
-      }
-    } else if (target) {
-      const perPoint = TILE_TYPES[target.c.t].cost * REPAIR_COST_FRAC * 0.01 * 0.8;
-      const points = Math.min(100 - target.c.cond, state.maintainPool / perPoint);
-      if (points > 0.1) {
-        target.c.cond += points;
-        state.maintainPool -= points * perPoint;
-        if (state.tick % 8 === 0) {
+        if (target.f === state.floor && state.tick % 8 === 0) {
           emitParticles(target.x, target.y, 2, '#7dffa8');
         }
       }
@@ -1707,19 +1722,22 @@ function drawCell(cx, cy, cell, gx, gy) {
   const id = cell ? cell.t : 'empty';
   const def = TILE_TYPES[id];
   const broken = cell && cell.cond <= 0;
-  // Base
+  const tri = state.topo.key === 'tri';
+  // Base — non-square lattices get a visible seam between cells so dense
+  // builds don't blend into one mass (playtest: "overlapping, hard to see")
+  const seam = state.topo.key === 'square' ? 0 : 1.2;
   ctx.fillStyle = !cell ? '#0c1124' : def.color;
-  state.topo.trace(ctx, cx, cy, 0);
+  state.topo.trace(ctx, cx, cy, seam);
   ctx.fill();
   // Subtle inner panel
   if (cell) {
     ctx.fillStyle = 'rgba(255,255,255,0.04)';
-    state.topo.trace(ctx, cx, cy, 3);
+    state.topo.trace(ctx, cx, cy, seam + 3);
     ctx.fill();
   }
-  // Grid lines
-  ctx.strokeStyle = 'rgba(74, 240, 192, 0.06)';
-  state.topo.trace(ctx, cx, cy, 0);
+  // Grid lines — brighter off-square, where orientation carries information
+  ctx.strokeStyle = state.topo.key === 'square' ? 'rgba(74, 240, 192, 0.06)' : 'rgba(74, 240, 192, 0.16)';
+  state.topo.trace(ctx, cx, cy, seam);
   ctx.stroke();
 
   // Pulse from flash
@@ -1733,10 +1751,16 @@ function drawCell(cx, cy, cell, gx, gy) {
     ctx.restore();
   }
 
-  // Glyph
+  // Glyph — scaled down on triangles, whose inradius is smaller than a
+  // square's half-width; anchored slightly toward the shape's fat side
   if (cell && def.accent) {
     ctx.save();
     if (broken) ctx.globalAlpha = 0.35;
+    if (tri) {
+      ctx.translate(cx, cy);
+      ctx.scale(0.72, 0.72);
+      ctx.translate(-cx, -cy);
+    }
     drawGlyph(ctx, cx, cy, id, def.accent);
     ctx.restore();
   }
@@ -1764,9 +1788,11 @@ function drawCell(cx, cy, cell, gx, gy) {
     ctx.restore();
   }
 
-  // Skill bar for humans — fills up as they learn (the inverse of wear)
-  const barY = cy + TILE / 2 - 8;
-  const bw = TILE - 24;
+  // Skill bar for humans — fills up as they learn (the inverse of wear).
+  // Bars must stay INSIDE the cell: triangles are shorter below the centroid
+  // than squares, so their bar hugs the glyph instead of the cell edge.
+  const barY = tri ? cy + 10 : cy + TILE / 2 - 8;
+  const bw = tri ? TILE - 36 : TILE - 24;
   if (cell.t === 'human') {
     const skill = cell.skill || 0;
     if (skill < 100) {
@@ -1802,13 +1828,15 @@ function drawCell(cx, cy, cell, gx, gy) {
     ctx.restore();
   }
 
-  // Offline (driver crash / bot glitch): pause bars top-right
+  // Offline (driver crash / bot glitch): pause bars (inside the cell on tri)
   if (state.effects.some((ef) => (ef.f || 0) === state.floor && ef.x === gx && ef.y === gy && (ef.kind === 'crash' || ef.kind === 'botGlitch'))) {
     ctx.save();
     ctx.fillStyle = '#6ec5ff';
     ctx.globalAlpha = 0.9;
-    ctx.fillRect(cx + TILE / 2 - 16, cy - TILE / 2 + 6, 3, 9);
-    ctx.fillRect(cx + TILE / 2 - 10, cy - TILE / 2 + 6, 3, 9);
+    const obX = tri ? cx + 6 : cx + TILE / 2 - 16;
+    const obY = tri ? cy - 8 : cy - TILE / 2 + 6;
+    ctx.fillRect(obX, obY, 3, 9);
+    ctx.fillRect(obX + 6, obY, 3, 9);
     ctx.restore();
   }
 }
@@ -2242,6 +2270,13 @@ function buildFinance() {
       <span class="fin-sub" data-futures-sub></span>
     </button>
     <div class="fin-status" data-owed hidden></div>
+    <div class="fin-frate" hidden>
+      <span class="fin-frate-label" title="Share of revenue withheld to deliver open contracts">Delivery</span>
+      <label><input type="radio" name="frate" value="0.1" /> 10%</label>
+      <label><input type="radio" name="frate" value="0.25" /> 25%</label>
+      <label><input type="radio" name="frate" value="0.5" checked /> 50%</label>
+      <label><input type="radio" name="frate" value="1" /> 100%</label>
+    </div>
   `;
   const loansEl = financeEl.querySelector('.fin-loans');
   LOANS.forEach((loan, i) => {
@@ -2253,6 +2288,13 @@ function buildFinance() {
     loansEl.appendChild(btn);
   });
   financeEl.querySelector('[data-futures]').addEventListener('click', sellFutures);
+  for (const radio of financeEl.querySelectorAll('input[name="frate"]')) {
+    if (parseFloat(radio.value) === state.futuresRate) radio.checked = true;
+    radio.addEventListener('change', () => {
+      state.futuresRate = parseFloat(radio.value);
+      pushTicker(`📜 Delivery rate set to ${Math.round(state.futuresRate * 100)}% of revenue`, '');
+    });
+  }
   financeEl.querySelector('[data-buy-floor]').addEventListener('click', buyFloor);
   financeEl.querySelector('[data-hex-unlock]').addEventListener('click', () => tryUnlock('hex'));
   financeEl.querySelector('[data-space]').addEventListener('click', buySpaceStation);
@@ -2269,17 +2311,29 @@ function takeLoan(i) {
   updateFinance();
 }
 
+// Contract slots grow with the 📜 Contracts research: 1 → 3 → 5.
+function maxContracts() {
+  return 1 + 2 * (state.tech.contracts || 0);
+}
+function futuresOwedTotal() {
+  return state.futures.reduce((a, c) => a + c.owed, 0);
+}
+
 function sellFutures() {
-  if (state.futuresOwed > 0) { pushTicker('Existing futures contract still delivering', 'warn'); return; }
+  if (state.futures.length >= maxContracts()) {
+    pushTicker(`All ${maxContracts()} contract slots delivering — research 📜 Contracts for more`, 'warn');
+    return;
+  }
   const revPerSec = state.totalCompute * state.tokenPrice;
   if (state.totalCompute < FUTURES_UNLOCK_TFLOPS) {
     pushTicker(`Futures desk opens at ${FUTURES_UNLOCK_TFLOPS} TFLOPS`, 'warn');
     return;
   }
   const advance = Math.floor((1 - FUTURES_DISCOUNT) * revPerSec * FUTURES_WINDOW_S);
+  const owed = revPerSec * FUTURES_WINDOW_S;
   state.cash += advance;
-  state.futuresOwed = revPerSec * FUTURES_WINDOW_S;
-  pushTicker(`Sold ${FUTURES_WINDOW_S}s of compute forward for $${advance.toLocaleString()} — half of revenue withheld until delivered`, 'warn');
+  state.futures.push({ owed, total: owed });
+  pushTicker(`Sold ${FUTURES_WINDOW_S}s of compute forward for $${advance.toLocaleString()} (${state.futures.length}/${maxContracts()} contracts) — delivery rate is yours to set`, 'warn');
   playStinger('cash');
   updateFinance();
 }
@@ -2297,12 +2351,15 @@ function updateFinance() {
   const revPerSec = state.totalCompute * state.tokenPrice;
   const advance = Math.floor((1 - FUTURES_DISCOUNT) * revPerSec * FUTURES_WINDOW_S);
   const locked = state.totalCompute < FUTURES_UNLOCK_TFLOPS;
-  futBtn.disabled = locked || state.futuresOwed > 0;
+  futBtn.disabled = locked || state.futures.length >= maxContracts();
   futSub.textContent = locked
     ? `unlocks at ${FUTURES_UNLOCK_TFLOPS} TFLOPS`
     : `+$${advance.toLocaleString()} now`;
-  owedEl.hidden = state.futuresOwed <= 0;
-  if (state.futuresOwed > 0) owedEl.textContent = `Delivering: $${Math.ceil(state.futuresOwed).toLocaleString()} left`;
+  const owedTotal = futuresOwedTotal();
+  owedEl.hidden = owedTotal <= 0;
+  if (owedTotal > 0) owedEl.textContent = `Delivering ${state.futures.length}/${maxContracts()}: $${Math.ceil(owedTotal).toLocaleString()} left`;
+  const rateRow = financeEl.querySelector('.fin-frate');
+  if (rateRow) rateRow.hidden = owedTotal <= 0;
   const floorBtn = financeEl.querySelector('[data-buy-floor]');
   if (floorBtn) {
     const cost = nextFloorCost();
@@ -2492,7 +2549,7 @@ const SAVE_KEYS = [
   'cash', 'floors', 'floor', 'selectedTool', 'tick',
   'sentiment', 'mood', 'market',
   'alloc', 'rp', 'selfImprove', 'unlocks',
-  'tech', 'debt', 'futuresOwed', 'maintainPool', 'floorTopos', 'floorSpace',
+  'tech', 'debt', 'futures', 'futuresRate', 'maintainPool', 'floorTopos', 'floorSpace',
   'entropy', 'tutStep', 'stats', 'goalUnlocked', 'insolvencyS', 'bankrupt',
 ];
 
@@ -2516,6 +2573,8 @@ function loadState() {
   // pre-space save (or one round-tripped through an older build): a 'tri'
   // topo IS a station — derive the vacuum flag rather than stamping false
   if (snap.floors && !snap.floorSpace) snap.floorSpace = snap.floorTopos.map((t) => t === 'tri');
+  // pre-contracts save: a single pooled futuresOwed becomes one open contract
+  if (snap.futuresOwed > 0 && !snap.futures) snap.futures = [{ owed: snap.futuresOwed, total: snap.futuresOwed }];
   for (const k of SAVE_KEYS) {
     if (snap[k] !== undefined) state[k] = snap[k];
   }

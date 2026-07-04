@@ -58,3 +58,34 @@ New Game Button Wipes The Save
     Should Be Equal As Integers    ${cash}    500
     ${tile}=      Evaluate JavaScript    ${None}    () => window.__state.grid[5][5]
     Should Be Equal    ${tile}    ${None}
+
+Space Station Journey Renders And Simulates
+    [Documentation]    Reach the blueprint, launch the station, build under
+    ...                vacuum rules, and verify the tri board renders — the
+    ...                listener embeds a screenshot after every keyword.
+    Reset Save
+    Evaluate JavaScript    ${None}    () => { window.__god.freeBuild = true; window.__state.goalUnlocked = true; window.__state.unlocks.immersion = true }
+    Sleep         800ms
+    Take Screenshot    fullPage=True
+    Click         css=[data-space]
+    Sleep         600ms
+    ${topo}=      Evaluate JavaScript    ${None}    () => window.__state.topo.key
+    Should Be Equal    ${topo}    tri
+    # build a small vacuum farm directly (tri clicks need tri math)
+    Evaluate JavaScript    ${None}    () => { const g = window.__state.floors.at(-1); g[0][0] = { t: 'solar', cond: 100 }; g[0][2] = { t: 'solar', cond: 100 }; g[4][4] = { t: 'cooler', cond: 100 }; g[4][5] = { t: 'cpu', cond: 100 }; g[4][6] = { t: 'gpu1', cond: 100 }; g[5][5] = { t: 'life', cond: 100 }; g[5][6] = { t: 'human', cond: 100, skill: 50 } }
+    Sleep         2000ms
+    Take Screenshot    fullPage=True
+    ${compute}=   Evaluate JavaScript    ${None}    () => window.__state.totalCompute
+    Should Be True    ${compute} > 0    station produces no compute: ${compute}
+    ${life}=      Evaluate JavaScript    ${None}    () => window.__state.lifeMap[6][5]
+    Should Be True    ${life}    pod at (5,6) should be inside the life-support field
+    # fans must refuse placement in vacuum
+    Evaluate JavaScript    ${None}    () => { window.__state.selectedTool = 'fan' }
+    ${fan}=       Evaluate JavaScript    ${None}    () => window.__state.grid[2][2]
+    Should Be Equal    ${fan}    ${None}
+    # back to Earth and the palette re-enables fans
+    Click         css=[data-floor="0"]
+    Sleep         400ms
+    ${disabled}=  Evaluate JavaScript    ${None}    () => document.querySelector('.tool[data-tool="fan"]').classList.contains('disabled')
+    Should Not Be True    ${disabled}
+    Take Screenshot    fullPage=True
