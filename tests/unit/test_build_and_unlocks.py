@@ -36,5 +36,7 @@ def test_gpu2_unlock_purchased_when_funded(game):
     assert game.evaluate("window.__state.unlocks.gpu2") is True
 
 
-def test_auto_maintain_hidden_before_ops_unlock(game):
-    assert game.evaluate("document.querySelector('.fin-maint').hidden") is True
+def test_maintain_is_an_allocation_slider_now(game):
+    # the old Finance radios are gone; Maintain lives in the allocation group
+    assert game.evaluate("document.querySelector('.fin-maint')") is None
+    assert game.evaluate("!!document.querySelector('input[data-alloc=\"maintain\"]')") is True

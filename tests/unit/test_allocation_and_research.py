@@ -43,7 +43,9 @@ def test_research_boosts_compute_output(game, place):
     _starter_cluster(place)
     game.evaluate("window.__state.rp = 500")
     before = game.evaluate("window.__state.totalCompute")
+    game.click('#btn-research')
     game.click('.research-row[data-track="compute"] [data-buy]')
+    game.click('#research-close')
     game.wait_for_timeout(1200)
     after = game.evaluate("window.__state.totalCompute")
     assert game.evaluate("window.__state.tech.compute") == 1

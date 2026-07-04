@@ -134,7 +134,7 @@ body {
   color: var(--text-muted);
   margin: 2px 0 0;
 }
-.tools { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+.tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; }
 .tool-layer {
   grid-column: 1 / -1;
   font-family: var(--font-display);
@@ -147,20 +147,20 @@ body {
 }
 
 .tool {
-  display: grid;
-  grid-template-columns: 18px 1fr auto;
-  grid-template-rows: auto;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0 5px;
-  padding: 1px 5px;
+  gap: 1px;
+  padding: 3px 2px 2px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   cursor: pointer;
   transition: background 140ms ease, border-color 140ms ease, transform 80ms ease;
-  text-align: left;
+  text-align: center;
   color: var(--text);
   font: inherit;
+  min-width: 0;
 }
 .tool:hover { background: var(--surface-hi); border-color: var(--border-hi); }
 .tool:active { transform: translateY(1px); }
@@ -171,23 +171,21 @@ body {
 }
 .tool.disabled { opacity: 0.45; cursor: not-allowed; }
 .tool .icon {
-  width: 14px; height: 14px;
+  width: 18px; height: 18px;
   border-radius: var(--r-sm);
   background: var(--bg-2);
   display: flex; align-items: center; justify-content: center;
 }
-.tool .icon svg { width: 12px; height: 12px; }
-.tool .meta { display: flex; flex-direction: column; min-width: 0; }
-.tool .name {
-  font-weight: 500; font-size: 10px; color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.tool .sub { display: none; } /* details live in the tooltip */
+.tool .icon svg { width: 15px; height: 15px; }
+.tool .meta { display: none; } /* name + stats live in the tooltip */
 .tool .cost {
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 8px;
   color: var(--accent);
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tip-layer {
   font-family: var(--font-mono);
@@ -250,6 +248,8 @@ body {
   border-color: var(--accent);
   box-shadow: 0 0 12px -4px var(--accent);
 }
+.floor-overhaul { color: var(--warn); }
+.floor-overhaul:hover { border-color: var(--warn); color: var(--warn); }
 
 .insolvency {
   position: absolute;
@@ -271,6 +271,21 @@ body {
   0%, 100% { box-shadow: 0 0 0 0 rgba(255, 79, 109, 0.0); }
   50% { box-shadow: 0 0 18px 0 rgba(255, 79, 109, 0.35); }
 }
+
+.research-open { margin-top: 2px; text-align: left; font-size: 12px; }
+.research-card { max-width: 620px; width: 92vw; text-align: left; }
+.research-card h2 { color: var(--accent); letter-spacing: 0.1em; font-size: 16px; }
+.research-card .research { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 14px; max-height: 60vh; overflow-y: auto; }
+.research-branch {
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-top: 6px;
+}
+.research-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.research-desc { font-size: 10.5px; color: var(--text-muted); }
 
 .demo-end-card { border-color: var(--accent); text-align: center; box-shadow: 0 0 60px -20px var(--accent); }
 .demo-end-card h2 { color: var(--accent); letter-spacing: 0.1em; font-size: 18px; }
@@ -624,7 +639,7 @@ body {
 /* ---------- Finance panel ---------- */
 .finance { display: flex; flex-direction: column; gap: 2px; }
 .fin-loans { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
-.fin-loans .fin-btn { flex-direction: column; align-items: flex-start; gap: 0; padding: 5px 7px; }
+.fin-loans .fin-btn { flex-direction: column; align-items: flex-start; gap: 0; padding: 3px 6px; }
 .fin-btn {
   display: flex;
   justify-content: space-between;
@@ -729,9 +744,9 @@ body {
 
 /* allocation sliders */
 .allocation { display: flex; flex-direction: column; gap: 2px; }
-.alloc-row { display: flex; align-items: center; gap: 6px; font-size: 11px; line-height: 1.2; }
+.alloc-row { display: flex; align-items: center; gap: 6px; font-size: 11px; line-height: 1.1; }
 .alloc-name { flex: 0 0 88px; color: var(--text); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.alloc-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); height: 14px; }
+.alloc-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); height: 11px; }
 .alloc-pct {
   width: 34px; text-align: right;
   font-family: var(--font-mono); font-size: 10px; color: var(--text-muted);
@@ -740,3 +755,7 @@ body {
 /* locked tools */
 .tool.locked { opacity: 0.65; border-style: dashed; }
 .tool.locked .cost { color: var(--warn); }
+#alloc-note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.research-open { padding: 5px 10px; }
+.palette-foot { padding-top: 4px; }
+.palette-foot .ghost-btn { padding: 6px 10px; }

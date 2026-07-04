@@ -67,11 +67,11 @@ def test_bot_bay_heals_nearby_damage_over_time(game, place, click_cell):
 def test_auto_maintenance_heals_from_revenue(game, place):
     _starter_cluster(place)
     _enable_god(game)
-    game.evaluate("window.__state.unlocks.ops = true")
-    # Re-render finance so the radio appears
     game.evaluate("window.__state.cash = 10000")
-    game.wait_for_timeout(600)
-    game.click('input[name="maintain"][value="0.25"]')
+    game.evaluate(
+        "const r = document.querySelector('input[data-alloc=\"maintain\"]');"
+        "r.value = 40; r.dispatchEvent(new Event('input'))"
+    )
     game.evaluate("window.__state.grid[2][2].cond = 50")
     game.wait_for_timeout(2500)
     assert game.evaluate("window.__state.grid[2][2].cond") > 50

@@ -21,8 +21,8 @@ def set_slider(game, selector, value):
     )
 
 
-def test_five_normalized_alloc_sliders(game):
-    assert game.eval_on_selector_all("#allocation input[data-alloc]", "els => els.length") == 5
+def test_six_normalized_alloc_sliders(game):
+    assert game.eval_on_selector_all("#allocation input[data-alloc]", "els => els.length") == 6
     # UBI is a full member of the normalized group — no separate capped slider
     assert game.eval_on_selector_all("#allocation input[data-ubi]", "els => els.length") == 0
 

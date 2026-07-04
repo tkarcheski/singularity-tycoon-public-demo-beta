@@ -44,8 +44,7 @@
         <div class="tools" id="tools"></div>
         <h2 class="palette-title">🎛️ Allocation</h2>
         <div class="allocation" id="allocation"></div>
-        <h2 class="palette-title" id="research-title">🔬 Research</h2>
-        <div class="research" id="research"></div>
+        <button class="ghost-btn research-open" id="btn-research">🔬 Research · 0 RP</button>
         <h2 class="palette-title">🏦 Finance</h2>
         <div class="finance" id="finance"></div>
         <div class="palette-foot">
@@ -70,6 +69,13 @@
               <button class="primary-btn" id="btn-wishlist"></button>
               <button class="ghost-btn" id="btn-keep-playing">Keep playing this world</button>
             </div>
+          </div>
+        </div>
+        <div class="modal" id="research-modal" hidden>
+          <div class="modal-card research-card">
+            <h2 id="research-modal-title">🔬 RESEARCH</h2>
+            <div class="research" id="research"></div>
+            <button class="primary-btn" id="research-close">Back to the floor</button>
           </div>
         </div>
         <div class="modal" id="gameover" hidden>
