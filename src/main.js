@@ -1807,27 +1807,29 @@ function drawCell(cx, cy, cell, gx, gy) {
   const def = TILE_TYPES[id];
   const broken = cell && cell.cond <= 0;
   const tri = state.topo.key === 'tri';
-  // Base — non-square lattices get real gutters between cells so dense
-  // builds read as separate pods, never an overlapping mass. Triangles get
-  // the widest seam (station redo 2026-07-04) plus alternating up/down
-  // shading so the lattice reads as a woven pattern even when empty.
-  const seam = state.topo.key === 'square' ? 0 : tri ? 3.5 : 1.2;
-  const up = tri && (gx + gy) % 2 === 0;
-  ctx.fillStyle = !cell ? (tri ? (up ? '#0d1326' : '#0a0f1e') : '#0c1124') : def.color;
-  state.topo.trace(ctx, cx, cy, seam);
-  ctx.fill();
+  // Base. The station is ONE interlocking tessellation (up/down/up, then
+  // down/up/down — neighbors share edges, and those edges carry the game's
+  // neighboring effects). Empty tri cells render as a thin wireframe mesh;
+  // occupied cells are solid triangles seated flush in the lattice.
+  const seam = state.topo.key === 'square' ? 0 : tri ? 0.8 : 1.2;
+  if (!(tri && !cell)) {
+    ctx.fillStyle = !cell ? '#0c1124' : def.color;
+    state.topo.trace(ctx, cx, cy, seam);
+    ctx.fill();
+  }
   // Subtle inner panel
   if (cell) {
     ctx.fillStyle = 'rgba(255,255,255,0.04)';
     state.topo.trace(ctx, cx, cy, seam + 3);
     ctx.fill();
   }
-  // Grid lines — brighter off-square, where orientation carries information;
-  // occupied tri pods get a firm outline so each one is unmistakably its own
+  // Grid lines — the tri mesh draws crisp shared edges so the tessellation
+  // (and therefore who neighbors whom) is always legible
   ctx.strokeStyle = state.topo.key === 'square' ? 'rgba(74, 240, 192, 0.06)'
-    : tri && cell ? 'rgba(74, 240, 192, 0.35)'
+    : tri && cell ? 'rgba(74, 240, 192, 0.45)'
+    : tri ? 'rgba(74, 240, 192, 0.20)'
     : 'rgba(74, 240, 192, 0.16)';
-  state.topo.trace(ctx, cx, cy, seam);
+  state.topo.trace(ctx, cx, cy, tri && !cell ? 0 : seam);
   ctx.stroke();
 
   // Pulse from flash
