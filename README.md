@@ -8,4 +8,4 @@ Run an AI data center, turn **power + cooling** into **compute**, and sell compu
 
 # Latest Release
 
-![Download Assets](https://github.com/tkarcheski/singularity-tycoon-public-demo-beta/releases/tag/desktop-latest)
+[Download Assets](https://github.com/tkarcheski/singularity-tycoon-public-demo-beta/releases/tag/desktop-latest)
