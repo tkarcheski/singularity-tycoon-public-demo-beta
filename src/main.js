@@ -455,6 +455,7 @@ const TOPOLOGIES = {
     // storage — up when (x+y) is even. 3 neighbors: connectivity-poor,
     // perimeter-rich, exactly the tier-1 constraint from the roadmap.
     key: 'tri',
+    originBias: { x: 70, y: -12 }, // clear of the tutorial/ticker cards
     dirs(x, y) {
       return (x + y) % 2 === 0
         ? [[-1, 0], [1, 0], [0, 1]]   // up-triangle: base at the bottom
@@ -499,8 +500,10 @@ const TOPOLOGIES = {
   },
 };
 
-// Triangle-cell geometry: side TRI_S, band height TRI_H, half-width TRI_HALFW
-const TRI_S = 72;
+// Triangle-cell geometry: side TRI_S, band height TRI_H, half-width TRI_HALFW.
+// Sized generously (station redo 2026-07-04): big cells + wide gutters make
+// each triangle read as its own floating pod instead of an overlapping mass.
+const TRI_S = 86;
 const TRI_H = (TRI_S * Math.sqrt(3)) / 2;
 const TRI_HALFW = TRI_S / 2;
 
@@ -920,9 +923,10 @@ window.addEventListener('resize', resizeCanvas);
 function gridOrigin() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   const b = state.topo.boardSize();
+  const bias = state.topo.originBias || { x: 0, y: 0 };
   return {
-    x: Math.floor((w - b.w) / 2),
-    y: Math.floor((h - b.h) / 2),
+    x: Math.floor((w - b.w) / 2) + bias.x,
+    y: Math.floor((h - b.h) / 2) + bias.y,
   };
 }
 
@@ -1803,10 +1807,13 @@ function drawCell(cx, cy, cell, gx, gy) {
   const def = TILE_TYPES[id];
   const broken = cell && cell.cond <= 0;
   const tri = state.topo.key === 'tri';
-  // Base — non-square lattices get a visible seam between cells so dense
-  // builds don't blend into one mass (playtest: "overlapping, hard to see")
-  const seam = state.topo.key === 'square' ? 0 : 1.2;
-  ctx.fillStyle = !cell ? '#0c1124' : def.color;
+  // Base — non-square lattices get real gutters between cells so dense
+  // builds read as separate pods, never an overlapping mass. Triangles get
+  // the widest seam (station redo 2026-07-04) plus alternating up/down
+  // shading so the lattice reads as a woven pattern even when empty.
+  const seam = state.topo.key === 'square' ? 0 : tri ? 3.5 : 1.2;
+  const up = tri && (gx + gy) % 2 === 0;
+  ctx.fillStyle = !cell ? (tri ? (up ? '#0d1326' : '#0a0f1e') : '#0c1124') : def.color;
   state.topo.trace(ctx, cx, cy, seam);
   ctx.fill();
   // Subtle inner panel
@@ -1815,8 +1822,11 @@ function drawCell(cx, cy, cell, gx, gy) {
     state.topo.trace(ctx, cx, cy, seam + 3);
     ctx.fill();
   }
-  // Grid lines — brighter off-square, where orientation carries information
-  ctx.strokeStyle = state.topo.key === 'square' ? 'rgba(74, 240, 192, 0.06)' : 'rgba(74, 240, 192, 0.16)';
+  // Grid lines — brighter off-square, where orientation carries information;
+  // occupied tri pods get a firm outline so each one is unmistakably its own
+  ctx.strokeStyle = state.topo.key === 'square' ? 'rgba(74, 240, 192, 0.06)'
+    : tri && cell ? 'rgba(74, 240, 192, 0.35)'
+    : 'rgba(74, 240, 192, 0.16)';
   state.topo.trace(ctx, cx, cy, seam);
   ctx.stroke();
 
@@ -1838,7 +1848,7 @@ function drawCell(cx, cy, cell, gx, gy) {
     if (broken) ctx.globalAlpha = 0.35;
     if (tri) {
       ctx.translate(cx, cy);
-      ctx.scale(0.72, 0.72);
+      ctx.scale(0.85, 0.85); // bigger cells (TRI_S 86) fit near-full glyphs
       ctx.translate(-cx, -cy);
     }
     drawGlyph(ctx, cx, cy, id, def.accent);
