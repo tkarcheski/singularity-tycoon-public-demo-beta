@@ -463,6 +463,7 @@ const TOPOLOGIES = {
     // storage — up when (x+y) is even. 3 neighbors: connectivity-poor,
     // perimeter-rich, exactly the tier-1 constraint from the roadmap.
     key: 'tri',
+    originBias: { x: 70, y: -12 }, // clear of the tutorial/ticker cards
     dirs(x, y) {
       return (x + y) % 2 === 0
         ? [[-1, 0], [1, 0], [0, 1]]   // up-triangle: base at the bottom
@@ -507,8 +508,10 @@ const TOPOLOGIES = {
   },
 };
 
-// Triangle-cell geometry: side TRI_S, band height TRI_H, half-width TRI_HALFW
-const TRI_S = 72;
+// Triangle-cell geometry: side TRI_S, band height TRI_H, half-width TRI_HALFW.
+// Sized generously (station redo 2026-07-04): big cells + wide gutters make
+// each triangle read as its own floating pod instead of an overlapping mass.
+const TRI_S = 86;
 const TRI_H = (TRI_S * Math.sqrt(3)) / 2;
 const TRI_HALFW = TRI_S / 2;
 
@@ -928,9 +931,10 @@ window.addEventListener('resize', resizeCanvas);
 function gridOrigin() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   const b = state.topo.boardSize();
+  const bias = state.topo.originBias || { x: 0, y: 0 };
   return {
-    x: Math.floor((w - b.w) / 2),
-    y: Math.floor((h - b.h) / 2),
+    x: Math.floor((w - b.w) / 2) + bias.x,
+    y: Math.floor((h - b.h) / 2) + bias.y,
   };
 }
 
@@ -1689,6 +1693,7 @@ function render(dt) {
     state.topo.trace(ctx, o.x + c.cx, o.y + c.cy, 2);
     ctx.fill();
     ctx.restore();
+    drawInfluenceOverlay(o);
   }
 
   // Particles
@@ -1716,6 +1721,96 @@ function render(dt) {
   }
 }
 
+// ---------- Influence visualization ----------
+// What would this tile touch? Pure geometry — returns [{x, y, kind, strength}]
+// for the hovered tool/tile so the renderer (and tests) can show the
+// neighborhood a placement decision actually affects.
+// kinds: boost (aura), guard (wearGuard), drain (cooling), air (life support),
+//        cluster (GPU partners), heat (cluster cooling cost)
+function influencedCells(def, x, y) {
+  const out = [];
+  const push = (tx, ty, kind, strength) => {
+    if (tx >= 0 && ty >= 0 && tx < COLS && ty < ROWS && !(tx === x && ty === y)) {
+      out.push({ x: tx, y: ty, kind, strength });
+    }
+  };
+  if (def.aura) {
+    for (let ty = 0; ty < ROWS; ty++) {
+      for (let tx = 0; tx < COLS; tx++) {
+        const d = state.topo.dist(tx, ty, x, y);
+        if (d === 0 || d > def.aura.range) continue;
+        if (def.aura.boost) push(tx, ty, 'boost', 1);
+        if (def.aura.wearGuard) push(tx, ty, 'guard', 1);
+      }
+    }
+  }
+  if (def.drain) {
+    for (let ty = 0; ty < ROWS; ty++) {
+      for (let tx = 0; tx < COLS; tx++) {
+        const d = state.topo.dist(tx, ty, x, y);
+        if (d === 0 || d >= def.drain.length) continue;
+        push(tx, ty, 'drain', def.drain[d] / def.drain[0]);
+      }
+    }
+  }
+  if (def === TILE_TYPES.life) {
+    for (let ty = 0; ty < ROWS; ty++) {
+      for (let tx = 0; tx < COLS; tx++) {
+        const d = state.topo.dist(tx, ty, x, y);
+        if (d > 0 && d <= lifeRange()) push(tx, ty, 'air', 1);
+      }
+    }
+  }
+  if (def.compute > 0 && (def === TILE_TYPES.gpu1 || def === TILE_TYPES.gpu2)) {
+    for (const [dx, dy] of state.topo.dirs(x, y)) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
+      const n = state.grid[ny][nx];
+      if (n && isGpu(n.t)) push(nx, ny, 'cluster', 1);
+    }
+  }
+  return out;
+}
+window.__influence = influencedCells; // test handles
+window.__tileDef = (id) => TILE_TYPES[id];
+
+const INFLUENCE_STYLE = {
+  boost: { stroke: '#4af0c0', fill: 'rgba(74, 240, 192, 0.10)' },
+  guard: { stroke: '#4fb7ff', fill: 'rgba(79, 183, 255, 0.10)' },
+  drain: { stroke: '#6ec5ff', fill: 'rgba(110, 197, 255, 0.12)' },
+  air: { stroke: '#7ee7ff', fill: 'rgba(126, 231, 255, 0.10)' },
+  cluster: { stroke: '#4af0c0', fill: 'rgba(74, 240, 192, 0.14)' },
+};
+
+// Dashed outlines + soft fills over every cell the hovered tool/tile touches.
+function drawInfluenceOverlay(o) {
+  const hx = state.hover.x, hy = state.hover.y;
+  if (hx < 0) return;
+  const existing = state.grid[hy][hx];
+  const toolDef = TILE_TYPES[state.selectedTool];
+  // Hovering a placed tile shows ITS reach; otherwise preview the selected tool
+  const def = existing ? TILE_TYPES[existing.t]
+    : (state.selectedTool === 'bull' || state.selectedTool === 'repair') ? null : toolDef;
+  if (!def) return;
+  const cells = influencedCells(def, hx, hy);
+  if (!cells.length) return;
+  ctx.save();
+  ctx.setLineDash([4, 3]);
+  ctx.lineWidth = 1.4;
+  for (const cell of cells) {
+    const style = INFLUENCE_STYLE[cell.kind];
+    if (!style) continue;
+    const c = state.topo.center(cell.x, cell.y);
+    ctx.globalAlpha = 0.5 + 0.5 * (cell.strength || 1);
+    ctx.fillStyle = style.fill;
+    ctx.strokeStyle = style.stroke;
+    state.topo.trace(ctx, o.x + c.cx, o.y + c.cy, 3);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 // (cx, cy) is the cell CENTER in canvas pixels — the topology traces the
 // outline, so square and hex floors share this entire function.
 function drawCell(cx, cy, cell, gx, gy) {
@@ -1723,21 +1818,29 @@ function drawCell(cx, cy, cell, gx, gy) {
   const def = TILE_TYPES[id];
   const broken = cell && cell.cond <= 0;
   const tri = state.topo.key === 'tri';
-  // Base — non-square lattices get a visible seam between cells so dense
-  // builds don't blend into one mass (playtest: "overlapping, hard to see")
-  const seam = state.topo.key === 'square' ? 0 : 1.2;
-  ctx.fillStyle = !cell ? '#0c1124' : def.color;
-  state.topo.trace(ctx, cx, cy, seam);
-  ctx.fill();
+  // Base. The station is ONE interlocking tessellation (up/down/up, then
+  // down/up/down — neighbors share edges, and those edges carry the game's
+  // neighboring effects). Empty tri cells render as a thin wireframe mesh;
+  // occupied cells are solid triangles seated flush in the lattice.
+  const seam = state.topo.key === 'square' ? 0 : tri ? 0.8 : 1.2;
+  if (!(tri && !cell)) {
+    ctx.fillStyle = !cell ? '#0c1124' : def.color;
+    state.topo.trace(ctx, cx, cy, seam);
+    ctx.fill();
+  }
   // Subtle inner panel
   if (cell) {
     ctx.fillStyle = 'rgba(255,255,255,0.04)';
     state.topo.trace(ctx, cx, cy, seam + 3);
     ctx.fill();
   }
-  // Grid lines — brighter off-square, where orientation carries information
-  ctx.strokeStyle = state.topo.key === 'square' ? 'rgba(74, 240, 192, 0.06)' : 'rgba(74, 240, 192, 0.16)';
-  state.topo.trace(ctx, cx, cy, seam);
+  // Grid lines — the tri mesh draws crisp shared edges so the tessellation
+  // (and therefore who neighbors whom) is always legible
+  ctx.strokeStyle = state.topo.key === 'square' ? 'rgba(74, 240, 192, 0.06)'
+    : tri && cell ? 'rgba(74, 240, 192, 0.45)'
+    : tri ? 'rgba(74, 240, 192, 0.20)'
+    : 'rgba(74, 240, 192, 0.16)';
+  state.topo.trace(ctx, cx, cy, tri && !cell ? 0 : seam);
   ctx.stroke();
 
   // Pulse from flash
@@ -1758,7 +1861,7 @@ function drawCell(cx, cy, cell, gx, gy) {
     if (broken) ctx.globalAlpha = 0.35;
     if (tri) {
       ctx.translate(cx, cy);
-      ctx.scale(0.72, 0.72);
+      ctx.scale(0.85, 0.85); // bigger cells (TRI_S 86) fit near-full glyphs
       ctx.translate(-cx, -cy);
     }
     drawGlyph(ctx, cx, cy, id, def.accent);

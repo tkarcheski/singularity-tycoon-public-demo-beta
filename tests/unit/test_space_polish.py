@@ -47,7 +47,7 @@ def test_maintain_pricing_and_catchup_premium(game):
 def test_tri_bars_stay_inside_cells(game):
     # geometric guard: the tri bar offset must stay under the inradius
     ok = game.evaluate("""(() => {
-      const TRI_H = 72 * Math.sqrt(3) / 2;
+      const TRI_H = 86 * Math.sqrt(3) / 2;
       return 10 + 3 <= TRI_H / 3 + 8; // barY offset + height within fat zone
     })()""")
     assert ok is True
