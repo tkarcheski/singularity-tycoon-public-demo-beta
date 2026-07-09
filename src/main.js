@@ -1,4 +1,4 @@
-// Singularity Tycoon — Dekkar Edition (Decker TV) · electric purple vibe
+// Singularity Tycoon — Dekkar Edition (Dekkar TV) · electric purple vibe
 // Place tiles on a grid. Power + cooling → compute → cash → bigger compute.
 
 const { startAudio, swapVibe, setMusicVolume, toggleMute, isAudioStarted, setTension, playStinger } = window.GameMusic;
