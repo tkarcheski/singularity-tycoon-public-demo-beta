@@ -11,14 +11,14 @@
   --surface: rgba(255, 255, 255, 0.04);
   --surface-hi: rgba(255, 255, 255, 0.08);
   --border: rgba(255, 255, 255, 0.10);
-  --border-hi: rgba(74, 240, 192, 0.4);
+  --border-hi: rgba(191, 90, 242, 0.4);
 
   --text: #e6e8f0;
   --text-muted: #8a92a6;
   --text-dim: #5b6379;
 
-  --accent: #4af0c0;
-  --accent-dim: #2a8f74;
+  --accent: #bf5af2;
+  --accent-dim: #7a3bad;
   --warn: #ffaa22;
   --danger: #ff4f6d;
   --power: #ffd24a;
@@ -32,7 +32,7 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }
 body {
-  background: radial-gradient(1200px 800px at 70% -10%, #0e1730 0%, var(--bg-0) 60%) fixed;
+  background: radial-gradient(1200px 800px at 70% -10%, #1a1030 0%, var(--bg-0) 60%) fixed;
   color: var(--text);
   font-family: var(--font-body);
   font-size: 14px;
@@ -165,7 +165,7 @@ body {
 .tool:hover { background: var(--surface-hi); border-color: var(--border-hi); }
 .tool:active { transform: translateY(1px); }
 .tool.selected {
-  background: rgba(74, 240, 192, 0.08);
+  background: rgba(191, 90, 242, 0.08);
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent) inset, 0 0 24px -8px var(--accent);
 }
@@ -220,7 +220,7 @@ body {
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(800px 600px at 50% 60%, rgba(74,240,192,0.06), transparent 70%),
+    radial-gradient(800px 600px at 50% 60%, rgba(191,90,242,0.06), transparent 70%),
     linear-gradient(180deg, var(--bg-1), var(--bg-0));
 }
 .floor-tabs {
@@ -451,7 +451,7 @@ body {
 }
 .music-vibe:hover { color: var(--text); border-color: var(--border-hi); }
 .music-vibe.selected {
-  background: rgba(74, 240, 192, 0.10);
+  background: rgba(191, 90, 242, 0.10);
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -596,7 +596,7 @@ body {
 .primary-btn {
   margin-top: 14px;
   background: var(--accent);
-  color: #062018;
+  color: #1a0826;
   border: none;
   border-radius: var(--r-sm);
   padding: 10px 16px;
