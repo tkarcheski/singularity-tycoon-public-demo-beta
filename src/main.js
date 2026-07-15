@@ -1,4 +1,4 @@
-// Singularity Tycoon — Mini · vibes test
+// Singularity Tycoon — Dekkar Edition (Dekkar TV) · electric purple vibe
 // Place tiles on a grid. Power + cooling → compute → cash → bigger compute.
 
 const { startAudio, swapVibe, setMusicVolume, toggleMute, isAudioStarted, setTension, playStinger } = window.GameMusic;
@@ -18,7 +18,7 @@ const TILE_TYPES = {
   exch:    { name: 'Heat Exchanger',  cost: 150, power: -2,  cooling: 18, compute: 0,    upkeep: 0.9,  jobs: 1, wear: 0.22, drain: [6, 4.5, 3, 1.5], color: '#0f3230', accent: '#63e0cf', desc: 'Provides 18 kW and pulls heat from up to 3 tiles away — the wide-area workhorse of a serious farm. Needs 2 MW.' },
   immersion: { name: 'Immersion Bath', cost: 260, power: -3, cooling: 14, compute: 0,   upkeep: 1.2,  jobs: 1, wear: 0.18, gate: 'immersion', drain: [12, 8], vDrain: true, aura: { wearGuard: 0.7, range: 1, vertical: true }, color: '#0b2b45', accent: '#4fb7ff', desc: 'Dielectric liquid bath: the strongest drain in the game, touching its neighbors — and the same spot on the floors above and below. Submerged tiles wear 30% slower. Needs 3 MW.' },
   cryo:    { name: 'Cryo Plant',      cost: 1200, power: -8, cooling: 40, compute: 0,   upkeep: 5.0,  jobs: 2, wear: 0.30, gate: 'cryo', drain: [8, 5, 2.5], color: '#1a2340', accent: '#9db8ff', desc: 'Industrial cryogenics: 40 kW of supply — enough to feed a Quantum Annealer. Needs 8 MW.' },
-  gpu1:    { name: 'GPU Rack v1',     cost: 120, power: -4,  cooling: -3, compute: 6,    upkeep: 1.2,  jobs: 1, wear: 0.42, color: '#102a23', accent: '#4af0c0', desc: 'Generates 6 TFLOPS. Needs 4 MW + 3 kW. Clusters: +10% output but +15% heat per adjacent GPU.' },
+  gpu1:    { name: 'GPU Rack v1',     cost: 120, power: -4,  cooling: -3, compute: 6,    upkeep: 1.2,  jobs: 1, wear: 0.42, color: '#1f1030', accent: '#bf5af2', desc: 'Generates 6 TFLOPS. Needs 4 MW + 3 kW. Clusters: +10% output but +15% heat per adjacent GPU.' },
   gpu2:    { name: 'GPU Rack v2',     cost: 400, power: -10, cooling: -8, compute: 22,   upkeep: 4.0,  jobs: 2, wear: 0.42, gate: 'gpu2', color: '#0c2e3b', accent: '#7af0d4', desc: 'Generates 22 TFLOPS. Needs 10 MW + 8 kW. Same cluster bonus/heat as v1.' },
   cpu:     { name: 'CPU Rack',        cost: 60,  power: -2,  cooling: -1, compute: 3,    upkeep: 0.5,  jobs: 1, wear: 0.25, aura: { boost: 0.06, range: 1 }, color: '#1b2433', accent: '#8fb8ff', desc: 'Generates 3 TFLOPS. Needs 2 MW + 1 kW. Runs cool, wears slowly — and orchestrates: adjacent GPUs/TPUs/quantum get +6% output each.' },
   tpu:     { name: 'TPU Pod',         cost: 700, power: -12, cooling: -14, compute: 40,  upkeep: 6.0,  jobs: 2, wear: 0.38, gate: 'tpu', color: '#2b1a10', accent: '#ffb35c', desc: 'Generates 40 TFLOPS. Needs 12 MW + 14 kW. Best compute-per-MW in the game, but runs hot — keep coolant close.' },
@@ -1048,7 +1048,7 @@ function attemptPlace(x, y) {
   if (!state.god.freeBuild) state.cash -= def.cost;
   state.grid[y][x] = id === 'human' ? { t: id, cond: 100, skill: 0 } : { t: id, cond: 100 };
   flashCell(x, y, 1.2);
-  emitParticles(x, y, 8, def.accent || '#4af0c0');
+  emitParticles(x, y, 8, def.accent || '#bf5af2');
 }
 
 function flashCell(x, y, strength) {
@@ -1433,7 +1433,7 @@ function tick() {
   // Particles on producing GPUs (small chance each tick)
   if (computeCells.length > 0 && Math.random() < 0.4) {
     const cell = computeCells[Math.floor(Math.random() * computeCells.length)];
-    emitParticles(cell.x, cell.y, 1, '#4af0c0');
+    emitParticles(cell.x, cell.y, 1, '#bf5af2');
     flashCell(cell.x, cell.y, 0.5);
   }
 
@@ -1457,7 +1457,7 @@ function tick() {
     for (let i = 0; i < 60; i++) {
       const gx = Math.floor(Math.random() * COLS);
       const gy = Math.floor(Math.random() * ROWS);
-      emitParticles(gx, gy, 3, '#4af0c0');
+      emitParticles(gx, gy, 3, '#bf5af2');
     }
     showDemoEnd();
   }
@@ -1590,7 +1590,7 @@ function drawSparkline() {
   c2.stroke();
   c2.setLineDash([]);
   // the curve
-  c2.strokeStyle = state.tokenPrice >= REVENUE_PER_TFLOPS ? '#4af0c0' : '#ff4f6d';
+  c2.strokeStyle = state.tokenPrice >= REVENUE_PER_TFLOPS ? '#bf5af2' : '#ff4f6d';
   c2.lineWidth = 1.2;
   c2.beginPath();
   hist.forEach((v, i) => {
@@ -1648,7 +1648,7 @@ function render(dt) {
   for (let i = 0; i < 80; i++) {
     const sx = (i * 73 + state.tick * 0.04) % w;
     const sy = (i * 131 + state.tick * 0.02) % h;
-    ctx.fillStyle = i % 5 === 0 ? '#4af0c0' : '#3a4768';
+    ctx.fillStyle = i % 5 === 0 ? '#bf5af2' : '#3a4768';
     ctx.fillRect(sx, sy, 1, 1);
   }
   ctx.restore();
@@ -1659,7 +1659,7 @@ function render(dt) {
   const board = state.topo.boardSize();
   ctx.fillStyle = 'rgba(20, 28, 50, 0.5)';
   ctx.fillRect(o.x - 8, o.y - 8, board.w + 16, board.h + 16);
-  ctx.strokeStyle = 'rgba(74, 240, 192, 0.18)';
+  ctx.strokeStyle = 'rgba(191, 90, 242, 0.18)';
   ctx.lineWidth = 1;
   ctx.strokeRect(o.x - 8 + 0.5, o.y - 8 + 0.5, board.w + 16, board.h + 16);
 
@@ -1688,7 +1688,7 @@ function render(dt) {
     } else if (!canAfford || occupied) {
       ctx.fillStyle = '#ff4f6d';
     } else {
-      ctx.fillStyle = def.accent || '#4af0c0';
+      ctx.fillStyle = def.accent || '#bf5af2';
     }
     state.topo.trace(ctx, o.x + c.cx, o.y + c.cy, 2);
     ctx.fill();
@@ -1775,11 +1775,11 @@ window.__influence = influencedCells; // test handles
 window.__tileDef = (id) => TILE_TYPES[id];
 
 const INFLUENCE_STYLE = {
-  boost: { stroke: '#4af0c0', fill: 'rgba(74, 240, 192, 0.10)' },
+  boost: { stroke: '#bf5af2', fill: 'rgba(191, 90, 242, 0.10)' },
   guard: { stroke: '#4fb7ff', fill: 'rgba(79, 183, 255, 0.10)' },
   drain: { stroke: '#6ec5ff', fill: 'rgba(110, 197, 255, 0.12)' },
   air: { stroke: '#7ee7ff', fill: 'rgba(126, 231, 255, 0.10)' },
-  cluster: { stroke: '#4af0c0', fill: 'rgba(74, 240, 192, 0.14)' },
+  cluster: { stroke: '#bf5af2', fill: 'rgba(191, 90, 242, 0.14)' },
 };
 
 // Dashed outlines + soft fills over every cell the hovered tool/tile touches.
@@ -1836,10 +1836,10 @@ function drawCell(cx, cy, cell, gx, gy) {
   }
   // Grid lines — the tri mesh draws crisp shared edges so the tessellation
   // (and therefore who neighbors whom) is always legible
-  ctx.strokeStyle = state.topo.key === 'square' ? 'rgba(74, 240, 192, 0.06)'
-    : tri && cell ? 'rgba(74, 240, 192, 0.45)'
-    : tri ? 'rgba(74, 240, 192, 0.20)'
-    : 'rgba(74, 240, 192, 0.16)';
+  ctx.strokeStyle = state.topo.key === 'square' ? 'rgba(191, 90, 242, 0.06)'
+    : tri && cell ? 'rgba(191, 90, 242, 0.45)'
+    : tri ? 'rgba(191, 90, 242, 0.20)'
+    : 'rgba(191, 90, 242, 0.16)';
   state.topo.trace(ctx, cx, cy, tri && !cell ? 0 : seam);
   ctx.stroke();
 
@@ -1911,7 +1911,7 @@ function drawCell(cx, cy, cell, gx, gy) {
   if (cell.cond < 100) {
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(cx - bw / 2, barY, bw, 3);
-    ctx.fillStyle = cell.cond >= 70 ? '#4af0c0' : cell.cond >= WORN_AT ? '#ffd24a' : '#ff4f6d';
+    ctx.fillStyle = cell.cond >= 70 ? '#bf5af2' : cell.cond >= WORN_AT ? '#ffd24a' : '#ff4f6d';
     ctx.fillRect(cx - bw / 2, barY, bw * Math.max(0, cell.cond) / 100, 3);
   }
 
