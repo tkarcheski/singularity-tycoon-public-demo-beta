@@ -1,0 +1,21 @@
+[project]
+name = "singularity-tycoon-mini"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+desktop = [
+  "playwright==1.60.0",
+]
+test = [
+  "playwright==1.60.0",
+  "pytest==8.3.3",
+  "pytest-playwright==0.5.2",
+  "robotframework==7.4.2",
+  "robotframework-browser==20.0.0",
+]
+
+[tool.uv]
+package = false
+required-version = "==0.11.21"

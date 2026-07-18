@@ -2,9 +2,10 @@
 """Dev server with Cache-Control: no-store so Chrome never serves stale assets."""
 import http.server
 import os
+import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PORT = 8000
+DEFAULT_PORT = 8000
 
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
@@ -20,6 +21,11 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    with http.server.HTTPServer(("0.0.0.0", PORT), NoCacheHandler) as httpd:
-        print(f"Serving {REPO} on port {PORT} (no-cache)")
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PORT
+    # A browser can keep an asset connection open while live-reloading.  The
+    # single-threaded HTTPServer then stops answering every other request,
+    # which looks exactly like a frozen game from a remote machine.
+    with http.server.ThreadingHTTPServer(("0.0.0.0", port), NoCacheHandler) as httpd:
+        httpd.daemon_threads = True
+        print(f"Serving {REPO} on port {port} (no-cache)")
         httpd.serve_forever()
