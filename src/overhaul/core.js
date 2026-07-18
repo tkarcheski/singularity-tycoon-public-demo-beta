@@ -58,6 +58,18 @@ function emptyNetworks() {
   };
 }
 
+function defaultUtilityState() {
+  return {
+    segments: 0,
+    requiredFlopsPerTick: 0,
+    paidFlopsThisTick: 0,
+    unpaidFlopsThisTick: 0,
+    totalPaidFlops: 0,
+    byLayer: Object.fromEntries(LAYERS.filter((layer) => layer !== 'facility')
+      .map((layer) => [layer, { segments: 0, maintenanceFlopsPerTick: 0 }])),
+  };
+}
+
 function defaultAiState() {
   const balance = OVERHAUL_BALANCE.ai;
   return {
@@ -225,6 +237,7 @@ function initialState(seed) {
       },
     ],
     networks: emptyNetworks(),
+    utilities: defaultUtilityState(),
     ai: defaultAiState(),
     tick: 0,
     completedTick: 0,
@@ -246,6 +259,11 @@ function restoreState(snapshot) {
     throw new Error('Overhaul snapshot has incompatible floor geometry');
   }
   restored.networks = { ...emptyNetworks(), ...(restored.networks || {}) };
+  restored.utilities = { ...defaultUtilityState(), ...(restored.utilities || {}) };
+  restored.utilities.byLayer = {
+    ...defaultUtilityState().byLayer,
+    ...(restored.utilities.byLayer || {}),
+  };
   restored.ai = { ...defaultAiState(), ...(restored.ai || {}) };
   restored.ai.activeFaults = Array.isArray(restored.ai.activeFaults)
     ? restored.ai.activeFaults : [];
@@ -284,9 +302,39 @@ function computerEntries(state) {
     .sort((a, b) => a.structure.entityId.localeCompare(b.structure.entityId));
 }
 
+function utilityBurden(state) {
+  const byLayer = Object.fromEntries(LAYERS.filter((layer) => layer !== 'facility')
+    .map((layer) => [layer, { segments: 0, maintenanceFlopsPerTick: 0 }]));
+  for (const entry of structureEntries(state)) {
+    const maintenance = entry.blueprint?.stats?.maintenanceFlopsPerTick || 0;
+    if (!maintenance || entry.layer === 'facility') continue;
+    byLayer[entry.layer].segments += 1;
+    byLayer[entry.layer].maintenanceFlopsPerTick += maintenance;
+  }
+  return {
+    segments: Object.values(byLayer).reduce((sum, item) => sum + item.segments, 0),
+    requiredFlopsPerTick: Object.values(byLayer)
+      .reduce((sum, item) => sum + item.maintenanceFlopsPerTick, 0),
+    byLayer,
+  };
+}
+
+function updateUtilityBurden(state, paidFlops = 0) {
+  const burden = utilityBurden(state);
+  const paid = Math.min(Math.max(0, paidFlops), burden.requiredFlopsPerTick);
+  state.utilities = {
+    ...state.utilities,
+    ...burden,
+    paidFlopsThisTick: paid,
+    unpaidFlopsThisTick: Math.max(0, burden.requiredFlopsPerTick - paid),
+    totalPaidFlops: (state.utilities?.totalPaidFlops || 0) + paid,
+  };
+}
+
 function createComponents(state, layer) {
   const occupied = new Set(
-    allCells(state).filter((cell) => cell.layers[layer]).map((cell) => cell.key),
+    allCells(state).filter((cell) => cell.layers[layer]?.condition > 0)
+      .map((cell) => cell.key),
   );
   const byCell = new Map();
   const components = [];
@@ -320,6 +368,84 @@ function createComponents(state, layer) {
   return { byCell, components, componentById: new Map(components.map((c) => [c.id, c])) };
 }
 
+function shortestLayerPath(state, layer, startKey, endKey, excluded = new Set()) {
+  if (!startKey || !endKey || excluded.has(startKey) || excluded.has(endKey)) return [];
+  const start = parseCellKey(startKey);
+  const end = parseCellKey(endKey);
+  if (!start || !end) return [];
+  const healthy = (key) => {
+    if (excluded.has(key)) return false;
+    const point = parseCellKey(key);
+    return Boolean(point && getCell(state, point.x, point.y)?.layers[layer]?.condition > 0);
+  };
+  if (!healthy(startKey) || !healthy(endKey)) return [];
+  const pending = [startKey];
+  const previous = new Map([[startKey, null]]);
+  while (pending.length) {
+    const key = pending.shift();
+    if (key === endKey) break;
+    const point = parseCellKey(key);
+    const adjacent = neighbors(point.x, point.y, state.floor.width, state.floor.height)
+      .map(([x, y]) => cellKey(state.floor.id, x, y))
+      .filter((candidate) => healthy(candidate) && !previous.has(candidate))
+      .sort();
+    for (const candidate of adjacent) {
+      previous.set(candidate, key);
+      pending.push(candidate);
+    }
+  }
+  if (!previous.has(endKey)) return [];
+  const path = [];
+  for (let key = endKey; key !== null; key = previous.get(key)) path.push(key);
+  return path.reverse();
+}
+
+function pointFromKey(key) {
+  const point = parseCellKey(key);
+  return point ? { floor: 0, x: point.x, y: point.y } : null;
+}
+
+function linkCapacityAt(state, layer, key) {
+  const point = parseCellKey(key);
+  const structure = point ? getCell(state, point.x, point.y)?.layers[layer] : null;
+  const blueprint = blueprintById(structure?.blueprintId);
+  if (!structure || structure.condition <= 0) return 0;
+  const entry = { structure, blueprint, layer };
+  return (blueprint?.stats?.capacity || 0) * aiMultiplierFor(state, entry);
+}
+
+function routeReliability(state, layer, keys) {
+  if (!keys.length) return 0;
+  return keys.reduce((result, key) => {
+    const point = parseCellKey(key);
+    const structure = point ? getCell(state, point.x, point.y)?.layers[layer] : null;
+    const blueprint = blueprintById(structure?.blueprintId);
+    return result * (blueprint?.stats?.reliability ?? 1);
+  }, 1);
+}
+
+function routeRedundancy(state, layer, keys) {
+  if (keys.length < 3) {
+    return { singleLinkFaultTolerant: false, alternatePathCount: 0,
+      reliabilityPercent: routeReliability(state, layer, keys) * 100 };
+  }
+  const start = keys[0];
+  const end = keys.at(-1);
+  const alternatives = keys.slice(1, -1).map((key) =>
+    shortestLayerPath(state, layer, start, end, new Set([key])));
+  const faultTolerant = alternatives.length > 0 && alternatives.every((path) => path.length > 0);
+  const primaryReliability = routeReliability(state, layer, keys);
+  const alternate = alternatives.find((path) => path.length > 0) || [];
+  const alternateReliability = routeReliability(state, layer, alternate);
+  const resilientReliability = faultTolerant
+    ? 1 - (1 - primaryReliability) * (1 - alternateReliability) : primaryReliability;
+  return {
+    singleLinkFaultTolerant: faultTolerant,
+    alternatePathCount: faultTolerant ? 1 : 0,
+    reliabilityPercent: resilientReliability * 100,
+  };
+}
+
 function firstEntry(entries) {
   return [...entries].sort(
     (a, b) => a.structure.entityId.localeCompare(b.structure.entityId),
@@ -337,6 +463,119 @@ function aiMultiplierFor(state, entry) {
     ? state.ai.efficiencyMultiplier : 1;
 }
 
+function networkStatusText(status) {
+  return {
+    active: 'Active — capacity is available and resources are flowing.',
+    idle: 'Idle — connected with capacity available, but nothing is flowing.',
+    saturated: 'Saturated — the limiting hop has no remaining headroom.',
+    starved: 'Starved — connected, but upstream capacity is exhausted.',
+    blocked: 'Disconnected — no healthy route reaches a source.',
+    broken: 'Broken — a failed link interrupts this route.',
+    fault: 'Broken — an AI mistake has stopped this endpoint.',
+    disabled: 'Disabled — AI assistance is opted out for this endpoint.',
+  }[status] || 'Disconnected — this route is unavailable.';
+}
+
+function pathWithTelemetry(state, layer, path, keys, options = {}) {
+  const connected = path.connected === true && keys.length > 0;
+  const nominalCapacity = Math.max(0, Number(path.capacity) || 0);
+  const delivered = Math.max(0, Number(path.delivered) || 0);
+  const sharedHeadroom = Math.max(0, Math.min(
+    nominalCapacity,
+    Number(options.sharedHeadroom ?? nominalCapacity - delivered) || 0,
+  ));
+  const sharedUsed = Math.max(0, nominalCapacity - sharedHeadroom);
+  let status = path.status || (connected ? 'idle' : 'blocked');
+  if (!connected && status !== 'fault' && status !== 'disabled') status = 'blocked';
+  if (connected && !['fault', 'disabled'].includes(status)) {
+    if (sharedHeadroom <= EPSILON && sharedUsed > EPSILON) status = 'saturated';
+    else if (delivered > EPSILON) status = 'active';
+    else if (sharedHeadroom > EPSILON) status = 'idle';
+    else status = 'starved';
+  }
+  const linkCandidates = keys.map((key) => {
+    const point = parseCellKey(key);
+    const structure = point ? getCell(state, point.x, point.y)?.layers[layer] : null;
+    return {
+      kind: 'link',
+      entityId: structure?.entityId || null,
+      cell: pointFromKey(key),
+      capacity: linkCapacityAt(state, layer, key),
+      reason: 'link-capacity',
+    };
+  });
+  const sourceCapacity = Number(options.sourceCapacity);
+  const candidates = Number.isFinite(sourceCapacity)
+    ? [{
+      kind: 'source',
+      entityId: path.source || null,
+      cell: path.from || null,
+      capacity: Math.max(0, sourceCapacity),
+      reason: 'source-capacity',
+    }, ...linkCandidates]
+    : linkCandidates;
+  const limitingCapacity = candidates.length
+    ? Math.min(...candidates.map((item) => item.capacity)) : 0;
+  const bottleneck = candidates.find((item) =>
+    Math.abs(item.capacity - limitingCapacity) <= EPSILON) || null;
+  const firstBottleneck = bottleneck ? {
+    ...bottleneck,
+    delivered: Math.min(bottleneck.capacity, sharedUsed),
+    headroom: Math.max(0, Math.min(bottleneck.capacity, sharedHeadroom)),
+  } : {
+    kind: 'topology',
+    entityId: null,
+    cell: path.to || null,
+    capacity: 0,
+    delivered: 0,
+    headroom: 0,
+    reason: status === 'fault' ? 'broken' : 'disconnected',
+  };
+  const utilization = nominalCapacity > EPSILON
+    ? Math.min(1, sharedUsed / nominalCapacity) : 0;
+  return {
+    ...path,
+    connected,
+    cells: (keys.length === 1 && path.source && path.target ? [keys[0], keys[0]] : keys)
+      .map(pointFromKey),
+    headroom: sharedHeadroom,
+    utilization,
+    utilizationPercent: utilization * 100,
+    status,
+    statusText: networkStatusText(status),
+    firstBottleneck,
+    redundancy: routeRedundancy(state, layer, keys),
+  };
+}
+
+function makeNetworkTelemetry(paths, options = {}) {
+  const capacity = Math.max(0, Number(options.capacity) || 0);
+  const delivered = Math.max(0, Number(options.delivered
+    ?? paths.reduce((sum, path) => sum + (Number(path.delivered) || 0), 0)) || 0);
+  const headroom = Math.max(0, capacity - delivered);
+  const utilization = capacity > EPSILON ? Math.min(1, delivered / capacity) : 0;
+  const firstBottleneck = paths.find((path) =>
+    ['fault', 'broken', 'starved', 'saturated'].includes(path.status))?.firstBottleneck
+    || paths.find((path) => path.connected && path.firstBottleneck)?.firstBottleneck
+    || paths.find((path) => path.firstBottleneck)?.firstBottleneck || null;
+  const status = paths.some((path) => ['fault', 'broken'].includes(path.status)) ? 'broken'
+    : headroom <= EPSILON && delivered > EPSILON ? 'saturated'
+      : delivered > EPSILON ? 'active'
+        : paths.some((path) => path.connected) && capacity > EPSILON ? 'idle' : 'blocked';
+  return {
+    capacity,
+    delivered,
+    headroom,
+    utilization,
+    utilizationPercent: utilization * 100,
+    status,
+    statusText: networkStatusText(status),
+    segments: Math.max(0, Number(options.segments) || 0),
+    maintenancePerTick: Math.max(0, Number(options.maintenancePerTick) || 0),
+    firstBottleneck,
+  };
+}
+
 function computeNetworks(state) {
   const entries = structureEntries(state);
   const computers = computerEntries(state);
@@ -345,7 +584,7 @@ function computeNetworks(state) {
   const data = createComponents(state, 'data');
   const ai = createComponents(state, 'ai');
 
-  function componentCapacity(component, layer) {
+  function componentCapacity(component, layer, useAi = true) {
     if (!component) return 0;
     const capacities = component.cells.map((key) => {
       const point = parseCellKey(key);
@@ -353,7 +592,7 @@ function computeNetworks(state) {
       const blueprint = blueprintById(structure?.blueprintId);
       if (!structure || structure.condition <= 0) return 0;
       const entry = { structure, blueprint, layer };
-      return (blueprint?.stats?.capacity || 0) * aiMultiplierFor(state, entry);
+      return (blueprint?.stats?.capacity || 0) * (useAi ? aiMultiplierFor(state, entry) : 1);
     });
     return capacities.length ? Math.min(...capacities) : 0;
   }
@@ -368,6 +607,7 @@ function computeNetworks(state) {
 
   function dispatchPower(useAi) {
     const supply = new Map();
+    const initialSupply = new Map();
     const sourcesByComponent = new Map();
     for (const entry of entries.filter(
       (item) => item.blueprint?.stats?.powerGeneration > 0 && item.structure.condition > 0,
@@ -377,19 +617,43 @@ function computeNetworks(state) {
       const multiplier = useAi ? aiMultiplierFor(state, entry) : 1;
       const generated = entry.blueprint.stats.powerGeneration * multiplier;
       supply.set(componentId, (supply.get(componentId) || 0) + generated);
+      initialSupply.set(componentId, (initialSupply.get(componentId) || 0) + generated);
       if (!sourcesByComponent.has(componentId)) sourcesByComponent.set(componentId, []);
       sourcesByComponent.get(componentId).push(entry);
     }
+    const transportCapacity = new Map(power.components.map((component) => [
+      component.id,
+      componentCapacity(component, 'power', useAi),
+    ]));
+    const transportRemaining = new Map(transportCapacity);
     const delivered = new Map();
+    const routeKeys = new Map();
     for (const entry of consumers) {
       const componentId = power.byCell.get(entry.cell.key);
+      const sources = sourcesByComponent.get(componentId) || [];
+      const source = firstEntry(sources);
+      const keys = source
+        ? shortestLayerPath(state, 'power', source.cell.key, entry.cell.key) : [];
+      routeKeys.set(entry.structure.entityId, keys);
       const need = entry.blueprint.stats.powerDemand;
       const available = componentId ? supply.get(componentId) || 0 : 0;
-      const amount = available + EPSILON >= need ? need : 0;
+      const transport = componentId ? transportRemaining.get(componentId) || 0 : 0;
+      const amount = keys.length && Math.min(available, transport) + EPSILON >= need ? need : 0;
       delivered.set(entry.structure.entityId, amount);
-      if (componentId && amount > 0) supply.set(componentId, available - amount);
+      if (componentId && amount > 0) {
+        supply.set(componentId, available - amount);
+        transportRemaining.set(componentId, transport - amount);
+      }
     }
-    return { delivered, sourcesByComponent };
+    return {
+      delivered,
+      sourcesByComponent,
+      initialSupply,
+      supplyRemaining: supply,
+      transportCapacity,
+      transportRemaining,
+      routeKeys,
+    };
   }
 
   // Controllers must be viable on base infrastructure. AI can improve a healthy
@@ -407,17 +671,45 @@ function computeNetworks(state) {
   }
 
   const aiConnected = new Map();
-  const aiPaths = [];
-  const eligible = entries.filter((entry) => isAiEligibleBlueprint(entry.blueprint));
+  let aiPaths = [];
+  const aiTransportCapacity = new Map(ai.components.map((component) => [
+    component.id,
+    componentCapacity(component, 'ai'),
+  ]));
+  const aiTransportRemaining = new Map(aiTransportCapacity);
+  const aiSourceCapacity = new Map();
+  for (const [componentId, controllers] of controllersByComponent) {
+    aiSourceCapacity.set(componentId, controllers.reduce(
+      (sum, controller) => sum + (controller.blueprint.stats.aiCapacity || 0), 0,
+    ));
+  }
+  const aiSourceRemaining = new Map(aiSourceCapacity);
+  const eligible = entries.filter((entry) => isAiEligibleBlueprint(entry.blueprint))
+    .sort((a, b) => a.structure.entityId.localeCompare(b.structure.entityId));
   for (const entry of eligible) {
     const componentId = ai.byCell.get(entry.cell.key);
     const component = ai.componentById.get(componentId);
     const sources = controllersByComponent.get(componentId) || [];
     const source = firstEntry(sources);
     const enabled = entry.structure.aiEnabled === true;
-    const physicalConnected = sources.length > 0 && component?.capacity > 0;
-    const assisted = enabled && physicalConnected;
+    const keys = source
+      ? shortestLayerPath(state, 'ai', source.cell.key, entry.cell.key) : [];
+    const capacity = componentId ? Math.min(
+      aiTransportCapacity.get(componentId) || 0,
+      aiSourceCapacity.get(componentId) || 0,
+    ) : 0;
+    const physicalConnected = sources.length > 0 && keys.length > 0 && capacity > 0;
     const faulted = Boolean(entry.structure.aiFault);
+    const available = componentId ? Math.min(
+      aiTransportRemaining.get(componentId) || 0,
+      aiSourceRemaining.get(componentId) || 0,
+    ) : 0;
+    const delivered = enabled && physicalConnected && !faulted && available + EPSILON >= 1 ? 1 : 0;
+    if (delivered > 0) {
+      aiTransportRemaining.set(componentId, (aiTransportRemaining.get(componentId) || 0) - delivered);
+      aiSourceRemaining.set(componentId, (aiSourceRemaining.get(componentId) || 0) - delivered);
+    }
+    const assisted = delivered > 0;
     entry.structure.aiConnected = assisted;
     aiConnected.set(entry.structure.entityId, assisted);
     aiPaths.push({
@@ -426,20 +718,29 @@ function computeNetworks(state) {
       target: entry.structure.entityId,
       from: pathPoint(source),
       to: pathPoint(entry),
-      cells: component ? component.cells.map((key) => {
-        const point = parseCellKey(key);
-        return { floor: 0, x: point.x, y: point.y };
-      }) : [],
+      componentId: componentId || null,
       connected: physicalConnected,
       enabled,
-      capacity: component
-        ? Math.min(component.capacity, source?.blueprint.stats.aiCapacity || 0) : 0,
-      delivered: assisted && !faulted ? 1 : 0,
+      capacity,
+      delivered,
       status: faulted ? 'fault'
         : !enabled ? 'disabled'
-          : assisted ? 'active' : 'blocked',
+          : assisted ? 'active' : physicalConnected ? 'starved' : 'blocked',
+      _keys: keys,
     });
   }
+  aiPaths = aiPaths.map((path) => {
+    const keys = path._keys;
+    const result = pathWithTelemetry(state, 'ai', path, keys, {
+      sharedHeadroom: Math.min(
+        aiTransportRemaining.get(path.componentId) || 0,
+        aiSourceRemaining.get(path.componentId) || 0,
+      ),
+      sourceCapacity: aiSourceCapacity.get(path.componentId) || 0,
+    });
+    delete result._keys;
+    return result;
+  });
   state.ai.enabledCount = eligible.filter((entry) => entry.structure.aiEnabled).length;
   state.ai.connectedCount = [...aiConnected.values()].filter(Boolean).length;
   state.ai.state = state.ai.activeFaults.length > 0 ? 'fault'
@@ -453,24 +754,37 @@ function computeNetworks(state) {
     const component = power.componentById.get(componentId);
     const sources = finalPower.sourcesByComponent.get(componentId) || [];
     const source = firstEntry(sources);
-    const capacity = componentCapacity(component, 'power');
-    return {
+    const keys = finalPower.routeKeys.get(entry.structure.entityId) || [];
+    const sourceCapacity = finalPower.initialSupply.get(componentId) || 0;
+    const capacity = Math.min(
+      finalPower.transportCapacity.get(componentId) || 0,
+      sourceCapacity,
+    );
+    return pathWithTelemetry(state, 'power', {
       id: `power:${source?.structure.entityId || 'none'}:${entry.structure.entityId}`,
       floor: 0,
       source: source?.structure.entityId || null,
       target: entry.structure.entityId,
       from: pathPoint(source),
       to: pathPoint(entry),
-      connected: sources.length > 0 && capacity > 0,
+      componentId: componentId || null,
+      connected: sources.length > 0 && keys.length > 0 && capacity > 0,
       capacity,
       delivered: powerDelivered.get(entry.structure.entityId) || 0,
       status: sources.length === 0 || capacity <= 0 ? 'blocked'
         : (powerDelivered.get(entry.structure.entityId) || 0) > 0 ? 'active' : 'starved',
-    };
+    }, keys, {
+      sharedHeadroom: Math.min(
+        finalPower.supplyRemaining.get(componentId) || 0,
+        finalPower.transportRemaining.get(componentId) || 0,
+      ),
+      sourceCapacity,
+    });
   });
 
   const pumpsByComponent = new Map();
   const coolingSupply = new Map();
+  const coolingInitialSupply = new Map();
   for (const entry of entries.filter((item) => item.blueprint?.stats?.coolingGeneration > 0)) {
     const componentId = cooling.byCell.get(entry.cell.key);
     const powered = (powerDelivered.get(entry.structure.entityId) || 0)
@@ -478,9 +792,15 @@ function computeNetworks(state) {
     if (!componentId || !powered || entry.structure.condition <= 0) continue;
     const generation = entry.blueprint.stats.coolingGeneration * aiMultiplierFor(state, entry);
     coolingSupply.set(componentId, (coolingSupply.get(componentId) || 0) + generation);
+    coolingInitialSupply.set(componentId, (coolingInitialSupply.get(componentId) || 0) + generation);
     if (!pumpsByComponent.has(componentId)) pumpsByComponent.set(componentId, []);
     pumpsByComponent.get(componentId).push(entry);
   }
+  const coolingTransportCapacity = new Map(cooling.components.map((component) => [
+    component.id,
+    componentCapacity(component, 'cooling'),
+  ]));
+  const coolingTransportRemaining = new Map(coolingTransportCapacity);
 
   const coolingDelivered = new Map();
   const coolingPaths = [];
@@ -489,25 +809,55 @@ function computeNetworks(state) {
     const component = cooling.componentById.get(componentId);
     const sources = pumpsByComponent.get(componentId) || [];
     const source = firstEntry(sources);
+    const keys = source
+      ? shortestLayerPath(state, 'cooling', source.cell.key, entry.cell.key) : [];
     const available = componentId ? coolingSupply.get(componentId) || 0 : 0;
-    const capacity = componentCapacity(component, 'cooling');
+    const transport = componentId ? coolingTransportRemaining.get(componentId) || 0 : 0;
+    const sourceCapacity = componentId ? coolingInitialSupply.get(componentId) || 0 : 0;
+    const capacity = Math.min(
+      coolingTransportCapacity.get(componentId) || 0,
+      sourceCapacity,
+    );
     const need = entry.blueprint.stats.coolingDemand;
-    const delivered = Math.min(need, available, capacity);
+    const delivered = keys.length ? Math.min(need, available, transport) : 0;
     coolingDelivered.set(entry.structure.entityId, delivered);
-    if (componentId && delivered > 0) coolingSupply.set(componentId, available - delivered);
-    coolingPaths.push({
+    if (componentId && delivered > 0) {
+      coolingSupply.set(componentId, available - delivered);
+      coolingTransportRemaining.set(componentId, transport - delivered);
+    }
+    coolingPaths.push(pathWithTelemetry(state, 'cooling', {
       id: `cooling:${source?.structure.entityId || 'none'}:${entry.structure.entityId}`,
       floor: 0,
       source: source?.structure.entityId || null,
       target: entry.structure.entityId,
       from: pathPoint(source),
       to: pathPoint(entry),
-      connected: sources.length > 0 && capacity > 0,
+      componentId: componentId || null,
+      connected: sources.length > 0 && keys.length > 0 && capacity > 0,
       capacity,
       delivered,
+      _keys: keys,
       status: sources.length === 0 || capacity <= 0 ? 'blocked'
         : delivered > 0 ? 'active' : 'starved',
+    }, keys, {
+      sharedHeadroom: Math.min(
+        coolingSupply.get(componentId) || 0,
+        coolingTransportRemaining.get(componentId) || 0,
+      ),
+      sourceCapacity,
+    }));
+  }
+  for (let index = 0; index < coolingPaths.length; index++) {
+    const path = coolingPaths[index];
+    const result = pathWithTelemetry(state, 'cooling', path, path._keys, {
+      sharedHeadroom: Math.min(
+        coolingSupply.get(path.componentId) || 0,
+        coolingTransportRemaining.get(path.componentId) || 0,
+      ),
+      sourceCapacity: coolingInitialSupply.get(path.componentId) || 0,
     });
+    delete result._keys;
+    coolingPaths[index] = result;
   }
 
   const poweredSwitchesByComponent = new Map();
@@ -537,6 +887,17 @@ function computeNetworks(state) {
   const dataConnected = new Map();
   const externalConnected = new Map();
   const dataPaths = [];
+  const dataPathKeys = new Map();
+  const dataTransportCapacity = new Map(data.components.map((component) => [
+    component.id,
+    componentCapacity(component, 'data'),
+  ]));
+  // Data links are full duplex. Internal and external traffic share capacity
+  // with peers in the same direction, but do not double-charge opposite flow.
+  const dataTransportRemaining = {
+    internal: new Map(dataTransportCapacity),
+    external: new Map(dataTransportCapacity),
+  };
   for (const entry of computers) {
     const componentId = data.byCell.get(entry.cell.key);
     const component = data.componentById.get(componentId);
@@ -544,14 +905,18 @@ function computeNetworks(state) {
     const fibers = onlineFibersByComponent.get(componentId) || [];
     const dataSwitch = firstEntry(switches);
     const fiber = firstEntry(fibers);
-    const capacity = componentCapacity(component, 'data');
+    const internalKeys = dataSwitch
+      ? shortestLayerPath(state, 'data', dataSwitch.cell.key, entry.cell.key) : [];
+    const externalKeys = fiber
+      ? shortestLayerPath(state, 'data', entry.cell.key, fiber.cell.key) : [];
+    const capacity = dataTransportCapacity.get(componentId) || 0;
     const externalCapacity = fiber
       ? Math.min(capacity, fiber.blueprint.stats.bandwidth * aiMultiplierFor(state, fiber)) : 0;
-    const internal = switches.length > 0 && capacity > 0;
-    const external = internal && fibers.length > 0;
+    const internal = switches.length > 0 && internalKeys.length > 0 && capacity > 0;
+    const external = internal && fibers.length > 0 && externalKeys.length > 0;
     dataConnected.set(entry.structure.entityId, internal);
     externalConnected.set(entry.structure.entityId, external);
-    dataPaths.push({
+    const internalPath = {
       id: `data:${dataSwitch?.structure.entityId || 'none'}:${entry.structure.entityId}`,
       floor: 0,
       source: dataSwitch?.structure.entityId || null,
@@ -559,12 +924,13 @@ function computeNetworks(state) {
       from: pathPoint(dataSwitch),
       to: pathPoint(entry),
       purpose: 'internal',
+      componentId: componentId || null,
       connected: internal,
       capacity,
       delivered: 0,
       status: internal ? 'idle' : 'blocked',
-    });
-    dataPaths.push({
+    };
+    const externalPath = {
       id: `data:${entry.structure.entityId}:${fiber?.structure.entityId || 'none'}`,
       floor: 0,
       source: entry.structure.entityId,
@@ -572,25 +938,99 @@ function computeNetworks(state) {
       from: pathPoint(entry),
       to: pathPoint(fiber),
       purpose: 'external',
+      componentId: componentId || null,
       connected: external,
       capacity: externalCapacity,
       delivered: 0,
       status: external ? 'active' : 'blocked',
-    });
+    };
+    dataPathKeys.set(internalPath.id, internalKeys);
+    dataPathKeys.set(externalPath.id, externalKeys);
+    dataPaths.push(internalPath, externalPath);
   }
 
+  function refreshDataTelemetry() {
+    for (let index = 0; index < dataPaths.length; index++) {
+      const path = dataPaths[index];
+      const keys = dataPathKeys.get(path.id) || [];
+      dataPaths[index] = pathWithTelemetry(state, 'data', path, keys, {
+        sharedHeadroom: dataTransportRemaining[path.purpose].get(path.componentId) || 0,
+      });
+    }
+  }
+
+  function allocateData(pathId, requested) {
+    const path = dataPaths.find((item) => item.id === pathId);
+    if (!path?.connected || requested <= EPSILON) return 0;
+    const remaining = dataTransportRemaining[path.purpose];
+    const available = remaining.get(path.componentId) || 0;
+    const delivered = Math.min(Math.max(0, requested), available, path.capacity);
+    path.delivered += delivered;
+    remaining.set(path.componentId, available - delivered);
+    return delivered;
+  }
+
+  refreshDataTelemetry();
+
+  const burden = utilityBurden(state);
+  const usefulCapacity = (componentIds, sourceCapacity, transportCapacity) =>
+    [...componentIds].reduce((sum, componentId) => sum + Math.min(
+      sourceCapacity.get(componentId) || 0,
+      transportCapacity.get(componentId) || 0,
+    ), 0);
+  const powerCapacity = usefulCapacity(
+    finalPower.sourcesByComponent.keys(), finalPower.initialSupply, finalPower.transportCapacity,
+  );
+  const coolingCapacity = usefulCapacity(
+    pumpsByComponent.keys(), coolingInitialSupply, coolingTransportCapacity,
+  );
+  const dataCapacity = [...poweredSwitchesByComponent.keys()].reduce(
+    (sum, componentId) => sum + (dataTransportCapacity.get(componentId) || 0), 0,
+  );
+  const aiCapacity = usefulCapacity(
+    controllersByComponent.keys(), aiSourceCapacity, aiTransportCapacity,
+  );
+  const networkSnapshot = {
+    power: { paths: powerPaths },
+    cooling: { paths: coolingPaths },
+    data: { paths: dataPaths },
+    ai: { paths: aiPaths },
+  };
+
+  function refreshTelemetry() {
+    refreshDataTelemetry();
+    const definitions = {
+      power: { capacity: powerCapacity, paths: powerPaths },
+      cooling: { capacity: coolingCapacity, paths: coolingPaths },
+      data: { capacity: dataCapacity, paths: dataPaths },
+      ai: { capacity: aiCapacity, paths: aiPaths },
+    };
+    for (const [layer, definition] of Object.entries(definitions)) {
+      const delivered = layer === 'data' ? Math.max(
+        definition.paths.filter((path) => path.purpose === 'internal')
+          .reduce((sum, path) => sum + path.delivered, 0),
+        definition.paths.filter((path) => path.purpose === 'external')
+          .reduce((sum, path) => sum + path.delivered, 0),
+      ) : undefined;
+      networkSnapshot[layer].telemetry = makeNetworkTelemetry(definition.paths, {
+        capacity: definition.capacity,
+        ...(delivered === undefined ? {} : { delivered }),
+        segments: burden.byLayer[layer]?.segments || 0,
+        maintenancePerTick: burden.byLayer[layer]?.maintenanceFlopsPerTick || 0,
+      });
+    }
+  }
+  refreshTelemetry();
+
   return {
-    snapshot: {
-      power: { paths: powerPaths },
-      cooling: { paths: coolingPaths },
-      data: { paths: dataPaths },
-      ai: { paths: aiPaths },
-    },
+    snapshot: networkSnapshot,
     powerDelivered,
     coolingDelivered,
     dataConnected,
     externalConnected,
     aiConnected,
+    allocateData,
+    refreshTelemetry,
     onlineControllerCount: [...controllersByComponent.values()].reduce(
       (sum, items) => sum + items.length, 0,
     ),
@@ -665,12 +1105,15 @@ function semanticSnapshot(state) {
       dataCapacity: entry.layer === 'data' ? stats.capacity || 0 : 0,
       externalBandwidth: stats.bandwidth || 0,
       rawFlops: stats.rawFlops || 0,
+      maintenanceFlopsPerTick: stats.maintenanceFlopsPerTick || 0,
+      reliabilityPercent: (stats.reliability ?? 1) * 100,
     };
     return {
       id: entry.structure.entityId,
       blueprintId: entry.blueprint.id,
       kind: entry.blueprint.kind,
       layer: entry.layer,
+      networkRole: entry.blueprint.networkRole || null,
       label: entry.blueprint.name,
       floor: 0,
       floorKey: state.floor.id,
@@ -683,7 +1126,8 @@ function semanticSnapshot(state) {
       aiFault: entry.structure.aiFault || null,
       baseMetrics,
       effectiveMetrics: Object.fromEntries(Object.entries(baseMetrics)
-        .map(([key, value]) => [key, value * aiEfficiencyMultiplier])),
+        .map(([key, value]) => [key, ['maintenanceFlopsPerTick', 'reliabilityPercent'].includes(key)
+          ? value : value * aiEfficiencyMultiplier])),
     };
   });
   const result = {
@@ -696,6 +1140,7 @@ function semanticSnapshot(state) {
     actors: [...clone(state.actors), ...computerActors],
     structures,
     networks: clone(state.networks),
+    utilities: clone(state.utilities),
     ai: clone(state.ai),
     computers,
     flops: clone(state.flops),
@@ -816,25 +1261,125 @@ export function createOverhaulGame(options = {}) {
     return structure;
   }
 
+  function placementReason(blueprintId, x, y, candidateState = state) {
+    const blueprint = blueprintById(blueprintId);
+    if (!blueprint || !blueprint.layer) return 'unknown-blueprint';
+    if (!candidateState.unlockIds.includes(blueprintId)) return 'locked-blueprint';
+    const cell = getCell(candidateState, x, y);
+    if (!cell?.owned) return 'unowned-cell';
+    if (cell.layers[blueprint.layer]) return 'layer-occupied';
+    if (blueprint.placement?.floor && blueprint.placement.floor !== candidateState.floor.number) {
+      return 'wrong-floor';
+    }
+    if (blueprint.placement?.southEdge && y !== candidateState.floor.height - 1) {
+      return 'requires-south-edge';
+    }
+    if (candidateState.economy.cash + EPSILON < blueprint.cost) return 'insufficient-cash';
+    return null;
+  }
+
+  function refreshNetworks() {
+    updateUtilityBurden(state, 0);
+    const network = computeNetworks(state);
+    state.networks = network.snapshot;
+  }
+
+  function previewPlacement(blueprintId, x, y) {
+    const reason = placementReason(blueprintId, x, y);
+    if (reason) return { ok: false, reason };
+    const blueprint = blueprintById(blueprintId);
+    const beforeState = clone(state);
+    const afterState = clone(state);
+    const beforeNetwork = computeNetworks(beforeState).snapshot;
+    const previewId = `preview:${blueprintId}:${x},${y}`;
+    const structure = {
+      entityId: previewId,
+      blueprintId,
+      condition: 100,
+      ...(isAiEligibleBlueprint(blueprint)
+        ? { aiEnabled: false, aiConnected: false, aiFault: null } : {}),
+    };
+    if (blueprint.kind === 'computer') {
+      structure.runtime = {
+        state: 'off',
+        bootRemaining: blueprint.stats.bootTicks,
+        powerDelivered: 0,
+        coolingDelivered: 0,
+        dataConnected: false,
+        rawFlops: 0,
+        workload: 'idle',
+        utilization: 0,
+        temperatureC: OVERHAUL_BALANCE.thermal.ambientC,
+        throttle: 1,
+        fault: null,
+      };
+    }
+    getCell(afterState, x, y).layers[blueprint.layer] = structure;
+    const afterNetwork = computeNetworks(afterState).snapshot;
+    const networkDeltas = {};
+    const affectedEndpoints = [];
+    for (const layer of ['power', 'cooling', 'data', 'ai']) {
+      const before = beforeNetwork[layer].telemetry;
+      const after = afterNetwork[layer].telemetry;
+      const beforePaths = new Map(beforeNetwork[layer].paths.map((path) => [
+        `${path.purpose || 'resource'}:${path.target || path.source || path.id}`,
+        path,
+      ]));
+      const afterPaths = new Map(afterNetwork[layer].paths.map((path) => [
+        `${path.purpose || 'resource'}:${path.target || path.source || path.id}`,
+        path,
+      ]));
+      const changed = [...new Set([...beforePaths.keys(), ...afterPaths.keys()])]
+        .filter((key) => {
+          const left = beforePaths.get(key);
+          const right = afterPaths.get(key);
+          return !left || !right || left.connected !== right.connected
+            || Math.abs((left.capacity || 0) - (right.capacity || 0)) > EPSILON;
+        })
+        .map((key) => {
+          const left = beforePaths.get(key);
+          const right = afterPaths.get(key);
+          return {
+            resource: layer,
+            entityId: right?.target || left?.target || right?.source || left?.source || null,
+            beforeConnected: left?.connected || false,
+            afterConnected: right?.connected || false,
+            beforeCapacity: left?.capacity || 0,
+            afterCapacity: right?.capacity || 0,
+          };
+        });
+      affectedEndpoints.push(...changed);
+      networkDeltas[layer] = {
+        before: clone(before),
+        after: clone(after),
+        capacityDelta: after.capacity - before.capacity,
+        headroomDelta: after.headroom - before.headroom,
+        maintenanceDelta: after.maintenancePerTick - before.maintenancePerTick,
+        affectedEndpoints: changed,
+      };
+    }
+    return {
+      ok: true,
+      preview: true,
+      blueprintId,
+      cellKey: cellKey(state.floor.id, x, y),
+      cost: blueprint.cost,
+      recurringBurdenFlops: blueprint.stats?.maintenanceFlopsPerTick || 0,
+      networkRole: blueprint.networkRole || null,
+      networkDeltas,
+      affectedEndpoints,
+    };
+  }
+
   function place(blueprintId, x, y) {
     const blueprint = blueprintById(blueprintId);
-    if (!blueprint || !blueprint.layer) return reject('unknown-blueprint', { blueprintId });
-    if (!state.unlockIds.includes(blueprintId)) return reject('locked-blueprint', { blueprintId });
+    const reason = placementReason(blueprintId, x, y);
+    if (reason) return reject(reason, { blueprintId, x, y });
     const cell = getCell(state, x, y);
-    if (!cell?.owned) return reject('unowned-cell', { blueprintId, x, y });
-    if (cell.layers[blueprint.layer]) return reject('layer-occupied', { blueprintId, x, y });
-    if (blueprint.placement?.floor && blueprint.placement.floor !== state.floor.number) {
-      return reject('wrong-floor', { blueprintId, x, y });
-    }
-    if (blueprint.placement?.southEdge && y !== state.floor.height - 1) {
-      return reject('requires-south-edge', { blueprintId, x, y });
-    }
-    if (state.economy.cash + EPSILON < blueprint.cost) {
-      return reject('insufficient-cash', { blueprintId, x, y });
-    }
     state.economy.cash -= blueprint.cost;
     const structure = createStructure(blueprint);
     cell.layers[blueprint.layer] = structure;
+    refreshNetworks();
     emit('structure.placed', {
       blueprintId,
       kind: blueprint.kind,
@@ -855,6 +1400,7 @@ export function createOverhaulGame(options = {}) {
     );
     if (removedFault) completeAiRepair(removedFault, 'structure-removed');
     cell.layers[layer] = null;
+    refreshNetworks();
     emit('structure.removed', {
       blueprintId: structure.blueprintId,
       layer,
@@ -892,6 +1438,7 @@ export function createOverhaulGame(options = {}) {
     }
     entry.structure.aiEnabled = enabled;
     if (!enabled) entry.structure.aiConnected = false;
+    refreshNetworks();
     emit('ai.enabled-changed', { enabled }, entityId);
     return { ok: true, entityId, enabled };
   }
@@ -1077,6 +1624,7 @@ export function createOverhaulGame(options = {}) {
   const actions = {
     purchaseFrontier,
     claimCell,
+    previewPlacement,
     place,
     remove,
     setRoutes,
@@ -1094,6 +1642,7 @@ export function createOverhaulGame(options = {}) {
     if (!input || typeof input !== 'object') return reject('invalid-command');
     switch (input.type) {
       case 'purchase-frontier': return purchaseFrontier(input.cellKey);
+      case 'preview-placement': return previewPlacement(input.blueprintId, input.x, input.y);
       case 'place': return place(input.blueprintId, input.x, input.y);
       case 'remove': return remove(input.x, input.y, input.layer);
       case 'set-routes': return setRoutes(input.routes || input);
@@ -1254,14 +1803,23 @@ export function createOverhaulGame(options = {}) {
   }
 
   function processBusinessJobs(network, ledger) {
-    let available = ledger.jobs;
-    let deliveredToJobs = 0;
+    let available = 0;
+    let requested = ledger.jobs;
+    for (const path of state.networks.data.paths.filter(
+      (item) => item.purpose === 'external' && item.connected,
+    )) {
+      if (requested <= EPSILON) break;
+      const delivered = network.allocateData(path.id, requested);
+      available += delivered;
+      requested -= delivered;
+    }
+    ledger.loss += Math.max(0, ledger.jobs - available);
+    ledger.jobs = available;
     for (const job of state.business.jobs.filter((item) => item.status === 'running')) {
       if (network.onlineFiberCount <= 0 || available <= EPSILON) continue;
       const delivered = Math.min(available, job.requiredFlops - job.completedFlops);
       job.completedFlops += delivered;
       available -= delivered;
-      deliveredToJobs += delivered;
       job.detail = `${job.completedFlops.toFixed(1)} / ${job.requiredFlops} inference FLOPS`;
       if (job.completedFlops + EPSILON < job.requiredFlops) continue;
       job.completedFlops = job.requiredFlops;
@@ -1287,17 +1845,6 @@ export function createOverhaulGame(options = {}) {
         jobId: job.id,
         amount: invoice.amount,
       }, invoiceId);
-    }
-    let externalDelivery = deliveredToJobs;
-    for (const path of state.networks.data.paths.filter(
-      (item) => item.purpose === 'external' && item.connected,
-    )) {
-      if (externalDelivery <= EPSILON) break;
-      const capacityLeft = Math.max(0, path.capacity - path.delivered);
-      const delivered = Math.min(capacityLeft, externalDelivery);
-      path.delivered += delivered;
-      externalDelivery -= delivered;
-      if (path.delivered > 0) path.status = 'active';
     }
   }
 
@@ -1495,27 +2042,45 @@ export function createOverhaulGame(options = {}) {
     const ledger = emptyLedger();
     let requestedSell = 0;
     let routedSell = 0;
+    const burden = utilityBurden(state);
+    let maintenanceRemaining = burden.requiredFlopsPerTick;
 
     for (const entry of computerEntries(state)) {
       const runtime = entry.structure.runtime;
       const beforeWorkload = runtime.workload;
       const production = updateComputer(entry, network);
-      const gross = production.gross;
-      ledger.raw += gross;
-      if (gross <= EPSILON) {
+      const potentialGross = production.gross;
+      ledger.raw += potentialGross;
+      if (potentialGross <= EPSILON) {
         runtime.rawFlops = 0;
         runtime.utilization = 0;
         runtime.workload = 'idle';
         continue;
       }
 
+      const maintenance = Math.min(potentialGross, maintenanceRemaining);
+      maintenanceRemaining -= maintenance;
+      ledger.loss += maintenance;
+      const afterMaintenance = potentialGross - maintenance;
+      const internalPath = state.networks.data.paths.find(
+        (path) => path.purpose === 'internal' && path.target === entry.structure.entityId,
+      );
+      const gross = internalPath
+        ? network.allocateData(internalPath.id, afterMaintenance) : 0;
+      ledger.loss += Math.max(0, afterMaintenance - gross);
       const requested = gross * state.routes.sell;
-      const sold = production.external ? requested : 0;
+      const externalPath = state.networks.data.paths.find(
+        (path) => path.purpose === 'external' && path.source === entry.structure.entityId,
+      );
+      const sold = production.external && externalPath
+        ? network.allocateData(externalPath.id, requested) : 0;
       const training = gross * state.routes.train;
       const jobs = gross * state.routes.inference;
       const research = gross * state.routes.research;
+      const productiveRequested = requested + training + jobs + research;
       const productive = sold + training + jobs + research;
-      const idle = Math.max(0, gross - productive);
+      const idle = Math.max(0, gross - productiveRequested);
+      ledger.loss += Math.max(0, requested - sold);
       requestedSell += requested;
       routedSell += sold;
       ledger.sell += sold;
@@ -1525,21 +2090,6 @@ export function createOverhaulGame(options = {}) {
       ledger.idle += idle;
       runtime.utilization = gross > 0 ? productive / gross : 0;
       runtime.workload = dominantWorkload({ sell: sold, training, jobs, research });
-      const internalPath = state.networks.data.paths.find(
-        (path) => path.purpose === 'internal' && path.target === entry.structure.entityId,
-      );
-      if (internalPath) {
-        internalPath.delivered = Math.min(internalPath.capacity, gross);
-        internalPath.status = internalPath.delivered > 0 ? 'active' : 'idle';
-      }
-      const externalPath = state.networks.data.paths.find(
-        (path) => path.purpose === 'external' && path.source === entry.structure.entityId,
-      );
-      if (externalPath) {
-        externalPath.delivered = Math.min(externalPath.capacity, sold);
-        externalPath.status = !externalPath.connected ? 'blocked'
-          : externalPath.delivered > 0 ? 'active' : 'idle';
-      }
       if (runtime.workload !== beforeWorkload) {
         emit('computer.workload-changed', {
           from: beforeWorkload,
@@ -1548,6 +2098,10 @@ export function createOverhaulGame(options = {}) {
         }, entry.structure.entityId);
       }
     }
+
+    updateUtilityBurden(state, burden.requiredFlopsPerTick - maintenanceRemaining);
+    processBusinessJobs(network, ledger);
+    network.refreshTelemetry();
 
     // Assign any tiny floating residue to idle so the public equality is exact
     // up to normal IEEE-754 addition order.
@@ -1594,7 +2148,6 @@ export function createOverhaulGame(options = {}) {
       emit('sell.unblocked', { routedFlops: state.sell.routedFlops });
     }
     processHarnessBuild();
-    processBusinessJobs(network, ledger);
     processHumanStates();
     maybeRaiseAiFault();
   }
@@ -1695,6 +2248,32 @@ export function createOverhaulGame(options = {}) {
         snapshots.push(snapshot());
         tickUntilLoaded(snapshots);
         break;
+      case 'computer-overload': {
+        if (state.computerBlueprintId !== 'computer_burst') {
+          throw new Error('computer-overload scenario requires a burst-start seed');
+        }
+        buildComputerPath();
+        snapshots.push(snapshot());
+        requireAction(setRoutes({ sell: 0, research: 0, train: 0, inference: 1 }),
+          'overload inference route');
+        tickUntilLoaded(snapshots);
+        for (let count = 0; count < 120; count++) {
+          const current = snapshots.at(-1);
+          if (current.computers.some((computer) => computer.state === 'blocked'
+              && computer.fault === 'thermal-shutdown')) break;
+          tick();
+          snapshots.push(snapshot());
+        }
+        if (!snapshots.some((current) =>
+          current.computers.some((computer) => computer.state === 'throttled'))) {
+          throw new Error('computer-overload scenario never reached throttled state');
+        }
+        if (!snapshots.at(-1).computers.some((computer) =>
+          computer.state === 'blocked' && computer.fault === 'thermal-shutdown')) {
+          throw new Error('computer-overload scenario never reached thermal shutdown');
+        }
+        break;
+      }
       case 'sell-without-f1-fiber':
         buildComputerPath();
         snapshots.push(snapshot());

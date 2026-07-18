@@ -24,18 +24,18 @@
   ];
   const BLUEPRINTS = [
     { id: 'generator', layer: 'physical', name: 'Compact Generator', detail: '+24 power generation', cost: 220, state: 'unlocked', icon: 'power', kind: 'power' },
-    { id: 'power_line', layer: 'physical', name: 'Power Line', detail: '12 capacity route', cost: 6, state: 'unlocked', icon: 'link', kind: 'power' },
-    { id: 'power_pole', layer: 'physical', name: 'Power Pole', detail: '30 capacity route', cost: 18, state: 'unlocked', icon: 'link', kind: 'power' },
+    { id: 'power_line', layer: 'physical', name: 'Power Line', detail: 'Branch · 16 cap · 0.025 FLOPS/tick', cost: 6, state: 'unlocked', icon: 'link', kind: 'power' },
+    { id: 'power_pole', layer: 'physical', name: 'Power Pole', detail: 'Trunk · 36 cap · 0.08 FLOPS/tick', cost: 18, state: 'unlocked', icon: 'link', kind: 'power' },
     { id: 'cooling_pump', layer: 'physical', name: 'Cooling Pump', detail: '+12 cooling generation', cost: 140, state: 'unlocked', icon: 'cooling', kind: 'cooling' },
-    { id: 'cooling_pipe', layer: 'physical', name: 'Cooling Pipe', detail: '12 capacity route', cost: 5, state: 'unlocked', icon: 'pipe', kind: 'cooling' },
-    { id: 'data_cable', layer: 'network', name: 'Data Cable', detail: '16 capacity route', cost: 5, state: 'unlocked', icon: 'network', kind: 'network' },
-    { id: 'data_switch', layer: 'network', name: 'Internal Switch', detail: '48 capacity route', cost: 70, state: 'unlocked', icon: 'network', kind: 'network' },
+    { id: 'cooling_pipe', layer: 'physical', name: 'Cooling Pipe', detail: 'Branch · 12 cap · 0.03 FLOPS/tick', cost: 5, state: 'unlocked', icon: 'pipe', kind: 'cooling' },
+    { id: 'data_cable', layer: 'network', name: 'Data Cable', detail: 'Branch · 16 cap · 0.025 FLOPS/tick', cost: 5, state: 'unlocked', icon: 'network', kind: 'network' },
+    { id: 'data_switch', layer: 'network', name: 'Internal Switch', detail: 'Hub · 48 cap · 0.1 FLOPS/tick', cost: 70, state: 'unlocked', icon: 'network', kind: 'network' },
     { id: 'fiber_gateway', layer: 'network', name: 'F1 Underground Fiber', detail: 'south-edge sell uplink', cost: 180, state: 'unlocked', icon: 'network', kind: 'network' },
     { id: 'computer_lean', layer: 'compute', name: 'Lean Compute Node', detail: '8 raw FLOPS', cost: 260, state: 'revealed', icon: 'computer', kind: 'computer' },
     { id: 'computer_steady', layer: 'compute', name: 'Steady Compute Node', detail: '11 raw FLOPS', cost: 320, state: 'revealed', icon: 'computer', kind: 'computer' },
     { id: 'computer_burst', layer: 'compute', name: 'Burst Compute Node', detail: '15 raw FLOPS', cost: 390, state: 'revealed', icon: 'computer', kind: 'computer' },
     { id: 'ai_controller', layer: 'ai', name: 'AI Controller', detail: 'opt-in utility control core', cost: 260, state: 'revealed', icon: 'ai', kind: 'ai' },
-    { id: 'ai_bus', layer: 'ai', name: 'AI Bus', detail: 'self-improvement control route', cost: 8, state: 'revealed', icon: 'ai', kind: 'ai' },
+    { id: 'ai_bus', layer: 'ai', name: 'AI Bus', detail: 'Automation · 32 cap · 0.04 FLOPS/tick', cost: 8, state: 'revealed', icon: 'ai', kind: 'ai' },
   ];
   const BLUEPRINT_BY_ID = new Map(BLUEPRINTS.map((blueprint) => [blueprint.id, blueprint]));
   const ROUTE_PRESETS = [
@@ -277,12 +277,63 @@
 
   function aggregateNetwork(network) {
     const paths = network?.paths || [];
+    const derivedCapacity = paths.reduce((sum, path) => sum + Math.max(0, Number(path.capacity) || 0), 0);
+    const derivedDelivered = paths.reduce((sum, path) => sum + (path.connected ? Math.max(0, Number(path.delivered) || 0) : 0), 0);
+    const capacity = optionalNumber(network?.telemetry?.capacity) ?? derivedCapacity;
+    const delivered = optionalNumber(network?.telemetry?.delivered) ?? derivedDelivered;
+    const headroom = optionalNumber(network?.telemetry?.headroom) ?? Math.max(0, capacity - delivered);
+    const utilizationPercent = optionalNumber(network?.telemetry?.utilizationPercent)
+      ?? (capacity > 0 ? clamp(delivered / capacity * 100, 0, 100) : 0);
     return {
       paths,
-      capacity: paths.reduce((sum, path) => sum + Math.max(0, Number(path.capacity) || 0), 0),
-      delivered: paths.reduce((sum, path) => sum + (path.connected ? Math.max(0, Number(path.delivered) || 0) : 0), 0),
+      capacity,
+      delivered,
+      headroom,
+      utilizationPercent,
       blocked: paths.filter((path) => !path.connected || path.status === 'blocked').length,
+      firstBottleneck: network?.telemetry?.firstBottleneck
+        || paths.map((path) => path.firstBottleneck).find(Boolean)
+        || null,
     };
+  }
+
+  const NETWORK_META = {
+    power:{label:'Power',unit:'MW',overlay:'power',color:'var(--yellow)'},
+    cooling:{label:'Cooling',unit:'kW',overlay:'cooling',color:'var(--cyan)'},
+    data:{label:'Data',unit:'Gb/s',overlay:'network',color:'var(--violet)'},
+    ai:{label:'AI',unit:'ctrl',overlay:'ai',color:'var(--ai)'},
+  };
+
+  function pathTelemetry(path) {
+    const capacity = Math.max(0, Number(path?.capacity) || 0);
+    const delivered = Math.max(0, Number(path?.delivered) || 0);
+    const headroom = optionalNumber(path?.headroom) ?? Math.max(0, capacity - delivered);
+    const utilizationPercent = optionalNumber(path?.utilizationPercent)
+      ?? (optionalNumber(path?.utilization) !== null ? Number(path.utilization) * 100
+        : capacity > 0 ? delivered / capacity * 100 : 0);
+    return {capacity,delivered,headroom,utilizationPercent:clamp(utilizationPercent,0,100)};
+  }
+
+  function bottleneckText(raw, path = null) {
+    if (typeof raw === 'string') return raw;
+    if (raw && typeof raw === 'object') {
+      const identity = raw.label || raw.entityId || raw.id || raw.kind;
+      const reason = raw.reason || raw.statusText;
+      const cell = raw.cell && Number.isFinite(Number(raw.cell.x)) && Number.isFinite(Number(raw.cell.y))
+        ? `F${Number(raw.cell.floor || 0) + 1} ${Number(raw.cell.x) + 1},${Number(raw.cell.y) + 1}` : null;
+      return [identity,cell,reason].filter(Boolean).join(' · ') || 'Capacity constrained';
+    }
+    if (!path) return 'None';
+    if (path.connected === false) return `${path.source || 'Source'} → ${path.target || 'target'} is disconnected`;
+    if (['blocked','fault','starved'].includes(path.status)) return path.statusText || `${path.target || path.id} · ${path.status}`;
+    const telemetry = pathTelemetry(path);
+    if (telemetry.capacity > 0 && telemetry.utilizationPercent >= 99.95) return `${path.id} route capacity`;
+    return 'None';
+  }
+
+  function metricText(value) {
+    const numeric = Number(value) || 0;
+    return Number.isInteger(numeric) ? String(numeric) : round(numeric,1).toFixed(1);
   }
 
   function uiFloor(value, fallback = 0) {
@@ -520,6 +571,11 @@
         const target = entityPositions.get(path.target);
         const capacity = Math.max(0, Number(path.capacity) || 0);
         const delivered = Math.max(0, Number(path.delivered) || 0);
+        const headroom = optionalNumber(path.headroom) ?? Math.max(0, capacity - delivered);
+        const utilization = optionalNumber(path.utilization)
+          ?? (capacity > 0 ? clamp(delivered / capacity, 0, 1) : 0);
+        const utilizationPercent = optionalNumber(path.utilizationPercent)
+          ?? clamp(utilization * 100, 0, 100);
         return {
           ...path,
           id: path.id || `${networkName}-${path.source || 'none'}-${path.target || 'none'}-${index}`,
@@ -527,6 +583,12 @@
           from: path.from || source,
           to: path.to || target,
           status: path.status || (path.connected === false ? 'blocked' : capacity > 0 && delivered >= capacity ? 'saturated' : 'active'),
+          capacity,
+          delivered,
+          headroom,
+          utilization,
+          utilizationPercent,
+          statusText:path.statusText || (path.connected === false ? 'Route disconnected' : null),
         };
       }),
     });
@@ -645,6 +707,7 @@
       layer:'all',
       floor:0,
       overlays:new Set(['power','cooling','network','ai']),
+      networkFocus:null,
       tab:'actors',
       lastTick:-1,
       feedback:{message:'Generator selected — click an owned tile to place it.',tone:'ready'},
@@ -667,6 +730,55 @@
     function structureAt(x, y) {
       const structures = structuresAt(x, y);
       return structures.find((item) => item.layer === 'facility') || structures[0];
+    }
+
+    function pathTouchesSelection(path, selected) {
+      if (!ui.selectedCell || !selected) return false;
+      const entityIds = new Set([
+        selected.actor?.id,
+        ...selected.structures.map((item) => item.id),
+      ].filter(Boolean));
+      if (entityIds.has(path.source) || entityIds.has(path.target)) return true;
+      const matchesPoint = (point) => point && Number(point.floor || 0) === ui.floor
+        && Number(point.x) === selected.x && Number(point.y) === selected.y;
+      if (matchesPoint(path.from) || matchesPoint(path.to)) return true;
+      return Array.isArray(path.cells) && path.cells.some(matchesPoint);
+    }
+
+    function focusedNetworkKinds() {
+      const focused = new Set();
+      if (ui.networkFocus) focused.add(ui.networkFocus === 'network' ? 'data' : ui.networkFocus);
+      if (!ui.selectedCell) return focused;
+      const selected = selectedContext();
+      for (const [name, network] of Object.entries(snapshot.networks)) {
+        if ((network?.paths || []).some((path) => pathTouchesSelection(path,selected))) focused.add(name);
+      }
+      return focused;
+    }
+
+    function blueprintNetworkFocus(blueprint) {
+      if (!blueprint) return null;
+      if (blueprint.kind === 'power') return 'power';
+      if (blueprint.kind === 'cooling') return 'cooling';
+      if (blueprint.kind === 'network') return 'network';
+      if (blueprint.kind === 'ai') return 'ai';
+      return null;
+    }
+
+    function tileActivity(actor, structures) {
+      const actorState = String(actor?.state || '').toLowerCase();
+      const faults = structures.map((item) => item.aiFault).filter(Boolean);
+      if (actorState === 'repairing' || faults.some((fault) => Number(fault?.repairRemaining) > 0)) return {activity:'repairing',fault:true};
+      if (['blocked','fault'].includes(actorState) || faults.length) return {activity:'broken',fault:true};
+      if (actorState === 'throttled') return {activity:'overloaded',fault:false};
+      const ids = new Set([actor?.id,...structures.map((item) => item.id)].filter(Boolean));
+      const paths = Object.values(snapshot.networks).flatMap((network) => network?.paths || [])
+        .filter((path) => ids.has(path.source) || ids.has(path.target));
+      if (paths.some((path) => ['fault','blocked'].includes(path.status) && ids.has(path.target))) return {activity:'broken',fault:true};
+      if (paths.some((path) => path.status === 'saturated' && Number(path.delivered) > 0)) return {activity:'overloaded',fault:false};
+      const actorBusy = ['moving','working','training','building','charging','booting','loaded'].includes(actorState);
+      const realThroughput = paths.some((path) => path.connected !== false && Number(path.delivered) > 0);
+      return {activity:actorBusy || realThroughput ? 'working' : 'idle',fault:false};
     }
 
     function renderResources() {
@@ -710,8 +822,9 @@
     function renderToolbar() {
       const currentFloor = snapshot.floors.find((floor) => Number(floor.id) === ui.floor) || snapshot.floors[0];
       refs.floorName.textContent = `${currentFloor?.name || `Floor ${ui.floor + 1}`} · Seeded footprint`;
-      refs.floorStatus.textContent = currentFloor?.status === 'online' ? 'owned network online' : currentFloor?.status || 'frontier blueprint';
-      refs.overlayControls.innerHTML = ['power','cooling','network','ai'].map((name) => `<button class="overlay-toggle" type="button" data-overlay="${name}" aria-pressed="${ui.overlays.has(name)}">${name === 'power' ? '↯' : name === 'cooling' ? '❄' : name === 'ai' ? '◉' : '◇'} ${name}</button>`).join('');
+      const focusLabel = ui.networkFocus ? `${ui.networkFocus} edit view` : 'clean operations view';
+      refs.floorStatus.textContent = currentFloor?.status === 'online' ? focusLabel : currentFloor?.status || 'frontier blueprint';
+      refs.overlayControls.innerHTML = ['power','cooling','network','ai'].map((name) => `<button class="overlay-toggle" type="button" data-overlay="${name}" aria-pressed="${ui.networkFocus === name}" data-network-focus="${name}" title="${ui.networkFocus === name ? 'Return to clean view' : `Inspect ${name} capacity and flow`}">${name === 'power' ? '↯' : name === 'cooling' ? '❄' : name === 'ai' ? '◉' : '◇'} ${name}</button>`).join('');
       refs.floorControls.innerHTML = snapshot.floors.map((floor) => `<button class="floor-button" type="button" data-floor="${floor.id}" aria-pressed="${Number(floor.id) === ui.floor}">${Number(floor.id) + 1}F</button>`).join('');
     }
 
@@ -723,6 +836,7 @@
         }).join('');
       }
       const {owned,frontier} = territoryMaps();
+      const focusedKinds = focusedNetworkKinds();
       for (const cell of refs.worldGrid.children) {
         const x = Number(cell.dataset.x), y = Number(cell.dataset.y), key = cellKey(ui.floor,x,y);
         const territory = owned.has(key) ? 'owned' : frontier.has(key) ? 'frontier' : 'locked';
@@ -738,9 +852,13 @@
         const label = actor ? `${actor.label}, ${actor.kind}, ${actor.state}${utilityCopy}` : primary ? `${primary.label}, ${primary.kind}${utilityCopy}` : utilities.length ? `${utilities.join(', ')} utility routes` : territory === 'frontier' ? `Frontier cell ${x+1}, ${y+1}, costs $${frontierCell.cost}` : `${territory} cell ${x+1}, ${y+1}`;
         const selectedBlueprint = BLUEPRINT_BY_ID.get(ui.selectedBlueprint);
         const blueprintUnlocked = snapshot.unlocks.some((item) => item.id === ui.selectedBlueprint);
+        const activity = tileActivity(actor,structures);
         cell.dataset.territory = territory;
         cell.dataset.buildTarget = String(territory === 'owned' && Boolean(selectedBlueprint) && blueprintUnlocked);
         cell.dataset.utilityLayers = utilities.join(' ');
+        cell.dataset.tileActivity = activity.activity;
+        if (activity.fault) cell.dataset.tileFault = 'true';
+        else delete cell.dataset.tileFault;
         cell.dataset.cellKey = key;
         cell.setAttribute('aria-label', label);
         cell.setAttribute('aria-pressed', String(ui.selectedCell === key));
@@ -749,7 +867,10 @@
         cell.dataset.tooltipCopy = actor ? `${actor.kind} · ${actor.state}. Simulation actor ${actor.id}.${utilityCopy}` : primary ? `${primary.kind} infrastructure · ${primary.id}.${utilityCopy}` : utilities.length ? `Slim utility traces: ${utilities.join(', ')}.` : territory === 'frontier' ? `Connected frontier · purchase for $${frontierCell.cost}.` : territory === 'owned' ? 'Owned connected footprint. Select a blueprint to build.' : 'Expand the connected frontier to reveal this cell.';
         const content = cell.querySelector('.cell-content');
         const primaryMarkup = actor ? actorMarkup(actor) : primary ? `<span class="structure structure-${escapeHtml(primary.icon)}" data-primary-layer="${escapeHtml(primary.layer || 'facility')}" data-primary-entity-id="${escapeHtml(primary.id)}" data-primary-blueprint-id="${escapeHtml(primary.blueprintId)}" aria-hidden="true">${icon(primary.icon)}</span>` : territory === 'frontier' ? '<span class="frontier-plus" aria-hidden="true">+</span>' : territory === 'locked' ? `<span class="locked-mark" aria-hidden="true">${icon('lock')}</span>` : '';
-        const utilityMarkup = utilityItems.map(({layer,structure,overlay}) => `<span class="cell-utility utility-${layer}" data-cell-utility="${layer}" data-route-layer="${layer}" data-layer-entity-id="${escapeHtml(structure.id)}" data-layer-blueprint-id="${escapeHtml(structure.blueprintId)}" data-overlay-visible="${ui.overlays.has(overlay)}" aria-hidden="true"></span>`).join('');
+        const utilityMarkup = utilityItems.map(({layer,structure,overlay}) => {
+          const emphasis = focusedKinds.size ? (focusedKinds.has(layer) ? 'active' : 'dim') : 'idle';
+          return `<span class="cell-utility utility-${layer}" data-cell-utility="${layer}" data-route-layer="${layer}" data-layer-entity-id="${escapeHtml(structure.id)}" data-layer-blueprint-id="${escapeHtml(structure.blueprintId)}" data-overlay-visible="${ui.overlays.has(overlay)}" data-resource-emphasis="${emphasis}" aria-hidden="true"></span>`;
+        }).join('');
         content.innerHTML = `${primaryMarkup}${utilityMarkup}`;
         cell.querySelector('.cell-status').textContent = actor?.state || primary?.kind || (utilities.length ? utilities.map((layer) => layer[0].toUpperCase()).join('·') : territory === 'frontier' ? `$${frontierCell.cost}` : '');
       }
@@ -757,6 +878,7 @@
 
     function renderConnections() {
       const chunks = [];
+      const selected = ui.selectedCell ? selectedContext() : null;
       for (const [kind, networkName] of [['power','power'],['cooling','cooling'],['network','data'],['ai','ai']]) {
         if (!ui.overlays.has(kind)) continue;
         for (const path of snapshot.networks[networkName]?.paths || []) {
@@ -766,10 +888,16 @@
           const bend = Math.max(26, Math.abs(x2-x1)*.22);
           const curve = `M ${x1} ${y1} C ${x1+bend} ${y1}, ${x2-bend} ${y2}, ${x2} ${y2}`;
           const status = path.connected === false ? 'blocked' : path.status || 'active';
-          chunks.push(`<path class="connection connection-underlay" d="${curve}"/><path class="connection ${kind}" data-network-path="${kind}" data-path-id="${escapeHtml(path.id)}" ${kind === 'ai' ? `data-ai-path-id="${escapeHtml(path.id)}" data-ai-path-state="${escapeHtml(status)}"` : ''} data-status="${status}" d="${curve}"/><circle class="connection-node ${kind}" cx="${x1}" cy="${y1}" r="8"/><circle class="connection-node ${kind}" cx="${x2}" cy="${y2}" r="8"/>`);
+          const active = ui.networkFocus === kind || pathTouchesSelection(path,selected);
+          const flowing = active && path.connected !== false && Number(path.delivered) > 0
+            && !['blocked','disabled','fault','idle','starved'].includes(status);
+          const telemetry = pathTelemetry(path);
+          const bottleneck = bottleneckText(path.firstBottleneck,path);
+          chunks.push(`<g class="connection-group" data-network-group="${kind}" data-path-id="${escapeHtml(path.id)}" data-disclosure="${active ? 'active' : 'idle'}"><path class="connection connection-underlay" data-path-underlay="${escapeHtml(path.id)}" d="${curve}"/><path class="connection ${kind}" data-network-path="${kind}" data-path-id="${escapeHtml(path.id)}" ${kind === 'ai' ? `data-ai-path-id="${escapeHtml(path.id)}" data-ai-path-state="${escapeHtml(status)}"` : ''} data-status="${escapeHtml(status)}" data-flowing="${flowing}" data-path-capacity="${telemetry.capacity}" data-path-delivered="${telemetry.delivered}" data-path-utilization="${telemetry.utilizationPercent}" data-path-headroom="${telemetry.headroom}" data-path-bottleneck="${escapeHtml(bottleneck)}" d="${curve}"/><circle class="connection-node ${kind}" cx="${x1}" cy="${y1}" r="8"/><circle class="connection-node ${kind}" cx="${x2}" cy="${y2}" r="8"/></g>`);
         }
       }
       refs.connections.innerHTML = chunks.join('');
+      refs.connections.dataset.networkMode = ui.networkFocus || (ui.selectedCell ? 'endpoint' : 'clean');
     }
 
     function selectedContext() {
@@ -800,6 +928,33 @@
       return `<section class="ai-control" data-ai-panel data-ai-control data-ai-state="${globalState}" data-ai-model-id="${escapeHtml(ai.modelId || '')}"><div class="module-head"><span class="module-title">AI Network</span><span class="state-chip ${globalState === 'fault' ? 'bad' : globalState === 'connected' ? 'good' : globalState === 'recovering' ? 'warn' : ''}">${globalState}</span></div><div class="ai-summary"><span><strong>${ai.level === null ? 'Manual' : `Level ${ai.level}`}</strong><small>Training level · ${ai.xp === null ? 'no controller' : `${round(ai.xp,1)} / ${round(ai.nextLevelXp,1)} XP`}</small></span><span><strong>+${percentText(ai.bonusPercent)}%</strong><small>Efficiency bonus</small></span><span><strong>${percentText(ai.mistakeChance,true)}%</strong><small>Mistake chance</small></span></div><p class="ai-guidance">Opt in per structure. Fault monitoring: ${ai.activeFaults} active. Repair appears on faulted targets.</p>${prerequisites ? `<p class="ai-precondition">${escapeHtml(prerequisites)}</p>` : ''}<div class="ai-targets">${rows}</div></section>`;
     }
 
+    function renderNetworkInspector(selected) {
+      const groups = [];
+      for (const [name,meta] of Object.entries(NETWORK_META)) {
+        const network = snapshot.networks[name];
+        const resourceFocused = ui.networkFocus === meta.overlay;
+        const paths = (network?.paths || []).filter((path) => resourceFocused || pathTouchesSelection(path,selected));
+        if (!paths.length) continue;
+        const aggregate = aggregateNetwork(resourceFocused ? network : {paths});
+        const firstBottleneck = bottleneckText(
+          aggregate.firstBottleneck || paths.map((path) => path.firstBottleneck).find(Boolean),
+          paths.find((path) => bottleneckText(path.firstBottleneck,path) !== 'None') || null,
+        );
+        const routeRows = paths.map((path) => {
+          const telemetry = pathTelemetry(path);
+          const bottleneck = bottleneckText(path.firstBottleneck,path);
+          const routeName = `${path.source || 'Unlinked source'} → ${path.target || 'unlinked target'}`;
+          const tone = ['blocked','fault','starved'].includes(path.status) || path.connected === false
+            ? 'bad' : telemetry.utilizationPercent >= 90 ? 'warn' : 'good';
+          return `<div class="network-route-detail" data-route-telemetry data-route-id="${escapeHtml(path.id)}" data-route-resource="${name}" data-route-capacity="${telemetry.capacity}" data-route-delivered="${telemetry.delivered}" data-route-utilization="${telemetry.utilizationPercent}" data-route-headroom="${telemetry.headroom}" data-route-bottleneck="${escapeHtml(bottleneck)}"><div class="network-route-head"><strong>${escapeHtml(routeName)}</strong><span class="state-chip ${tone}">${escapeHtml(path.statusText || path.status || 'active')}</span></div><div class="network-route-metrics"><span><small>Capacity</small><strong>${metricText(telemetry.capacity)} ${meta.unit}</strong></span><span><small>Delivered</small><strong>${metricText(telemetry.delivered)} ${meta.unit}</strong></span><span><small>Utilization</small><strong>${metricText(telemetry.utilizationPercent)}%</strong></span><span><small>Headroom</small><strong>${metricText(telemetry.headroom)} ${meta.unit}</strong></span></div><div class="network-route-meter" style="color:${meta.color}"><span style="--meter:${telemetry.utilizationPercent}%"></span></div><p class="network-bottleneck"><span>First bottleneck</span><strong>${escapeHtml(bottleneck)}</strong></p></div>`;
+        }).join('');
+        groups.push(`<section class="network-resource-detail" data-network-resource="${name}" data-network-capacity="${aggregate.capacity}" data-network-delivered="${aggregate.delivered}" data-network-utilization="${aggregate.utilizationPercent}" data-network-headroom="${aggregate.headroom}" data-network-bottleneck="${escapeHtml(firstBottleneck)}"><div class="network-resource-head"><span class="route-swatch ${meta.overlay}"></span><strong>${meta.label}</strong><span>${paths.length} ${paths.length === 1 ? 'route' : 'routes'}</span></div><div class="network-aggregate"><span><small>Capacity</small><strong>${metricText(aggregate.capacity)} ${meta.unit}</strong></span><span><small>Delivered</small><strong>${metricText(aggregate.delivered)} ${meta.unit}</strong></span><span><small>Utilization</small><strong>${metricText(aggregate.utilizationPercent)}%</strong></span><span><small>Headroom</small><strong>${metricText(aggregate.headroom)} ${meta.unit}</strong></span></div><p class="network-first-bottleneck"><span>First bottleneck</span><strong>${escapeHtml(firstBottleneck)}</strong></p><div class="network-route-list">${routeRows}</div></section>`);
+      }
+      if (!groups.length) return '';
+      const mode = ui.networkFocus ? `${ui.networkFocus} edit` : 'selected endpoint';
+      return `<section class="network-inspector" data-network-inspector data-network-mode="${escapeHtml(mode)}"><div class="module-head"><span class="module-title">Connection telemetry</span><span class="state-chip good">${escapeHtml(mode)}</span></div><p class="network-inspector-help">Flow is shown only for this focus. Exact route capacity, delivered load, utilization, headroom, and the first bottleneck are below.</p>${groups.join('')}</section>`;
+    }
+
     function renderInspector() {
       const selected = selectedContext();
       refs.inspectorCoord.textContent = `F${ui.floor+1} · ${selected.x+1},${selected.y+1}`;
@@ -807,12 +962,29 @@
       const title = actor?.label || structure?.label || `${selected.territory} cell`;
       const description = actor ? `${actor.kind} actor is ${actor.state}. Its visible pose and status are driven by the committed simulation snapshot.` : structure ? `${structure.kind} infrastructure endpoint. Select its overlay to trace actual delivery.` : selected.territory === 'frontier' ? 'Connected frontier. Purchasing this cell grows the legal footprint and recomputes its edge.' : selected.territory === 'owned' ? 'Connected owned ground. Click this tile with a blueprint selected to build immediately, or use the action below.' : 'Locked territory. Expand from an adjacent frontier cell.';
       const selectedBlueprint = BLUEPRINT_BY_ID.get(ui.selectedBlueprint);
+      let placementPreview = null;
+      if (selected.territory === 'owned' && selectedBlueprint
+          && typeof game.actions?.previewPlacement === 'function') {
+        placementPreview = game.actions.previewPlacement(
+          selectedBlueprint.id, selected.x, selected.y,
+        );
+      }
+      const previewDeltas = placementPreview?.ok
+        ? Object.entries(placementPreview.networkDeltas || {})
+          .filter(([,delta]) => Math.abs(Number(delta.capacityDelta) || 0) > .000001
+            || Math.abs(Number(delta.maintenanceDelta) || 0) > .000001
+            || (delta.affectedEndpoints || []).length)
+          .map(([name,delta]) => `<span data-preview-resource="${escapeHtml(name)}"><strong>${escapeHtml(NETWORK_META[name]?.label || name)}</strong> ${Number(delta.capacityDelta) >= 0 ? '+' : ''}${metricText(delta.capacityDelta)} capacity · ${Number(delta.maintenanceDelta) >= 0 ? '+' : ''}${metricText(delta.maintenanceDelta)} FLOPS/tick · ${(delta.affectedEndpoints || []).length} endpoints changed</span>`)
+          .join('') : '';
+      const preview = placementPreview?.ok
+        ? `<section class="placement-preview" data-placement-preview data-preview-blueprint="${escapeHtml(selectedBlueprint.id)}" data-preview-role="${escapeHtml(placementPreview.networkRole || 'facility')}" data-preview-maintenance="${Number(placementPreview.recurringBurdenFlops) || 0}"><div class="module-head"><span class="module-title">Before you build</span><span class="state-chip warn">$${placementPreview.cost}</span></div><p>${escapeHtml(placementPreview.networkRole || 'facility')} role · ${metricText(placementPreview.recurringBurdenFlops)} recurring FLOPS/tick</p><div class="placement-preview-deltas">${previewDeltas || '<span>No route capacity changes until this tile is connected.</span>'}</div></section>`
+        : '';
       const action = selected.territory === 'frontier'
         ? `<button class="blueprint inspector-action" type="button" data-purchase-frontier="${escapeHtml(selected.frontier.commandKey)}"><span class="blueprint-icon">${icon('floor')}</span><span><span class="blueprint-name">Purchase frontier</span><span class="blueprint-detail">Grow connected footprint</span></span><span class="state-chip warn">$${selected.frontier.cost}</span></button>`
         : selected.territory === 'owned' && selectedBlueprint
           ? `<button class="blueprint inspector-action" type="button" data-place-selected="${escapeHtml(selectedBlueprint.id)}" data-place-x="${selected.x}" data-place-y="${selected.y}"><span class="blueprint-icon">${icon(selectedBlueprint.icon)}</span><span><span class="blueprint-name">Place ${escapeHtml(selectedBlueprint.name)}</span><span class="blueprint-detail">Build at ${selected.x + 1},${selected.y + 1}</span></span><span class="state-chip good">$${selectedBlueprint.cost}</span></button>`
           : '';
-      refs.inspector.innerHTML = `<div class="module-head"><span class="module-title">Selection</span><span class="state-chip ${selected.territory === 'owned' ? 'good' : selected.territory === 'frontier' ? 'warn' : ''}">${selected.territory}</span></div><h3 class="inspector-name">${escapeHtml(title)}</h3><p class="inspector-copy">${escapeHtml(description)}</p><div class="data-grid"><div class="datum"><span>Blueprint</span><strong>${escapeHtml(ui.selectedBlueprint)}</strong></div><div class="datum"><span>Actor state</span><strong>${escapeHtml(actor?.state || '—')}</strong></div><div class="datum"><span>Floor</span><strong>${ui.floor + 1}</strong></div><div class="datum"><span>Cell key</span><strong>${escapeHtml(selected.key)}</strong></div></div>${action}<div class="command-feedback" data-tone="${escapeHtml(ui.feedback.tone)}">${escapeHtml(ui.feedback.message)}</div>${renderAiInspector(selected)}`;
+      refs.inspector.innerHTML = `<div class="module-head"><span class="module-title">Selection</span><span class="state-chip ${selected.territory === 'owned' ? 'good' : selected.territory === 'frontier' ? 'warn' : ''}">${selected.territory}</span></div><h3 class="inspector-name">${escapeHtml(title)}</h3><p class="inspector-copy">${escapeHtml(description)}</p><div class="data-grid"><div class="datum"><span>Blueprint</span><strong>${escapeHtml(ui.selectedBlueprint)}</strong></div><div class="datum"><span>Actor state</span><strong>${escapeHtml(actor?.state || '—')}</strong></div><div class="datum"><span>Floor</span><strong>${ui.floor + 1}</strong></div><div class="datum"><span>Cell key</span><strong>${escapeHtml(selected.key)}</strong></div></div>${renderNetworkInspector(selected)}${preview}${action}<div class="command-feedback" data-tone="${escapeHtml(ui.feedback.tone)}">${escapeHtml(ui.feedback.message)}</div>${renderAiInspector(selected)}`;
     }
 
     function revealInspectorAction() {
@@ -840,12 +1012,13 @@
     }
 
     function renderRouter() {
-      const names = [['power','Power'],['cooling','Cooling'],['data','Data']];
+      const names = Object.entries(NETWORK_META);
       const activePreset = ROUTE_PRESETS.find((preset) => Object.entries(preset.routes).every(([key,value]) => Math.abs((Number(snapshot.routes[key]) || 0) - value) < .000001));
-      refs.router.innerHTML = `<div class="module-head"><span class="module-title">Resource router</span><span class="state-chip ${snapshot.sell.blocked ? 'warn':'good'}">${snapshot.sell.blocked ? 'sell blocked':activePreset?.label || 'custom'}</span></div><div class="route-list">${names.map(([name,label]) => {
+      refs.router.innerHTML = `<div class="module-head"><span class="module-title">Resource router</span><span class="state-chip ${snapshot.sell.blocked ? 'warn':'good'}">${snapshot.sell.blocked ? 'sell blocked':activePreset?.label || 'custom'}</span></div><p class="router-guidance">Choose a resource to reveal live flow and exact route limits. Choose it again for the clean floor.</p><div class="route-list">${names.map(([name,meta]) => {
         const aggregate = aggregateNetwork(snapshot.networks[name]);
-        const percent = aggregate.capacity ? clamp(aggregate.delivered/aggregate.capacity*100,0,100) : 0;
-        return `<div class="route-row"><span class="route-swatch ${name === 'data' ? 'network' : name}"></span><span class="row-copy"><strong>${label}</strong><span>${round(aggregate.delivered,1)} / ${round(aggregate.capacity,1)} delivered${aggregate.blocked ? ` · ${aggregate.blocked} blocked` : ''}</span><span class="meter" style="color:${name === 'power'?'var(--yellow)':name === 'cooling'?'var(--cyan)':'var(--violet)'}"><span style="--meter:${percent}%"></span></span></span><span class="state-chip ${aggregate.blocked?'warn':'good'}">${aggregate.blocked?'check':'live'}</span></div>`;
+        const focused = ui.networkFocus === meta.overlay;
+        const bottleneck = bottleneckText(aggregate.firstBottleneck);
+        return `<button type="button" class="route-row route-focus" data-focus-network="${meta.overlay}" data-network-summary="${name}" data-network-capacity="${aggregate.capacity}" data-network-delivered="${aggregate.delivered}" data-network-utilization="${aggregate.utilizationPercent}" data-network-headroom="${aggregate.headroom}" data-network-bottleneck="${escapeHtml(bottleneck)}" aria-pressed="${focused}"><span class="route-swatch ${meta.overlay}"></span><span class="row-copy network-summary-copy"><strong>${meta.label}</strong><span>${metricText(aggregate.delivered)} / ${metricText(aggregate.capacity)} ${meta.unit} · ${metricText(aggregate.utilizationPercent)}% used · ${metricText(aggregate.headroom)} headroom${aggregate.blocked ? ` · ${aggregate.blocked} blocked` : ''}</span><span class="meter" style="color:${meta.color}"><span style="--meter:${aggregate.utilizationPercent}%"></span></span></span><span class="state-chip ${aggregate.blocked?'warn':'good'}">${focused ? 'focus' : aggregate.blocked?'check':'live'}</span></button>`;
       }).join('')}</div><div class="data-grid router-ledger"><div class="datum"><span>Sell routed</span><strong>${round(snapshot.sell.routedFlops,1)} FLOPS</strong></div><div class="datum"><span>Conservation</span><strong>${round(['sell','training','jobs','reserved','idle','loss'].reduce((sum,key)=>sum+(Number(snapshot.flops[key])||0),0),1)} / ${round(snapshot.flops.raw,1)}</strong></div></div><div class="route-preset-label">FLOPS destination preset</div><div class="route-presets" aria-label="FLOPS destination presets">${ROUTE_PRESETS.map((preset) => `<button class="route-preset" type="button" data-route-preset="${preset.id}" aria-pressed="${activePreset?.id === preset.id}"><strong>${escapeHtml(preset.label)}</strong><span>${escapeHtml(preset.detail)}</span></button>`).join('')}</div>${snapshot.sell.blocked ? `<p class="inspector-copy route-warning">Connect Fiber on Floor 1 · ${escapeHtml(snapshot.sell.reason || 'route blocked')}</p>` : ''}`;
     }
 
@@ -935,14 +1108,24 @@
       if (target.dataset.blueprint) {
         if (target.getAttribute('aria-disabled') === 'true') { setFeedback(`${target.querySelector('.blueprint-name')?.textContent || 'Blueprint'} is locked.`, 'warn', true); return; }
         ui.selectedBlueprint = target.dataset.blueprint;
+        ui.networkFocus = blueprintNetworkFocus(BLUEPRINT_BY_ID.get(ui.selectedBlueprint));
         ui.feedback = {message:`${target.querySelector('.blueprint-name')?.textContent || 'Blueprint'} selected — click an owned tile to place it.`,tone:'ready'};
         paletteSignature = '';
         renderPalette();
+        renderToolbar();
         renderGrid();
+        renderConnections();
         renderInspector();
+        renderRouter();
         return;
       }
-      if (target.dataset.overlay) { ui.overlays.has(target.dataset.overlay) ? ui.overlays.delete(target.dataset.overlay) : ui.overlays.add(target.dataset.overlay); renderToolbar(); renderGrid(); renderConnections(); return; }
+      const requestedNetworkFocus = target.dataset.networkFocus || target.dataset.focusNetwork;
+      if (requestedNetworkFocus) {
+        ui.networkFocus = ui.networkFocus === requestedNetworkFocus ? null : requestedNetworkFocus;
+        refs.liveStatus.textContent = ui.networkFocus ? `${ui.networkFocus} edit view. Live paths and capacity telemetry revealed.` : 'Clean operations view. Full routes hidden; thin tile traces remain.';
+        renderToolbar(); renderGrid(); renderConnections(); renderInspector(); renderRouter();
+        return;
+      }
       if (target.dataset.floor != null) { ui.floor = Number(target.dataset.floor); ui.selectedCell = null; render(); return; }
       if (target.dataset.placeSelected) {
         const blueprint = BLUEPRINT_BY_ID.get(target.dataset.placeSelected);
@@ -1013,7 +1196,8 @@
       if (!event.ctrlKey && !event.metaKey && !event.altKey) {
         const key = event.key.toLowerCase();
         const overlay = {p:'power',c:'cooling',n:'network',a:'ai'}[key];
-        if (overlay) { event.preventDefault(); ui.overlays.has(overlay) ? ui.overlays.delete(overlay) : ui.overlays.add(overlay); renderToolbar(); renderGrid(); renderConnections(); }
+        if (overlay) { event.preventDefault(); ui.networkFocus = ui.networkFocus === overlay ? null : overlay; renderToolbar(); renderGrid(); renderConnections(); renderInspector(); renderRouter(); }
+        if (event.key === 'Escape') { event.preventDefault(); ui.networkFocus=null; ui.selectedCell=null; render(); }
         if (/^[1-9]$/.test(key)) {
           const floor = Number(key)-1;
           if (snapshot.floors.some((item) => Number(item.id) === floor)) { event.preventDefault(); ui.floor=floor; ui.selectedCell=null; render(); }
@@ -1033,7 +1217,9 @@
     root.addEventListener('focusin', onFocusIn);
     root.addEventListener('focusout', onFocusOut);
 
-    if (typeof game.subscribe === 'function') unsubscribe = game.subscribe(() => render());
+    if (options.subscribe !== false && typeof game.subscribe === 'function') {
+      unsubscribe = game.subscribe(() => render());
+    }
     render(snapshot);
     return {
       render,

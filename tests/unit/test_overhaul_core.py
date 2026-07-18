@@ -300,13 +300,9 @@ def test_burst_computer_thermal_states_are_real_deterministic_transitions():
         if (!game) throw new Error("no burst seed found");
         const events = [];
         game.subscribe((event) => events.push(event));
-        game.runScenario("computer-path-connected");
-        game.actions.setRoutes({sell: 0, research: 0, train: 0, inference: 1});
-        const states = [];
-        for (let index = 0; index < 100; index++) {
-          game.tick();
-          states.push(game.snapshot().computers[0].state);
-        }
+        const scenario = game.runScenario("computer-overload");
+        const states = scenario.snapshots.flatMap((snapshot) =>
+          snapshot.computers.map((computer) => computer.state));
         console.log(JSON.stringify({states, events, final: game.snapshot()}));
         """
     )
@@ -549,3 +545,153 @@ def test_ai_fault_snapshot_roundtrip_and_continuation_are_deterministic():
         "hadFault": True,
         "repaired": True,
     }
+
+
+def test_network_telemetry_is_authoritative_shared_and_numerically_consistent():
+    result = _run_core(
+        """
+        const game = createOverhaulGame({seed: "network-telemetry"});
+        game.runScenario("sell-with-f1-fiber");
+        const final = game.snapshot();
+        const summaries = Object.fromEntries(Object.entries(final.networks).map(([layer, network]) => {
+          const paths = network.paths;
+          const telemetry = network.telemetry;
+          const directionalDelivered = layer === "data"
+            ? Math.max(...["internal", "external"].map((purpose) => paths
+              .filter((path) => path.purpose === purpose)
+              .reduce((sum, path) => sum + path.delivered, 0)))
+            : paths.reduce((sum, path) => sum + path.delivered, 0);
+          return [layer, {
+            telemetry,
+            directionalDelivered,
+            ratedPathCapacity: paths.reduce((sum, path) => sum + path.capacity, 0),
+            paths,
+          }];
+        }));
+        console.log(JSON.stringify({summaries, utilities: final.utilities}));
+        """
+    )
+
+    for layer, summary in result["summaries"].items():
+        telemetry = summary["telemetry"]
+        assert telemetry["capacity"] >= telemetry["delivered"] >= 0
+        assert telemetry["headroom"] == telemetry["capacity"] - telemetry["delivered"]
+        expected = telemetry["delivered"] / telemetry["capacity"] if telemetry["capacity"] else 0
+        assert abs(telemetry["utilization"] - expected) < 1e-9
+        assert telemetry["utilizationPercent"] == telemetry["utilization"] * 100
+        assert telemetry["statusText"]
+        assert telemetry["segments"] == result["utilities"]["byLayer"][layer]["segments"]
+        assert telemetry["maintenancePerTick"] == result["utilities"]["byLayer"][layer][
+            "maintenanceFlopsPerTick"
+        ]
+        for path in summary["paths"]:
+            assert path["headroom"] >= 0
+            assert 0 <= path["utilization"] <= 1
+            assert path["utilizationPercent"] == path["utilization"] * 100
+            assert path["statusText"]
+            assert path["firstBottleneck"]["reason"]
+            assert isinstance(path["cells"], list)
+            assert path["redundancy"]["alternatePathCount"] >= 0
+    assert result["summaries"]["power"]["ratedPathCapacity"] > result["summaries"]["power"][
+        "telemetry"
+    ]["capacity"]
+    assert result["summaries"]["power"]["telemetry"]["delivered"] == result["summaries"][
+        "power"
+    ]["directionalDelivered"]
+    assert result["summaries"]["data"]["telemetry"]["delivered"] == result["summaries"][
+        "data"
+    ]["directionalDelivered"]
+
+
+def test_placement_preview_is_pure_and_topology_recomputes_without_waiting_for_a_tick():
+    result = _run_core(
+        """
+        const game = createOverhaulGame({seed: "placement-preview"});
+        game.actions.place("generator", 3, 4);
+        const before = game.snapshot();
+        const preview = game.actions.previewPlacement("power_line", 3, 4);
+        const afterPreview = game.snapshot();
+        const placed = game.actions.place("power_line", 3, 4);
+        const afterPlace = game.snapshot();
+        const removed = game.actions.remove(3, 4, "power");
+        const afterRemove = game.snapshot();
+        console.log(JSON.stringify({
+          pure: JSON.stringify(before) === JSON.stringify(afterPreview),
+          preview,
+          placed,
+          removed,
+          capacityAfterPlace: afterPlace.networks.power.telemetry.capacity,
+          capacityAfterRemove: afterRemove.networks.power.telemetry.capacity,
+          burdenAfterPlace: afterPlace.utilities.requiredFlopsPerTick,
+          burdenAfterRemove: afterRemove.utilities.requiredFlopsPerTick,
+        }));
+        """
+    )
+
+    assert result["pure"] is True
+    assert result["preview"]["ok"] is True
+    assert result["preview"]["preview"] is True
+    assert result["preview"]["networkRole"] == "branch"
+    assert result["preview"]["recurringBurdenFlops"] > 0
+    power_delta = result["preview"]["networkDeltas"]["power"]
+    assert power_delta["capacityDelta"] == 16
+    assert power_delta["maintenanceDelta"] == result["preview"]["recurringBurdenFlops"]
+    assert result["placed"]["ok"] is result["removed"]["ok"] is True
+    assert result["capacityAfterPlace"] == power_delta["after"]["capacity"] == 16
+    assert result["capacityAfterRemove"] == power_delta["before"]["capacity"] == 0
+    assert result["burdenAfterPlace"] > result["burdenAfterRemove"]
+
+
+def test_sparse_loop_and_carpet_shapes_have_visible_cost_and_real_redundancy_tradeoffs():
+    result = _run_core(
+        """
+        const sparse = createOverhaulGame({seed: "network-shapes"});
+        sparse.runScenario("computer-path-connected");
+        sparse.tick();
+        const sparseSnapshot = sparse.snapshot();
+
+        const carpet = createOverhaulGame({seed: "network-shapes"});
+        carpet.runScenario("computer-path-connected");
+        const occupied = new Set(carpet.snapshot().structures
+          .filter((item) => item.layer === "power").map((item) => `${item.x},${item.y}`));
+        for (const cell of carpet.snapshot().footprint.owned) {
+          if (!occupied.has(`${cell.x},${cell.y}`)) carpet.actions.place("power_line", cell.x, cell.y);
+        }
+        carpet.tick();
+        const carpetSnapshot = carpet.snapshot();
+
+        const loop = createOverhaulGame({seed: "network-shapes"});
+        loop.runScenario("computer-path-connected");
+        const beforeLoop = loop.snapshot();
+        for (const [x, y] of [[5, 6], [5, 5], [6, 5], [7, 5]]) {
+          loop.actions.place("data_cable", x, y);
+        }
+        const withLoop = loop.snapshot();
+        loop.actions.remove(4, 5, "data");
+        const afterSingleLinkLoss = loop.snapshot();
+        const internal = (snapshot) => snapshot.networks.data.paths
+          .find((path) => path.purpose === "internal");
+        console.log(JSON.stringify({
+          sparse: sparseSnapshot.utilities,
+          sparseLoss: sparseSnapshot.flops.loss,
+          carpet: carpetSnapshot.utilities,
+          carpetLoss: carpetSnapshot.flops.loss,
+          beforeLoop: internal(beforeLoop),
+          withLoop: internal(withLoop),
+          afterSingleLinkLoss: internal(afterSingleLinkLoss),
+          beforeLoopBurden: beforeLoop.utilities.requiredFlopsPerTick,
+          loopBurden: withLoop.utilities.requiredFlopsPerTick,
+        }));
+        """
+    )
+
+    assert result["carpet"]["segments"] > result["sparse"]["segments"]
+    assert result["carpet"]["requiredFlopsPerTick"] > result["sparse"]["requiredFlopsPerTick"]
+    assert result["carpetLoss"] > result["sparseLoss"]
+    assert result["beforeLoop"]["redundancy"]["singleLinkFaultTolerant"] is False
+    assert result["withLoop"]["redundancy"]["singleLinkFaultTolerant"] is True
+    assert result["withLoop"]["redundancy"]["reliabilityPercent"] > result["beforeLoop"][
+        "redundancy"
+    ]["reliabilityPercent"]
+    assert result["loopBurden"] > result["beforeLoopBurden"]
+    assert result["afterSingleLinkLoss"]["connected"] is True

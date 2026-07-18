@@ -950,6 +950,22 @@ def test_reduced_motion_preserves_actor_semantics_without_animation(overhaul):
         assert actor["animationMs"] <= 0.01, f"reduced motion retained animation: {actor!r}"
         assert actor["transitionMs"] <= 0.01, f"reduced motion retained transition: {actor!r}"
 
+    overhaul.locator('[data-network-focus="power"]').click()
+    motion = overhaul.locator(
+        '[data-network-path="power"][data-flowing="true"], '
+        '[data-cell-utility="power"][data-resource-emphasis="active"]'
+    ).evaluate_all(
+        """nodes => nodes.map(node => ({
+          animation:getComputedStyle(node).animationName,
+          duration:getComputedStyle(node).animationDuration,
+          transition:getComputedStyle(node).transitionDuration,
+        }))"""
+    )
+    assert motion, "reduced-motion audit found no focused utility semantics"
+    assert all(item["animation"] == "none" for item in motion), motion
+    assert all(item["duration"] in ("0s", "0ms") for item in motion), motion
+    assert all(item["transition"] in ("0s", "0ms") for item in motion), motion
+
 
 def test_overhaul_boot_and_committed_ticks_emit_no_browser_errors(overhaul, errors):
     overhaul.wait_for_timeout(1_200)
@@ -1168,11 +1184,238 @@ def test_ai_snapshot_roundtrip_and_continuation_are_deterministic(overhaul):
     _assert_flops_conserved(roundtrip["nextFirst"])
 
 
+def test_network_paths_use_clean_default_and_contextual_flow(overhaul, errors):
+    _scenario(overhaul, "computer-path-connected")
+    connected_snapshot = _snapshot(overhaul)
+
+    groups = overhaul.locator("[data-network-group]")
+    assert groups.count() >= 3, "connected scenario did not expose semantic route groups"
+    assert overhaul.locator('[data-connections][data-network-mode="clean"]').count() == 1
+    for index in range(groups.count()):
+        group = groups.nth(index)
+        assert group.get_attribute("data-disclosure") == "idle"
+        style = group.evaluate(
+            "node => ({opacity:+getComputedStyle(node).opacity, visibility:getComputedStyle(node).visibility})"
+        )
+        assert style == {"opacity": 0, "visibility": "hidden"}, (
+            f"clean floor leaked a full connection path: {style!r}"
+        )
+
+    traces = overhaul.locator("[data-cell-utility]")
+    assert traces.count() >= 3
+    for index in range(traces.count()):
+        trace = traces.nth(index)
+        assert trace.is_visible(), "clean floor removed its thin utility trace"
+        assert trace.get_attribute("data-resource-emphasis") == "idle"
+        opacity = trace.evaluate("node => +getComputedStyle(node).opacity")
+        assert 0 < opacity < 0.6, f"idle utility trace is not subtle: {opacity}"
+
+    power_focus = overhaul.locator('[data-network-focus="power"]')
+    power_focus.click()
+    assert power_focus.get_attribute("aria-pressed") == "true"
+    assert overhaul.locator('[data-connections][data-network-mode="power"]').count() == 1
+    active = overhaul.locator('[data-network-group="power"][data-disclosure="active"]')
+    assert active.count() >= 1
+    assert active.first.is_visible()
+    assert overhaul.locator(
+        '[data-network-group]:not([data-network-group="power"])[data-disclosure="active"]'
+    ).count() == 0
+    assert overhaul.locator(
+        '[data-cell-utility="power"][data-resource-emphasis="active"]'
+    ).count() >= 1
+    assert overhaul.locator(
+        '[data-cell-utility]:not([data-cell-utility="power"])[data-resource-emphasis="dim"]'
+    ).count() >= 1
+
+    flowing = overhaul.locator('[data-network-path="power"][data-flowing="true"]')
+    assert flowing.count() >= 1, "delivering focused power route is not marked as flowing"
+    assert flowing.first.evaluate("node => getComputedStyle(node).animationName") != "none"
+
+    power_focus.click()
+    assert power_focus.get_attribute("aria-pressed") == "false"
+    assert overhaul.locator('[data-connections][data-network-mode="clean"]').count() == 1
+    assert overhaul.locator('[data-network-group][data-disclosure="active"]').count() == 0
+
+    actor_ids = {actor["id"] for actor in connected_snapshot["actors"]}
+    endpoint_id = next(
+        path["target"]
+        for network in connected_snapshot["networks"].values()
+        for path in network["paths"]
+        if path.get("connected") and path.get("target") in actor_ids
+    )
+    endpoint = overhaul.locator(f'[data-focus-actor="{endpoint_id}"]')
+    endpoint.scroll_into_view_if_needed()
+    endpoint.click()
+    assert overhaul.locator('[data-connections][data-network-mode="endpoint"]').count() == 1
+    endpoint_paths = overhaul.locator(
+        f'[data-network-group][data-path-id*="{endpoint_id}"][data-disclosure="active"]'
+    )
+    assert endpoint_paths.count() >= 3, "selected compute endpoint did not reveal its utility paths"
+    assert overhaul.locator('[data-network-inspector][data-network-mode="selected endpoint"]').count() == 1
+    assert not errors, f"progressive network disclosure emitted browser errors: {errors[-5:]!r}"
+
+
+def test_network_inspector_reports_exact_capacity_headroom_and_bottleneck(overhaul, errors):
+    overhaul.set_viewport_size({"width": 1100, "height": 700})
+    _scenario(overhaul, "computer-path-connected")
+    snapshot = _snapshot(overhaul)
+    overhaul.locator('[data-network-focus="power"]').click()
+
+    inspector = overhaul.locator('[data-network-inspector][data-network-mode="power edit"]')
+    inspector.scroll_into_view_if_needed()
+    assert inspector.is_visible(), "power edit telemetry is not visible at 1100x700"
+    panel_text = " ".join(inspector.inner_text().split()).lower()
+    for phrase in ("capacity", "delivered", "utilization", "headroom", "first bottleneck"):
+        assert phrase in panel_text, f"connection inspector omits {phrase!r}: {panel_text!r}"
+
+    expected_paths = {path["id"]: path for path in snapshot["networks"]["power"]["paths"]}
+    rows = inspector.locator('[data-route-telemetry][data-route-resource="power"]')
+    assert rows.count() == len(expected_paths) and rows.count() > 0
+    for index in range(rows.count()):
+        row = rows.nth(index)
+        path = expected_paths[row.get_attribute("data-route-id")]
+        capacity = float(path.get("capacity", 0))
+        delivered = float(path.get("delivered", 0))
+        expected_headroom = float(path.get("headroom", max(0, capacity - delivered)))
+        expected_utilization = float(
+            path.get(
+                "utilizationPercent",
+                float(path.get("utilization", delivered / capacity if capacity else 0)) * 100,
+            )
+        )
+        for attribute, expected in (
+            ("data-route-capacity", capacity),
+            ("data-route-delivered", delivered),
+            ("data-route-utilization", expected_utilization),
+            ("data-route-headroom", expected_headroom),
+        ):
+            assert math.isclose(float(row.get_attribute(attribute)), expected, abs_tol=1e-6), (
+                f"{path['id']} rendered stale {attribute}"
+            )
+        assert row.get_attribute("data-route-bottleneck"), (
+            f"{path['id']} has no readable first-bottleneck result"
+        )
+
+    clipping = inspector.evaluate(
+        """root => [...root.querySelectorAll('*')].filter(node => {
+          if (node.children.length || !node.textContent?.trim()) return false;
+          node.scrollIntoView({block:'nearest',inline:'nearest'});
+          const rect=node.getBoundingClientRect(), style=getComputedStyle(node);
+          return rect.left < 0 || rect.right > innerWidth
+            || (node.scrollWidth > node.clientWidth + 1 && style.overflowX !== 'visible')
+            || (node.scrollHeight > node.clientHeight + 1 && style.overflowY !== 'visible');
+        }).map(node => node.textContent.trim())"""
+    )
+    assert not clipping, f"connection telemetry text is clipped at 1100x700: {clipping!r}"
+
+    before = _atomic_commit_sample(overhaul)
+    overhaul.wait_for_function(
+        """tick => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          return snapshot.ticks.completed > tick
+            && snapshot.ticks.raw === snapshot.ticks.completed
+            && Number(document.documentElement.dataset.uiTick) === snapshot.ticks.completed
+            && document.querySelector('[data-network-inspector][data-network-mode="power edit"]');
+        }""",
+        arg=before["snapshot"]["ticks"]["completed"],
+    )
+    assert not errors, f"network telemetry/liveness emitted browser errors: {errors[-5:]!r}"
+
+
+def test_utility_placement_preview_is_visible_truthful_and_pure(overhaul, errors):
+    _reset(overhaul, "utility-preview-browser-contract")
+    before = _snapshot(overhaul)
+
+    power_line = overhaul.locator('[data-blueprint="power_line"]')
+    power_line.click()
+    preview = overhaul.locator(
+        '[data-placement-preview][data-preview-blueprint="power_line"]'
+    )
+    assert preview.count() == 1 and preview.is_visible()
+    assert preview.get_attribute("data-preview-role") == "branch"
+    assert math.isclose(
+        float(preview.get_attribute("data-preview-maintenance")), 0.025, abs_tol=1e-9
+    )
+    copy = " ".join(preview.inner_text().split()).lower()
+    for phrase in ("before you build", "branch role", "recurring flops/tick"):
+        assert phrase in copy, f"placement preview omits {phrase!r}: {copy!r}"
+    delta = preview.locator('[data-preview-resource="power"]')
+    assert delta.count() == 1
+    delta_copy = " ".join(delta.inner_text().split()).lower()
+    assert "capacity" in delta_copy and "flops/tick" in delta_copy
+
+    after = _snapshot(overhaul)
+    assert after["economy"]["cash"] == before["economy"]["cash"]
+    assert after["structures"] == before["structures"]
+    assert after["utilities"]["requiredFlopsPerTick"] == before["utilities"]["requiredFlopsPerTick"]
+    assert not errors, f"pure placement preview emitted browser errors: {errors[-5:]!r}"
+
+
+def test_real_overload_fault_and_repair_snapshots_drive_local_tile_vfx(overhaul, errors):
+    _reset(overhaul, "thermal-0")
+    overload_history = _scenario(overhaul, "computer-overload")["snapshots"]
+    throttled = next(
+        snapshot for snapshot in overload_history
+        if any(computer["state"] == "throttled" for computer in snapshot["computers"])
+    )
+    shutdown = next(
+        snapshot for snapshot in overload_history
+        if any(computer.get("fault") == "thermal-shutdown" for computer in snapshot["computers"])
+    )
+
+    _reset(overhaul, "ai-seeded-fault-contract")
+    ai_history = _ai_history(_scenario(overhaul, "ai-risk-reward"), "ai-risk-reward")
+    repairing = next(
+        snapshot for snapshot in ai_history
+        if any(actor["kind"] == "robot" and actor["state"] == "repairing"
+               for actor in snapshot["actors"])
+    )
+
+    visual = overhaul.evaluate(
+        """([throttled, shutdown, repairing]) => {
+          const view=window.__overhaulView;
+          const inspect = (snapshot, activity) => {
+            view.render(snapshot);
+            const cell=document.querySelector(`[data-tile-activity="${activity}"]`);
+            if (!cell) return null;
+            const content=cell.querySelector('.cell-content');
+            return {
+              activity:cell.dataset.tileActivity,
+              fault:cell.dataset.tileFault || null,
+              before:getComputedStyle(content,'::before').animationName,
+              after:getComputedStyle(content,'::after').animationName,
+            };
+          };
+          const result={
+            overload:inspect(throttled,'overloaded'),
+            broken:inspect(shutdown,'broken'),
+            repair:inspect(repairing,'repairing'),
+          };
+          view.render(window.__overhaulGame.snapshot());
+          return result;
+        }""",
+        [throttled, shutdown, repairing],
+    )
+    assert visual["overload"] and visual["overload"]["before"] == "tile-heat-stress"
+    assert visual["broken"] and visual["broken"]["fault"] == "true"
+    assert visual["broken"]["before"] == "tile-smoke-rise"
+    assert visual["broken"]["after"] == "tile-fault-sparks"
+    assert visual["repair"] and visual["repair"]["after"] == "tile-repair-sparks"
+    assert not errors, f"state-driven tile VFX emitted browser errors: {errors[-5:]!r}"
+
+
 def test_ai_semantic_path_left_trace_text_liveness_and_errors(overhaul, errors):
     overhaul.set_viewport_size({"width": 1100, "height": 700})
     _reset(overhaul, "ai-browser-contract")
     snapshots = _ai_history(_scenario(overhaul, "ai-risk-reward"), "ai-risk-reward")
     final = snapshots[-1]
+
+    # Full animated paths use progressive disclosure: the clean floor keeps
+    # only its thin tile traces until the player focuses a resource.
+    ai_focus = overhaul.locator('[data-network-focus="ai"]')
+    ai_focus.click()
+    assert ai_focus.get_attribute("aria-pressed") == "true"
+    final = _snapshot(overhaul)
 
     for blueprint_id in ("ai_controller", "ai_bus"):
         blueprint = overhaul.locator(f'[data-blueprint="{blueprint_id}"]')
@@ -1202,21 +1445,36 @@ def test_ai_semantic_path_left_trace_text_liveness_and_errors(overhaul, errors):
 
     traces = overhaul.locator('[data-cell-utility="ai"]')
     assert traces.count() >= 1
-    for index in range(traces.count()):
-        trace = traces.nth(index)
-        assert trace.is_visible()
-        assert trace.get_attribute("data-route-layer") == "ai"
-        cell = trace.locator("xpath=ancestor::*[@role='gridcell'][1]")
-        trace_box, cell_box = trace.bounding_box(), cell.bounding_box()
-        assert trace_box and cell_box
+    trace_geometry = traces.evaluate_all(
+        """nodes => nodes.map(node => {
+          const cell=node.closest('[role="gridcell"]');
+          const style=getComputedStyle(node), trace=node.getBoundingClientRect();
+          const tile=cell?.getBoundingClientRect();
+          return {
+            layer:node.dataset.routeLayer,
+            visible:style.visibility === 'visible' && +style.opacity > 0,
+            trace:{x:trace.x,y:trace.y,width:trace.width,height:trace.height},
+            cell:tile ? {x:tile.x,y:tile.y,width:tile.width,height:tile.height} : null,
+          };
+        })"""
+    )
+    for item in trace_geometry:
+        assert item["visible"] and item["layer"] == "ai" and item["cell"]
+        trace_box, cell_box = item["trace"], item["cell"]
         assert trace_box["width"] <= cell_box["width"] * 0.12
         assert trace_box["height"] >= cell_box["height"] * 0.45
         assert trace_box["x"] - cell_box["x"] <= cell_box["width"] * 0.15, (
             f"AI trace is not a thin left-edge route: trace={trace_box!r} cell={cell_box!r}"
         )
 
+    # The panel's values legitimately refresh every committed tick. Scroll and
+    # resolve the current node atomically so the audit never holds a stale
+    # ElementHandle across that replacement boundary.
+    overhaul.evaluate(
+        """() => document.querySelector('[data-ai-panel]')
+          ?.scrollIntoView({block: 'nearest', inline: 'nearest'})"""
+    )
     panel = overhaul.locator("[data-ai-panel]")
-    panel.scroll_into_view_if_needed()
     assert panel.is_visible(), "AI network panel is not visible at 1100x700"
     panel_text = " ".join(panel.inner_text().split()).lower()
     for phrase in (
@@ -1227,26 +1485,40 @@ def test_ai_semantic_path_left_trace_text_liveness_and_errors(overhaul, errors):
     assert panel.get_attribute("data-ai-state")
     hud = overhaul.locator("[data-ai-hud]")
     assert hud.count() == 1 and hud.is_visible()
-    assert float(hud.get_attribute("data-ai-quality")) == final["ai"]["level"]
+    visible = overhaul.evaluate(
+        """() => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          const hud=document.querySelector('[data-ai-hud]');
+          return {
+            snapshot,
+            hud:{quality:+hud.dataset.aiQuality,bonus:+hud.dataset.aiBonus,risk:+hud.dataset.aiRisk},
+            targets:[...document.querySelectorAll('[data-ai-target]')].map(node => ({
+              id:node.dataset.aiTarget,
+              enabled:node.dataset.aiEnabled,
+              connected:node.dataset.aiConnected,
+              toggles:node.querySelectorAll('[data-ai-toggle]').length,
+            })),
+          };
+        }"""
+    )
+    visible_state = visible["snapshot"]
+    assert visible["hud"]["quality"] == visible_state["ai"]["level"]
     assert math.isclose(
-        float(hud.get_attribute("data-ai-bonus")),
-        final["ai"]["bonusPercent"],
+        visible["hud"]["bonus"],
+        visible_state["ai"]["bonusPercent"],
         abs_tol=1e-6,
     )
     assert math.isclose(
-        float(hud.get_attribute("data-ai-risk")),
-        final["ai"]["mistakeChance"],
+        visible["hud"]["risk"],
+        visible_state["ai"]["mistakeChance"],
         abs_tol=1e-6,
     )
-    targets = overhaul.locator("[data-ai-target]")
-    assert targets.count() >= 1
-    for index in range(targets.count()):
-        target = targets.nth(index)
-        entity_id = target.get_attribute("data-ai-target")
-        structure = next(item for item in final["structures"] if item["id"] == entity_id)
-        assert target.get_attribute("data-ai-enabled") == str(structure["aiEnabled"]).lower()
-        assert target.get_attribute("data-ai-connected") == str(structure["aiConnected"]).lower()
-        assert target.locator("[data-ai-toggle]").count() == 1
+    assert visible["targets"]
+    for target in visible["targets"]:
+        structure = next(item for item in visible_state["structures"] if item["id"] == target["id"])
+        assert target["enabled"] == str(structure["aiEnabled"]).lower()
+        assert target["connected"] == str(structure["aiConnected"]).lower()
+        assert target["toggles"] == 1
     clipping = panel.evaluate(
         """root => [...root.querySelectorAll('*')].filter(node => {
           const text = node.textContent?.trim();

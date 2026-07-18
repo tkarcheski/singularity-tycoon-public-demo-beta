@@ -1,4 +1,5 @@
 import { createOverhaulGame } from './core.js';
+import { createOverhaulAudio } from './audio.js';
 
 const root = document.getElementById('overhaul-root');
 if (!root) throw new Error('Overhaul entrypoint is missing #overhaul-root');
@@ -11,17 +12,35 @@ const TICK_MS = 500;
 let game = null;
 let view = null;
 let tickTimer = null;
+let unsubscribeAudio = null;
+let pendingAudioEvents = [];
+
+const audio = createOverhaulAudio({
+  contextFactory: () => {
+    if (typeof window.__overhaulAudioContextFactory === 'function') {
+      return window.__overhaulAudioContextFactory();
+    }
+    const Constructor = window.AudioContext || window.webkitAudioContext;
+    return Constructor ? new Constructor() : null;
+  },
+});
+audio.attachLifecycle(document, window);
+window.__overhaulAudio = audio;
 
 function renderCommitted(snapshot = game?.snapshot()) {
   if (!snapshot) return null;
   view?.render(snapshot);
   document.documentElement.dataset.uiTick = String(snapshot.ticks.completed);
+  audio.commit(snapshot, pendingAudioEvents.splice(0));
   return snapshot;
 }
 
 function teardownMountedGame() {
   if (tickTimer !== null) clearInterval(tickTimer);
   tickTimer = null;
+  unsubscribeAudio?.();
+  unsubscribeAudio = null;
+  pendingAudioEvents = [];
   view?.destroy?.();
   view = null;
   if (window.__overhaulMockGame?.destroy) window.__overhaulMockGame.destroy();
@@ -32,7 +51,11 @@ function mountGame({ seed = DEFAULT_SEED, snapshot = null } = {}) {
   teardownMountedGame();
   game = createOverhaulGame(snapshot ? { snapshot } : { seed });
   window.__overhaulGame = game;
-  view = window.createOverhaulView(game, { root });
+  unsubscribeAudio = game.subscribe((event) => pendingAudioEvents.push(event));
+  // main.js owns the committed render boundary. Subscribing the view to every
+  // intermediate semantic event would rebuild panels repeatedly inside one
+  // tick, detach focused nodes, and let the DOM race ahead of data-ui-tick.
+  view = window.createOverhaulView(game, { root, subscribe: false });
   window.__overhaulView = view;
   renderCommitted(game.snapshot());
   tickTimer = setInterval(() => {
@@ -67,6 +90,19 @@ function installAcceptanceBridge() {
       renderCommitted(game.snapshot());
       return result;
     },
+    audioSnapshot() {
+      return audio.inspect();
+    },
+    async audioControl(options = {}) {
+      if (options.unlock) await audio.unlock();
+      if (options.musicVolume !== undefined || options.sfxVolume !== undefined) {
+        audio.setVolumes({ music: options.musicVolume, sfx: options.sfxVolume });
+      }
+      if (options.musicMuted !== undefined || options.sfxMuted !== undefined) {
+        audio.setMuted({ music: options.musicMuted, sfx: options.sfxMuted });
+      }
+      return audio.inspect();
+    },
   };
   window.__overhaulAcceptance = bridge;
   mountGame({ seed: DEFAULT_SEED });
@@ -87,4 +123,7 @@ await waitForViewInstaller();
 window.createOverhaulGame = createOverhaulGame;
 installAcceptanceBridge();
 
-window.addEventListener('beforeunload', teardownMountedGame, { once: true });
+window.addEventListener('beforeunload', () => {
+  teardownMountedGame();
+  void audio.destroy();
+}, { once: true });

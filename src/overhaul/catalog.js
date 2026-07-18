@@ -39,6 +39,12 @@ export const OVERHAUL_BALANCE = deepFreeze({
     default: { sell: 0, research: 0.25, train: 0.25, inference: 0.25 },
     epsilon: 1e-9,
   },
+  utilities: {
+    // Utility upkeep is paid from produced FLOPS. It therefore cannot soft-lock
+    // a fresh build, but a carpet of unused links has a visible recurring cost
+    // as soon as the datacenter is productive.
+    unpaidReliabilityPenaltyPercent: 0,
+  },
   business: {
     textTrainingRequired: 20,
     harnessBuildCost: 80,
@@ -88,7 +94,8 @@ export const OVERHAUL_BLUEPRINTS = deepFreeze({
     kind: 'power-link',
     layer: 'power',
     cost: 6,
-    stats: { capacity: 12 },
+    networkRole: 'branch',
+    stats: { capacity: 16, maintenanceFlopsPerTick: 0.025, reliability: 0.97 },
   },
   power_pole: {
     id: 'power_pole',
@@ -96,7 +103,8 @@ export const OVERHAUL_BLUEPRINTS = deepFreeze({
     kind: 'power-link',
     layer: 'power',
     cost: 18,
-    stats: { capacity: 30 },
+    networkRole: 'trunk',
+    stats: { capacity: 36, maintenanceFlopsPerTick: 0.08, reliability: 0.99 },
   },
   cooling_pump: {
     id: 'cooling_pump',
@@ -112,7 +120,8 @@ export const OVERHAUL_BLUEPRINTS = deepFreeze({
     kind: 'cooling-link',
     layer: 'cooling',
     cost: 5,
-    stats: { capacity: 12 },
+    networkRole: 'branch',
+    stats: { capacity: 12, maintenanceFlopsPerTick: 0.03, reliability: 0.975 },
   },
   data_cable: {
     id: 'data_cable',
@@ -120,7 +129,8 @@ export const OVERHAUL_BLUEPRINTS = deepFreeze({
     kind: 'data-link',
     layer: 'data',
     cost: 5,
-    stats: { capacity: 16 },
+    networkRole: 'branch',
+    stats: { capacity: 16, maintenanceFlopsPerTick: 0.025, reliability: 0.98 },
   },
   data_switch: {
     id: 'data_switch',
@@ -128,7 +138,14 @@ export const OVERHAUL_BLUEPRINTS = deepFreeze({
     kind: 'data-link',
     layer: 'data',
     cost: 70,
-    stats: { capacity: 48, powerDemand: 1, powerPriority: 0 },
+    networkRole: 'hub',
+    stats: {
+      capacity: 48,
+      powerDemand: 1,
+      powerPriority: 0,
+      maintenanceFlopsPerTick: 0.1,
+      reliability: 0.995,
+    },
   },
   fiber_gateway: {
     id: 'fiber_gateway',
@@ -153,7 +170,8 @@ export const OVERHAUL_BLUEPRINTS = deepFreeze({
     kind: 'ai-link',
     layer: 'ai',
     cost: 8,
-    stats: { capacity: 32 },
+    networkRole: 'automation-bus',
+    stats: { capacity: 32, maintenanceFlopsPerTick: 0.04, reliability: 0.98 },
   },
   computer_lean: {
     id: 'computer_lean',
