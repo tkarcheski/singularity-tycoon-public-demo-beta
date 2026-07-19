@@ -1,0 +1,279 @@
+/* Authored floor-material and state-feedback pass.
+ *
+ * This layer deliberately sits after style.css. It adds game-world depth and
+ * state-driven local motion without reintroducing always-on utility noise.
+ */
+
+.board-frame {
+  isolation: isolate;
+  border-color: rgba(111, 190, 214, .28);
+  background:
+    radial-gradient(circle at 50% 45%, rgba(32, 69, 82, .23), transparent 52%),
+    linear-gradient(115deg, rgba(9, 18, 28, .96), rgba(3, 8, 14, .98));
+  box-shadow:
+    inset 0 0 0 2px rgba(3, 7, 12, .92),
+    inset 0 0 70px rgba(0, 0, 0, .72),
+    0 18px 46px rgba(0, 0, 0, .46);
+}
+
+.board-frame::before,
+.board-frame::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.board-frame::before {
+  inset: 4px;
+  z-index: 0;
+  border: 1px solid rgba(111, 205, 222, .12);
+  border-radius: 9px;
+  background:
+    linear-gradient(90deg, transparent 49.7%, rgba(77, 119, 132, .12) 50%, transparent 50.3%),
+    linear-gradient(0deg, transparent 49.7%, rgba(77, 119, 132, .1) 50%, transparent 50.3%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, .012) 0 1px, transparent 1px 11px),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, .01) 0 1px, transparent 1px 11px);
+  background-size: 50% 100%, 100% 50%, 11px 11px, 11px 11px;
+  opacity: .9;
+}
+
+.board-frame::after {
+  inset: 8px;
+  z-index: 1;
+  border-radius: 7px;
+  background:
+    radial-gradient(circle at 2px 2px, rgba(155, 198, 211, .22) 0 1px, transparent 1.5px) 0 0 / 25% 25%,
+    linear-gradient(90deg, transparent 0 24.85%, rgba(1, 4, 8, .62) 25%, transparent 25.15% 49.85%, rgba(1, 4, 8, .62) 50%, transparent 50.15% 74.85%, rgba(1, 4, 8, .62) 75%, transparent 75.15%);
+  mix-blend-mode: screen;
+  opacity: .2;
+}
+
+.world-grid {
+  z-index: 2;
+  padding: 1px;
+  border-radius: 6px;
+  background:
+    linear-gradient(90deg, rgba(21, 41, 53, .58), transparent 8% 92%, rgba(21, 41, 53, .58)),
+    linear-gradient(0deg, rgba(21, 41, 53, .48), transparent 8% 92%, rgba(21, 41, 53, .48));
+}
+
+.cell {
+  border-color: rgba(126, 161, 179, .2);
+  background:
+    radial-gradient(circle at 7px 7px, rgba(184, 211, 218, .22) 0 1px, transparent 1.6px),
+    radial-gradient(circle at calc(100% - 7px) calc(100% - 7px), rgba(0, 0, 0, .62) 0 1px, transparent 1.8px),
+    linear-gradient(135deg, rgba(52, 72, 83, .34) 0 1px, transparent 1px 48%, rgba(0, 0, 0, .22) 48% 52%, transparent 52%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, .018) 0 1px, transparent 1px 7px),
+    linear-gradient(145deg, rgba(24, 38, 51, .96), rgba(8, 15, 24, .98));
+  box-shadow:
+    inset 1px 1px rgba(255, 255, 255, .025),
+    inset -3px -4px 8px rgba(0, 0, 0, .2);
+}
+
+.cell:nth-child(4n + 2)[data-territory="owned"],
+.cell:nth-child(4n + 3)[data-territory="owned"] {
+  background:
+    linear-gradient(90deg, transparent 0 43%, rgba(51, 104, 116, .1) 43% 47%, transparent 47%),
+    radial-gradient(circle at 7px 7px, rgba(184, 211, 218, .2) 0 1px, transparent 1.6px),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, .018) 0 1px, transparent 1px 7px),
+    linear-gradient(145deg, rgba(22, 36, 48, .97), rgba(7, 13, 21, .98));
+}
+
+.cell[data-territory="frontier"] {
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 213, 106, .075) 0 5px, transparent 5px 10px),
+    linear-gradient(145deg, rgba(29, 35, 40, .97), rgba(11, 15, 21, .98));
+}
+
+.cell[data-territory="locked"] {
+  filter: saturate(.58) brightness(.72);
+  background:
+    repeating-linear-gradient(135deg, rgba(103, 118, 127, .055) 0 4px, transparent 4px 9px),
+    linear-gradient(145deg, rgba(12, 18, 25, .98), rgba(3, 7, 12, .99));
+}
+
+.cell::before {
+  inset: 3px;
+  border-color: rgba(190, 220, 226, .045);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .16);
+}
+
+.structure {
+  border-color: color-mix(in srgb, currentColor 42%, rgba(126, 154, 170, .5));
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, .045) 0 1px, transparent 1px 7px),
+    linear-gradient(145deg, rgba(57, 77, 87, .92), rgba(11, 20, 29, .98) 72%);
+  box-shadow:
+    inset 1px 1px rgba(255, 255, 255, .08),
+    inset -5px -6px 10px rgba(0, 0, 0, .34),
+    0 5px 9px rgba(0, 0, 0, .38);
+}
+
+.structure::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 5px currentColor;
+  opacity: .46;
+}
+
+/* Idle means still. Animation is reserved for authoritative work/fault state. */
+.human[data-activity="idle"] .human-head,
+.human[data-activity="idle"] .human-body,
+.robot[data-activity="idle"] .robot-eye,
+.computer[data-activity="idle"] .machine-screen::after {
+  animation: none;
+}
+
+.cell-content::before,
+.cell-content::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* Productive tiles get one localized instrument-light sweep. */
+.cell[data-tile-activity="working"] .cell-content::before,
+.cell:has(.entity[data-activity="load"]) .cell-content::before,
+.cell:has(.entity[data-activity="work"]) .cell-content::before,
+.cell:has(.entity[data-activity="creative"]) .cell-content::before,
+.cell:has(.entity[data-activity="repair"]) .cell-content::before {
+  inset: 12% 10%;
+  z-index: 4;
+  border-radius: 6px;
+  background: linear-gradient(110deg, transparent 20%, rgba(112, 241, 184, .13) 46%, transparent 70%);
+  opacity: 1;
+  animation: tile-work-scan 2.4s ease-in-out infinite;
+}
+
+.cell[data-tile-activity="overloaded"] .cell-content::before,
+.cell:has(.entity[data-activity="throttle"]) .cell-content::before {
+  inset: 8%;
+  z-index: 4;
+  border: 1px solid rgba(255, 118, 63, .25);
+  border-radius: 7px;
+  background: radial-gradient(circle at 50% 80%, rgba(255, 86, 49, .24), transparent 68%);
+  opacity: 1;
+  animation: tile-heat-stress 1.15s ease-in-out infinite alternate;
+}
+
+/* Broken equipment smokes locally; no fault state, no smoke. */
+.cell[data-tile-activity="broken"] .cell-content::before,
+.cell[data-tile-fault="true"] .cell-content::before,
+.cell:has(.entity[data-activity="fault"]) .cell-content::before {
+  left: 42%;
+  bottom: 42%;
+  z-index: 8;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 65%, rgba(109, 119, 124, .72) 0 24%, transparent 28%),
+    radial-gradient(circle at 70% 36%, rgba(73, 83, 89, .62) 0 31%, transparent 35%),
+    radial-gradient(circle at 45% 25%, rgba(139, 142, 139, .46) 0 23%, transparent 28%);
+  filter: blur(.6px);
+  opacity: .8;
+  animation: tile-smoke-rise 2.1s ease-out infinite;
+}
+
+.cell[data-tile-activity="broken"] .cell-content::after,
+.cell[data-tile-fault="true"] .cell-content::after,
+.cell:has(.entity[data-activity="fault"]) .cell-content::after {
+  left: 50%;
+  top: 49%;
+  z-index: 9;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: #fff4bd;
+  box-shadow: 4px -5px #ff9a4d, -5px -3px #ffdf68, 2px 6px #ff634d;
+  opacity: 0;
+  animation: tile-fault-sparks 1.8s steps(1) infinite;
+}
+
+.cell[data-tile-activity="repairing"] .cell-content::after,
+.cell:has(.robot[data-activity="repair"]) .cell-content::after {
+  right: 22%;
+  bottom: 24%;
+  z-index: 9;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 5px -4px #8eeaff, -4px -7px #ffc34d, 7px 3px #fff0a6;
+  opacity: 0;
+  animation: tile-repair-sparks .95s steps(1) infinite;
+}
+
+@keyframes tile-work-scan {
+  0%, 18% { transform: translateX(-18%); opacity: 0; }
+  35%, 72% { opacity: .74; }
+  86%, 100% { transform: translateX(18%); opacity: 0; }
+}
+
+@keyframes tile-heat-stress {
+  from { filter: saturate(.8); box-shadow: inset 0 -2px 8px rgba(255, 87, 48, .08); }
+  to { filter: saturate(1.25); box-shadow: inset 0 -6px 14px rgba(255, 87, 48, .24); }
+}
+
+@keyframes tile-smoke-rise {
+  0% { transform: translate(0, 5px) scale(.55); opacity: 0; }
+  18% { opacity: .72; }
+  68% { opacity: .46; }
+  100% { transform: translate(7px, -22px) scale(1.7); opacity: 0; }
+}
+
+@keyframes tile-fault-sparks {
+  0%, 9%, 14%, 72%, 100% { opacity: 0; transform: translate(0, 0); }
+  10% { opacity: 1; transform: translate(2px, -3px); }
+  12% { opacity: .65; transform: translate(-2px, 3px); }
+  73% { opacity: .9; transform: translate(-3px, -4px); }
+  75% { opacity: 0; transform: translate(4px, 2px); }
+}
+
+@keyframes tile-repair-sparks {
+  0%, 45%, 53%, 100% { opacity: 0; transform: translate(0, 0); }
+  46% { opacity: 1; transform: translate(-3px, -4px); }
+  48% { opacity: .8; transform: translate(5px, -7px); }
+  51% { opacity: .4; transform: translate(-5px, 3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cell-content::before,
+  .cell-content::after,
+  .human[data-activity="idle"] *,
+  .robot[data-activity="idle"] *,
+  .computer[data-activity="idle"] * {
+    animation: none !important;
+  }
+
+  .cell[data-tile-activity="working"],
+  .cell[data-tile-activity="overloaded"],
+  .cell[data-tile-activity="broken"],
+  .cell[data-tile-fault="true"],
+  .cell[data-tile-activity="repairing"] {
+    outline: 2px solid currentColor;
+    outline-offset: -4px;
+  }
+}
+
+@media (forced-colors: active) {
+  .board-frame,
+  .world-grid,
+  .cell,
+  .structure {
+    background: Canvas !important;
+  }
+
+  .cell[data-tile-activity="broken"],
+  .cell[data-tile-fault="true"] {
+    outline: 3px double Mark;
+    outline-offset: -4px;
+  }
+}
