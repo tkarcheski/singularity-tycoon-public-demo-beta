@@ -384,7 +384,6 @@ button:focus-visible, [tabindex]:focus-visible {
 .connection-group {
   opacity: 0;
   visibility: hidden;
-  transition: opacity 150ms ease, visibility 150ms ease;
 }
 .connection-group[data-disclosure="active"] { opacity: 1; visibility: visible; }
 .connection-underlay { stroke: rgba(3, 6, 12, .9); stroke-width: 11; }

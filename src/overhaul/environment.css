@@ -4,6 +4,205 @@
  * state-driven local motion without reintroducing always-on utility noise.
  */
 
+:root {
+  --ink-0: #090a0b;
+  --ink-1: #111316;
+  --ink-2: #191d20;
+  --panel: rgba(24, 27, 29, .96);
+  --panel-hi: rgba(32, 36, 38, .98);
+  --line: rgba(214, 201, 166, .18);
+  --line-hi: rgba(241, 222, 174, .42);
+  --text: #f4eddb;
+  --muted: #afa78f;
+  --dim: #716e64;
+  --cyan: #63d7c6;
+  --blue: #5f88d8;
+  --violet: #9876cf;
+  --ai: #e96ab4;
+  --green: #9ad66f;
+  --yellow: #f1bd45;
+  --orange: #ef7948;
+  --red: #e85545;
+}
+
+body {
+  background:
+    radial-gradient(circle at 19% 8%, rgba(239, 121, 72, .12), transparent 30%),
+    radial-gradient(circle at 78% 78%, rgba(76, 115, 111, .13), transparent 34%),
+    repeating-linear-gradient(135deg, rgba(255,255,255,.012) 0 1px, transparent 1px 8px),
+    #090a0b;
+}
+
+.topbar {
+  grid-template-columns: 280px minmax(0, 1fr) auto;
+  border-bottom-color: rgba(239, 121, 72, .34);
+  background:
+    linear-gradient(90deg, rgba(239, 121, 72, .08), transparent 22%),
+    linear-gradient(180deg, rgba(28, 30, 30, .96), rgba(13, 15, 16, .97));
+}
+
+.brand-mark {
+  border-color: rgba(241, 189, 69, .55);
+  border-radius: 3px 12px 3px 12px;
+  background:
+    repeating-linear-gradient(135deg, rgba(241,189,69,.2) 0 3px, transparent 3px 7px),
+    linear-gradient(145deg, #382d1c, #151819);
+  box-shadow: inset 0 0 0 2px rgba(5,7,7,.7), 0 0 22px rgba(239,121,72,.12);
+}
+
+.brand-mark::before { border-color: var(--orange); border-radius: 2px; transform: rotate(45deg); }
+.brand-mark::after { border-color: var(--yellow); background: var(--yellow); box-shadow: 0 0 12px var(--orange); }
+
+.panel {
+  background:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.012) 0 1px, transparent 1px 5px),
+    linear-gradient(160deg, rgba(33, 36, 37, .97), rgba(13, 15, 17, .98));
+  box-shadow: inset 0 1px rgba(255,255,255,.025), 0 18px 50px rgba(0,0,0,.43);
+}
+
+.workspace { grid-template-columns: 250px minmax(0, 1fr) 290px; }
+
+.left-rail { border-top: 3px solid var(--orange); }
+.right-rail { border-top: 3px solid var(--green); }
+.stage-shell { border-top: 3px solid var(--yellow); }
+.left-rail .eyebrow { color: var(--orange); }
+.right-rail .eyebrow { color: var(--green); }
+
+.seed-card {
+  border-color: rgba(239,121,72,.32);
+  background:
+    linear-gradient(100deg, rgba(239,121,72,.1), transparent 55%),
+    rgba(255,255,255,.018);
+}
+
+.seed-value { color: var(--yellow); font-family: var(--display); letter-spacing: .04em; }
+.progress-fill { background: linear-gradient(90deg, var(--orange), var(--yellow), var(--green)); }
+
+.research-roadmap {
+  margin-top: 8px;
+  padding: 7px;
+  border: 1px solid rgba(241,189,69,.2);
+  border-radius: 8px;
+  background: rgba(8,10,10,.45);
+}
+
+.research-roadmap-head,
+.research-node {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.research-roadmap-head { justify-content: space-between; padding: 2px 1px 7px; }
+.research-roadmap-head > span:first-child { display: grid; gap: 1px; }
+.research-roadmap-head strong { font: 800 9px var(--display); letter-spacing: .06em; text-transform: uppercase; }
+.research-roadmap-head small { color: var(--muted); font: 7px var(--mono); }
+.research-nodes { display: grid; gap: 4px; }
+
+.research-node {
+  position: relative;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid rgba(214,201,166,.12);
+  border-radius: 6px;
+  background: linear-gradient(100deg, rgba(255,255,255,.025), transparent);
+}
+
+.research-node-light {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border: 1px solid var(--dim);
+  border-radius: 50%;
+  background: #181a1b;
+}
+
+.research-node-copy { display: grid; min-width: 0; flex: 1; gap: 2px; }
+.research-node-copy strong { font: 700 8px/1.2 var(--display); overflow-wrap: anywhere; text-transform: uppercase; white-space: normal; }
+.research-node-copy small { display: none; color: var(--muted); font: 7px/1.25 var(--mono); }
+.research-node:hover .research-node-copy small { display: block; }
+.research-node-meter { height: 2px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.06); }
+.research-node-meter i { display: block; width: var(--research-progress); height: 100%; background: var(--orange); transition: width .3s ease; }
+.research-node[data-research-state="complete"] { border-color: rgba(154,214,111,.25); background: linear-gradient(100deg, rgba(154,214,111,.09), transparent); }
+.research-node[data-research-state="complete"] .research-node-light { border-color: var(--green); background: var(--green); box-shadow: 0 0 8px rgba(154,214,111,.5); }
+.research-node[data-research-state="complete"] .research-node-meter i { background: var(--green); }
+.research-node[data-research-state="available"] .research-node-light { border-color: var(--yellow); background: var(--yellow); box-shadow: 0 0 8px rgba(241,189,69,.5); }
+.research-node[data-latest-unlock="true"] { animation: research-unlock-pop .8s cubic-bezier(.2,.8,.2,1) both; }
+
+.blueprint[data-blueprint="generator"],
+.blueprint[data-blueprint^="power_"] { --blueprint-color: var(--yellow); }
+.blueprint[data-blueprint^="cooling_"] { --blueprint-color: var(--cyan); }
+.blueprint[data-blueprint^="data_"],
+.blueprint[data-blueprint="fiber_gateway"] { --blueprint-color: var(--blue); }
+.blueprint[data-blueprint^="computer_"] { --blueprint-color: var(--green); }
+.blueprint[data-blueprint^="ai_"] { --blueprint-color: var(--ai); }
+.blueprint[data-state="unlocked"] {
+  border-left: 3px solid var(--blueprint-color, var(--orange));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--blueprint-color, var(--orange)) 10%, transparent), rgba(255,255,255,.018) 52%);
+}
+.blueprint[data-state="unlocked"] .blueprint-icon { color: var(--blueprint-color, var(--orange)); background: color-mix(in srgb, var(--blueprint-color, var(--orange)) 8%, transparent); }
+
+.cell[data-inherited="true"]::after {
+  content: "INHERITED";
+  position: absolute;
+  z-index: 6;
+  top: 2px;
+  right: 3px;
+  color: rgba(241,189,69,.62);
+  font: 5px var(--mono);
+  letter-spacing: .06em;
+}
+
+.cell[data-inherited="true"] {
+  border-color: rgba(241,189,69,.25);
+  box-shadow: inset 0 2px rgba(241,189,69,.06);
+}
+
+.cell[data-inherited="true"][data-tile-activity="broken"] {
+  border-color: rgba(232,85,69,.7);
+  background:
+    repeating-linear-gradient(135deg, rgba(232,85,69,.09) 0 4px, transparent 4px 9px),
+    linear-gradient(145deg, rgba(43,29,27,.98), rgba(12,14,15,.99));
+  box-shadow: inset 0 0 18px rgba(232,85,69,.1), 0 0 14px rgba(232,85,69,.12);
+}
+
+.recovery-action {
+  display: grid;
+  grid-template-columns: 28px minmax(0,1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 9px 0;
+  padding: 8px;
+  border: 1px solid rgba(232,85,69,.48);
+  border-radius: 7px;
+  background:
+    repeating-linear-gradient(135deg, rgba(241,189,69,.09) 0 4px, transparent 4px 8px),
+    linear-gradient(100deg, rgba(232,85,69,.16), rgba(24,25,24,.92) 56%);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.recovery-action:hover:not(:disabled) { border-color: var(--yellow); transform: translateY(-1px); }
+.recovery-action:disabled { cursor: wait; opacity: .8; }
+.recovery-action-icon { color: var(--yellow); font-size: 18px; text-shadow: 0 0 8px rgba(241,189,69,.35); }
+.recovery-action > span:nth-child(2) { display: grid; gap: 2px; min-width: 0; }
+.recovery-action strong { font: 800 9px var(--display); text-transform: uppercase; }
+.recovery-action small { color: var(--muted); font: 7px var(--mono); }
+
+.quest-dock {
+  border-top-color: rgba(241,189,69,.26);
+  background:
+    linear-gradient(90deg, rgba(239,121,72,.1), transparent 35%),
+    rgba(13,15,16,.96);
+}
+
+@keyframes research-unlock-pop {
+  0% { transform: scale(.96); filter: brightness(.8); }
+  42% { transform: scale(1.025); filter: brightness(1.5); box-shadow: 0 0 24px rgba(154,214,111,.35); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
 .board-frame {
   isolation: isolate;
   border-color: rgba(111, 190, 214, .28);
@@ -251,6 +450,13 @@
   .robot[data-activity="idle"] *,
   .computer[data-activity="idle"] * {
     animation: none !important;
+  }
+
+  .research-node,
+  .research-node-meter i,
+  .recovery-action {
+    animation: none !important;
+    transition: none !important;
   }
 
   .cell[data-tile-activity="working"],

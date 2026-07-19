@@ -29,13 +29,11 @@ VIEWPORTS = (
 )
 REQUIRED_UNLOCK_KINDS = {
     "floor",
-    "power-source",
     "power-link",
-    "cooling-source",
     "cooling-link",
-    "computer",
     "data-link",
 }
+REQUIRED_INHERITED_KINDS = {"power-source", "cooling-source", "computer", "data-link"}
 ACTOR_STATES = {
     "human": {"idle", "moving", "working", "training", "hired", "blocked"},
     "robot": {"idle", "moving", "building", "repairing", "charging", "blocked"},
@@ -306,11 +304,22 @@ def test_seeded_start_is_deterministic_and_randomized(overhaul):
     assert _unlock_ids(first) == _unlock_ids(repeat), "same seed changed starting unlock IDs"
     assert _cell_signature(first) == _cell_signature(repeat), "same seed changed owned footprint"
 
+    starts = [
+        _reset(overhaul, seed)
+        for seed in (
+            "overhaul-contract-alpha", "overhaul-contract-beta", "overhaul-contract-gamma",
+            "overhaul-contract-delta", "overhaul-contract-epsilon",
+        )
+    ]
     variants = {
-        _unlock_ids(_reset(overhaul, seed))
-        for seed in ("overhaul-contract-alpha", "overhaul-contract-beta", "overhaul-contract-gamma")
+        (
+            start["starterKitId"],
+            start["recovery"]["siteName"],
+            tuple(target["blueprintId"] for target in start["recovery"]["targets"]),
+        )
+        for start in starts
     }
-    assert len(variants) > 1, f"comparison seeds produced no unlock variation: {variants!r}"
+    assert len(variants) > 1, f"comparison seeds produced no inherited-site variation: {variants!r}"
 
 
 @pytest.mark.parametrize(
@@ -322,9 +331,85 @@ def test_every_seeded_start_has_a_viable_physical_toolkit(overhaul, seed):
     kinds = {item.get("kind") for item in snapshot["unlocks"]}
     missing = REQUIRED_UNLOCK_KINDS - kinds
     assert not missing, f"seed {seed!r} is not viable; missing capability kinds: {sorted(missing)!r}"
+    inherited_kinds = {item.get("kind") for item in snapshot["structures"] if item["inherited"]}
+    inherited_missing = REQUIRED_INHERITED_KINDS - inherited_kinds
+    assert not inherited_missing, (
+        f"seed {seed!r} inherited no viable datacenter; missing {sorted(inherited_missing)!r}"
+    )
+    assert snapshot["recovery"]["total"] == 2
+    assert snapshot["recovery"]["repaired"] == 0
     seed_text = overhaul.locator("[data-seed]")
     assert seed_text.is_visible(), "run seed is not visible"
-    assert seed in seed_text.inner_text(), f"visible seed does not contain {seed!r}"
+    assert snapshot["recovery"]["siteName"] in seed_text.inner_text()
+    assert seed in seed_text.get_attribute("title"), f"visible site does not expose seed {seed!r}"
+
+
+def test_player_recovers_inherited_site_and_research_unlocks_real_construction(overhaul, errors):
+    initial = _reset(overhaul, "browser-recovery-contract")
+    assert initial["recovery"]["phase"] == "triage"
+    assert overhaul.locator('[data-research-node="recovery-grid"]').is_visible()
+    assert overhaul.locator('[data-research-node][data-research-state="locked"]').count() >= 4
+    assert overhaul.locator('[data-ai-hud]').get_attribute("data-ai-state") == "manual"
+    assert "machine assistance" in overhaul.locator('[data-ai-hud]').inner_text().lower()
+    assert overhaul.locator("[data-ai-panel]").count() == 0
+
+    for target in initial["recovery"]["targets"]:
+        cell = overhaul.locator(f'.cell[data-x="{target["x"]}"][data-y="{target["y"]}"]')
+        assert cell.get_attribute("data-tile-activity") == "broken"
+        assert cell.get_attribute("data-inherited") == "true"
+        cell.click()
+        repair = overhaul.locator(f'[data-repair-structure="{target["entityId"]}"]')
+        repair.wait_for(state="visible")
+        assert "repair inherited" in repair.inner_text().lower()
+        repair.click()
+        overhaul.wait_for_function(
+            """entityId => {
+              const snapshot=window.__overhaulAcceptance.snapshot();
+              const target=snapshot.recovery.targets.find(item => item.entityId === entityId);
+              const cell=document.querySelector(`[data-x="${target.x}"][data-y="${target.y}"]`);
+              return snapshot.recovery.activeRepair?.entityId === entityId
+                && cell?.dataset.tileActivity === 'repairing';
+            }""",
+            arg=target["entityId"],
+        )
+        overhaul.wait_for_function(
+            """entityId => {
+              const snapshot=window.__overhaulAcceptance.snapshot();
+              return snapshot.recovery.targets.find(item => item.entityId === entityId)?.state
+                === 'repaired';
+            }""",
+            arg=target["entityId"],
+            timeout=5_000,
+        )
+
+    overhaul.wait_for_function(
+        """() => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          return snapshot.recovery.phase === 'online' && snapshot.flops.raw > 0
+            && document.querySelector('[data-research-node="recovery-grid"]')
+              ?.dataset.researchState === 'complete';
+        }""",
+        timeout=7_000,
+    )
+    generator = overhaul.locator('[data-blueprint="generator"]')
+    assert generator.get_attribute("aria-disabled") == "false"
+
+    research = overhaul.locator('[data-route-preset="ai-train"]')
+    research.scroll_into_view_if_needed()
+    research.click()
+    overhaul.wait_for_function(
+        """() => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          return snapshot.research.completedIds.includes('external-markets')
+            && document.querySelector('[data-blueprint="fiber_gateway"]')
+              ?.getAttribute('aria-disabled') === 'false';
+        }""",
+        timeout=10_000,
+    )
+    final = _snapshot(overhaul)
+    assert final["research"]["points"] >= 40
+    assert "external-markets" in final["research"]["completedIds"]
+    assert not errors, f"recovery/research UI emitted browser errors: {errors[-5:]!r}"
 
 
 def test_owned_footprint_is_connected_and_frontier_is_legal(overhaul):
@@ -378,7 +463,9 @@ def test_frontier_purchase_is_atomic_and_recomputes_boundary(overhaul):
 
 
 def test_visible_blueprint_and_owned_cell_click_build_through_real_ui(overhaul, errors):
-    before = _reset(overhaul, "manual-placement-contract")
+    _reset(overhaul, "manual-placement-contract")
+    _scenario(overhaul, "computer-path-connected")
+    before = _snapshot(overhaul)
     assert not errors, f"overhaul emitted errors before manual placement: {errors[-5:]!r}"
 
     blueprint_id = "generator"
@@ -501,7 +588,8 @@ def test_visible_blueprint_and_owned_cell_click_build_through_real_ui(overhaul, 
     total_visible_price += float(
         route_only_blueprint.locator(".state-chip").inner_text().strip().lstrip("$").replace(",", "")
     )
-    route_only_blueprint.click()
+    if route_only_blueprint.get_attribute("aria-pressed") != "true":
+        route_only_blueprint.click()
     route_cell = overhaul.locator(
         f'[data-x="{route_target["x"]}"][data-y="{route_target["y"]}"]'
     )
@@ -757,7 +845,8 @@ def test_manual_venture_controls_advance_business_and_actor_state(overhaul):
     assert after["economy"]["humansHired"] == before["economy"]["humansHired"] + 1
     assert after["economy"]["payroll"] > before["economy"]["payroll"]
 
-    hired = next(actor for actor in after["actors"] if actor["id"] not in before_actor_ids)
+    committed = _atomic_commit_sample(overhaul)["snapshot"]
+    hired = next(actor for actor in committed["actors"] if actor["id"] not in before_actor_ids)
     assert hired["kind"] == "human"
     actor = overhaul.locator(f'[data-actor-id="{hired["id"]}"]')
     assert actor.count() == 1 and actor.is_visible()
@@ -857,6 +946,7 @@ def test_critical_player_text_is_visible_and_unclipped(overhaul, viewport):
     overhaul.set_viewport_size(viewport)
     overhaul.wait_for_timeout(200)
     selectors = [
+        ".brand-title",
         "[data-seed]",
         "[data-cash]",
         "[data-flops-raw]",
@@ -864,6 +954,9 @@ def test_critical_player_text_is_visible_and_unclipped(overhaul, viewport):
         "[data-world-grid]",
         "[data-router]",
         "[data-quest]",
+        "[data-quest] .quest-copy",
+        "[data-quest] .quest-action",
+        "[data-research-roadmap] .research-node-copy strong",
         "[data-blueprints] .blueprint",
         "[data-blueprints] .blueprint-name",
         "[data-blueprints] .blueprint > .state-chip",
@@ -1415,32 +1508,44 @@ def test_ai_semantic_path_left_trace_text_liveness_and_errors(overhaul, errors):
     ai_focus = overhaul.locator('[data-network-focus="ai"]')
     ai_focus.click()
     assert ai_focus.get_attribute("aria-pressed") == "true"
-    final = _snapshot(overhaul)
 
     for blueprint_id in ("ai_controller", "ai_bus"):
         blueprint = overhaul.locator(f'[data-blueprint="{blueprint_id}"]')
         blueprint.scroll_into_view_if_needed()
         assert blueprint.is_visible(), f"{blueprint_id} is not visible at 1100x700"
 
-    connected_paths = [path for path in final["networks"]["ai"]["paths"] if path["connected"]]
-    assert connected_paths
-    for path in connected_paths:
-        dom = overhaul.locator(f'[data-ai-path-id="{path["id"]}"]')
-        assert dom.count() == 1
-        assert dom.get_attribute("data-ai-path-state") == path["status"]
-        visual = dom.evaluate(
-            """node => {
+    # The live game commits every 500 ms, so sample model + DOM in one browser
+    # task. Holding path data across a commit would compare different ticks.
+    connected_paths = overhaul.evaluate(
+        """() => window.__overhaulAcceptance.snapshot().networks.ai.paths
+          .filter(path => path.connected)
+          .map(path => {
+            const node = document.querySelector(`[data-ai-path-id="${CSS.escape(path.id)}"]`);
+            if (!node) return {id:path.id, missing:true};
               const style = getComputedStyle(node);
+              const group = node.closest('[data-network-group]');
+              const groupStyle = group ? getComputedStyle(group) : style;
               return {
+                id: path.id,
+                status: path.status,
+                domStatus: node.dataset.aiPathState,
+                disclosure: group?.dataset.disclosure,
                 length: node.getTotalLength(),
                 stroke: style.stroke,
-                opacity: parseFloat(style.opacity),
-                visibility: style.visibility,
+                pathOpacity: parseFloat(style.opacity || '0'),
+                opacity: parseFloat(groupStyle.opacity || '0'),
+                visibility: groupStyle.visibility,
               };
-            }"""
-        )
+          })"""
+    )
+    assert connected_paths
+    for visual in connected_paths:
+        assert not visual.get("missing"), visual
+        assert visual["domStatus"] == visual["status"]
+        assert visual["disclosure"] == "active"
         assert visual["length"] > 0
-        assert visual["opacity"] > 0 and visual["visibility"] == "visible"
+        assert visual["opacity"] > 0 and visual["visibility"] == "visible", visual
+        assert visual["pathOpacity"] > 0
         assert visual["stroke"] not in ("none", "transparent", "rgba(0, 0, 0, 0)")
 
     traces = overhaul.locator('[data-cell-utility="ai"]')

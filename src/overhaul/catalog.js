@@ -18,8 +18,65 @@ export const OVERHAUL_BALANCE = deepFreeze({
     initialOwned: { minX: 3, maxX: 8, minY: 4, maxY: 7 },
   },
   economy: {
-    startingCash: 3000,
+    startingCash: 1800,
     rawFlopsSalePrice: 0.2,
+  },
+  recovery: {
+    repairCost: 90,
+    repairTicks: 3,
+    completionBonus: 240,
+    siteNames: [
+      'Kestrel Relay',
+      'Morrow Annex',
+      'Juniper Exchange',
+      'Redline Archive',
+      'Halcyon Compute Works',
+      'Orchid Municipal Cloud',
+    ],
+  },
+  research: {
+    nodes: [
+      {
+        id: 'recovery-grid',
+        name: 'Recovery Grid',
+        detail: 'Document the repaired plant and reproduce its core equipment.',
+        threshold: 0,
+        requiresRecovery: true,
+        unlocks: ['generator', 'cooling_pump'],
+      },
+      {
+        id: 'rack-standard',
+        name: 'Rack Standardization',
+        detail: 'Turn the inherited compute design into a buildable blueprint.',
+        threshold: 6,
+        requiresRecovery: true,
+        unlocks: ['computer:starter'],
+      },
+      {
+        id: 'backbone-routing',
+        name: 'Backbone Routing',
+        detail: 'Unlock higher-capacity trunks and internal switching.',
+        threshold: 18,
+        requiresRecovery: true,
+        unlocks: ['power_pole', 'data_switch'],
+      },
+      {
+        id: 'external-markets',
+        name: 'External Markets',
+        detail: 'Reach underground fiber and sell the FLOPS you recover.',
+        threshold: 40,
+        requiresRecovery: true,
+        unlocks: ['fiber_gateway'],
+      },
+      {
+        id: 'machine-assistance',
+        name: 'Machine Assistance',
+        detail: 'Risk AI control in exchange for better infrastructure efficiency.',
+        threshold: 80,
+        requiresRecovery: true,
+        unlocks: ['ai_controller', 'ai_bus'],
+      },
+    ],
   },
   claims: {
     baseCost: 40,
@@ -220,35 +277,28 @@ export const OVERHAUL_BLUEPRINTS = deepFreeze({
   },
 });
 
-const COMMON_STARTER_UNLOCKS = [
+const RECOVERY_STARTER_UNLOCKS = [
   'floor_claim',
-  'generator',
   'power_line',
-  'power_pole',
-  'cooling_pump',
   'cooling_pipe',
   'data_cable',
-  'data_switch',
-  'fiber_gateway',
-  'ai_controller',
-  'ai_bus',
 ];
 
 export const OVERHAUL_STARTER_KITS = deepFreeze([
   {
     id: 'lean-start',
     computerBlueprintId: 'computer_lean',
-    unlocks: [...COMMON_STARTER_UNLOCKS, 'computer_lean'],
+    unlocks: [...RECOVERY_STARTER_UNLOCKS],
   },
   {
     id: 'steady-start',
     computerBlueprintId: 'computer_steady',
-    unlocks: [...COMMON_STARTER_UNLOCKS, 'computer_steady'],
+    unlocks: [...RECOVERY_STARTER_UNLOCKS],
   },
   {
     id: 'burst-start',
     computerBlueprintId: 'computer_burst',
-    unlocks: [...COMMON_STARTER_UNLOCKS, 'computer_burst'],
+    unlocks: [...RECOVERY_STARTER_UNLOCKS],
   },
 ]);
 

@@ -49,8 +49,8 @@ def _assert_connected_footprint(cells):
 def test_seeded_starts_are_deterministic_varied_and_viable():
     result = _run_core(
         """
-        const required = ["floor", "power-source", "power-link", "cooling-source",
-          "cooling-link", "computer", "data-link", "ai-source", "ai-link"];
+        const requiredStarterKinds = ["floor", "power-link", "cooling-link", "data-link"];
+        const requiredInheritedKinds = ["power-source", "cooling-source", "computer", "data-link"];
         const first = createOverhaulGame({seed: "repeatable-seed"}).snapshot();
         const repeat = createOverhaulGame({seed: "repeatable-seed"}).snapshot();
         const starts = [];
@@ -61,18 +61,27 @@ def test_seeded_starts_are_deterministic_varied_and_viable():
           starts.push({
             kit: start.starterKitId,
             kinds: [...new Set(start.unlocks.map((unlock) => unlock.kind))],
+            inheritedKinds: [...new Set(start.structures.filter((item) => item.inherited)
+              .map((item) => item.kind))],
+            site: start.recovery.siteName,
+            repairTargets: start.recovery.targets.map((target) => target.blueprintId),
+            broken: start.recovery.targets.filter((target) => target.state === "broken").length,
+            startingRaw: start.flops.raw,
             loaded: final.computers.some((computer) =>
               computer.state === "loaded" && computer.rawFlops > 0),
           });
         }
         console.log(JSON.stringify({
           same: JSON.stringify(first.unlocks) === JSON.stringify(repeat.unlocks)
-            && JSON.stringify(first.footprint) === JSON.stringify(repeat.footprint),
+            && JSON.stringify(first.footprint) === JSON.stringify(repeat.footprint)
+            && JSON.stringify(first.recovery) === JSON.stringify(repeat.recovery)
+            && JSON.stringify(first.structures) === JSON.stringify(repeat.structures),
           geometry: [first.persistence.floor.width, first.persistence.floor.height],
           owned: first.footprint.owned,
           frontier: first.footprint.frontier,
           starts,
-          required,
+          requiredStarterKinds,
+          requiredInheritedKinds,
         }));
         """
     )
@@ -81,8 +90,13 @@ def test_seeded_starts_are_deterministic_varied_and_viable():
     assert result["geometry"] == [12, 8]
     _assert_connected_footprint(result["owned"])
     assert len({start["kit"] for start in result["starts"]}) > 1
+    assert len({start["site"] for start in result["starts"]}) > 1
+    assert len({tuple(start["repairTargets"]) for start in result["starts"]}) > 1
     for start in result["starts"]:
-        assert set(result["required"]).issubset(start["kinds"])
+        assert set(result["requiredStarterKinds"]).issubset(start["kinds"])
+        assert set(result["requiredInheritedKinds"]).issubset(start["inheritedKinds"])
+        assert start["broken"] == 2
+        assert start["startingRaw"] == 0
         assert start["loaded"] is True
     owned = {(cell["x"], cell["y"]) for cell in result["owned"]}
     for cell in result["frontier"]:
@@ -97,6 +111,68 @@ def test_seeded_starts_are_deterministic_varied_and_viable():
                 (cell["x"], cell["y"] - 1),
             )
         )
+
+
+def test_inherited_site_repair_boot_and_research_unlocks_form_a_real_opening_loop():
+    result = _run_core(
+        """
+        const game = createOverhaulGame({seed: "recover-me"});
+        const events = [];
+        game.subscribe((event) => events.push(event));
+        const initial = game.snapshot();
+        const repairFrames = [];
+        for (const target of initial.recovery.targets) {
+          const started = game.command({type: "repair-structure", entityId: target.entityId});
+          repairFrames.push({started, snapshot: game.snapshot()});
+          game.tick(OVERHAUL_BALANCE.recovery.repairTicks);
+          repairFrames.push({snapshot: game.snapshot()});
+        }
+        const recovered = game.snapshot();
+        game.command({type: "set-routes", routes: {sell: 0, research: 1, train: 0, inference: 0}});
+        game.tick(30);
+        const researched = game.snapshot();
+        console.log(JSON.stringify({initial, repairFrames, recovered, researched, events}));
+        """
+    )
+
+    initial = result["initial"]
+    assert initial["recovery"]["phase"] == "triage"
+    assert initial["recovery"]["total"] == 2
+    assert initial["recovery"]["repaired"] == 0
+    assert initial["computers"][0]["state"] == "off"
+    assert {unlock["id"] for unlock in initial["unlocks"]} == {
+        "floor_claim", "power_line", "cooling_pipe", "data_cable"
+    }
+
+    first_started = result["repairFrames"][0]
+    assert first_started["started"]["ok"] is True
+    assert first_started["snapshot"]["recovery"]["phase"] == "repairing"
+    assert first_started["snapshot"]["actors"][1]["state"] == "repairing"
+    assert result["recovered"]["recovery"]["phase"] == "online"
+    assert result["recovered"]["recovery"]["repaired"] == 2
+    assert result["recovered"]["economy"]["cash"] == (
+        initial["economy"]["cash"]
+        - 2 * 90
+        + 240
+    )
+    assert "recovery-grid" in result["recovered"]["research"]["completedIds"]
+    assert {"generator", "cooling_pump"}.issubset(
+        {unlock["id"] for unlock in result["recovered"]["unlocks"]}
+    )
+
+    researched = result["researched"]
+    assert researched["flops"]["raw"] > 0
+    assert researched["research"]["points"] >= 80
+    assert {node["state"] for node in researched["research"]["nodes"]} == {"complete"}
+    assert {
+        "generator", "cooling_pump", initial["persistence"]["computerBlueprintId"],
+        "power_pole", "data_switch", "fiber_gateway", "ai_controller", "ai_bus",
+    }.issubset({unlock["id"] for unlock in researched["unlocks"]})
+    event_types = [event["type"] for event in result["events"]]
+    assert event_types.count("recovery.repair-started") == 2
+    assert event_types.count("recovery.repair-completed") == 2
+    assert "recovery.site-online" in event_types
+    assert event_types.count("research.node-completed") == 5
 
 
 def test_frontier_purchase_cost_and_placement_rules_prevent_islands():
@@ -607,13 +683,14 @@ def test_placement_preview_is_pure_and_topology_recomputes_without_waiting_for_a
     result = _run_core(
         """
         const game = createOverhaulGame({seed: "placement-preview"});
-        game.actions.place("generator", 3, 4);
+        game.runScenario("computer-path-connected");
+        game.actions.place("generator", 8, 7);
         const before = game.snapshot();
-        const preview = game.actions.previewPlacement("power_line", 3, 4);
+        const preview = game.actions.previewPlacement("power_line", 8, 7);
         const afterPreview = game.snapshot();
-        const placed = game.actions.place("power_line", 3, 4);
+        const placed = game.actions.place("power_line", 8, 7);
         const afterPlace = game.snapshot();
-        const removed = game.actions.remove(3, 4, "power");
+        const removed = game.actions.remove(8, 7, "power");
         const afterRemove = game.snapshot();
         console.log(JSON.stringify({
           pure: JSON.stringify(before) === JSON.stringify(afterPreview),
@@ -635,10 +712,13 @@ def test_placement_preview_is_pure_and_topology_recomputes_without_waiting_for_a
     assert result["preview"]["recurringBurdenFlops"] > 0
     power_delta = result["preview"]["networkDeltas"]["power"]
     assert power_delta["capacityDelta"] == 16
-    assert power_delta["maintenanceDelta"] == result["preview"]["recurringBurdenFlops"]
+    assert abs(
+        power_delta["maintenanceDelta"] - result["preview"]["recurringBurdenFlops"]
+    ) < 1e-9
     assert result["placed"]["ok"] is result["removed"]["ok"] is True
-    assert result["capacityAfterPlace"] == power_delta["after"]["capacity"] == 16
-    assert result["capacityAfterRemove"] == power_delta["before"]["capacity"] == 0
+    assert result["capacityAfterPlace"] == power_delta["after"]["capacity"]
+    assert result["capacityAfterRemove"] == power_delta["before"]["capacity"]
+    assert result["capacityAfterPlace"] - result["capacityAfterRemove"] == 16
     assert result["burdenAfterPlace"] > result["burdenAfterRemove"]
 
 

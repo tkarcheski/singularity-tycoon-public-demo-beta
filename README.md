@@ -37,3 +37,19 @@ Run the Robot Framework playtest with:
 uv run --locked --group test rfbrowser init chromium
 uv run --locked --group test robot --listener tests/integration/listeners/screenshot_listener.py --outputdir results/robot tests/integration
 ```
+
+Run only the goal-driven local-agent playtest (observe → decide → click →
+screenshot) with:
+
+```bash
+uv run --locked --group test robot \
+  --listener tests/integration/listeners/screenshot_listener.py \
+  --outputdir results/robot-playtest \
+  tests/integration/overhaul_playtest.robot
+```
+
+Open `results/robot-playtest/report.html` for the summary or
+`results/robot-playtest/log.html` for every AI decision and embedded full-page
+checkpoint. Standalone PNGs are retained under
+`results/robot-playtest/browser/screenshot/` and uploaded with the Robot CI
+artifact.

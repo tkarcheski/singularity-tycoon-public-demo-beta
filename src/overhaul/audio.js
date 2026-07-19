@@ -104,8 +104,12 @@ function recipesForEvent(event, snapshot) {
     if (resource.includes('power')) return ['relay-snap', 'transformer-thump'];
     return ['relay-snap', 'fan-grind-down'];
   }
-  if (event.type === 'ai.repair-started') return ['repair-servo'];
-  if (event.type === 'ai.repair-progressed') return ['repair-tool'];
+  if (event.type === 'ai.repair-started' || event.type === 'recovery.repair-started') {
+    return ['repair-servo'];
+  }
+  if (event.type === 'ai.repair-progressed' || event.type === 'recovery.repair-progressed') {
+    return ['repair-tool'];
+  }
   if (event.type === 'ai.fault-cleared' || event.type === 'computer.fault-cleared') {
     return ['relay-snap'];
   }
@@ -423,9 +427,11 @@ export function createOverhaulAudio(options = {}) {
     const tick = Number(snapshot?.ticks?.completed ?? snapshot?.ticks?.raw ?? 0);
     for (const event of Array.isArray(events) ? events : []) {
       if (!rememberEvent(eventKey(event))) continue;
-      if (['structure.placed', 'cell.claimed', 'ai.repair-started', 'ai.repair-progressed']
+      if (['structure.placed', 'cell.claimed', 'ai.repair-started', 'ai.repair-progressed',
+        'recovery.repair-started', 'recovery.repair-progressed']
         .includes(event.type)) holds.buildingUntil = Math.max(holds.buildingUntil, tick + 8);
-      if (['ai.level-up', 'text-trained', 'agent-created', 'job-completed', 'human-hired']
+      if (['ai.level-up', 'text-trained', 'agent-created', 'job-completed', 'human-hired',
+        'recovery.site-online', 'research.node-completed']
         .includes(event.type)) holds.breakthroughUntil = Math.max(holds.breakthroughUntil, tick + 12);
       for (const recipe of recipesForEvent(event, snapshot)) playRecipe(recipe, event);
     }

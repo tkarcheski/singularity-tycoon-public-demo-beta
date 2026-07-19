@@ -90,6 +90,29 @@ function defaultAiState() {
   };
 }
 
+function defaultResearchState() {
+  return {
+    completedIds: [],
+    lastUnlock: null,
+  };
+}
+
+function computerRuntime(blueprint) {
+  return {
+    state: 'off',
+    bootRemaining: blueprint.stats.bootTicks,
+    powerDelivered: 0,
+    coolingDelivered: 0,
+    dataConnected: false,
+    rawFlops: 0,
+    workload: 'idle',
+    utilization: 0,
+    temperatureC: OVERHAUL_BALANCE.thermal.ambientC,
+    throttle: 1,
+    fault: null,
+  };
+}
+
 function isAiEligibleBlueprint(blueprint) {
   const stats = blueprint?.stats || {};
   return (stats.powerGeneration || 0) > 0
@@ -186,6 +209,64 @@ function recomputeFrontier(state) {
   }
 }
 
+function seedInheritedDatacenter(state, rng, kit) {
+  const layout = OVERHAUL_SCENARIO_LAYOUT;
+  const inheritedIds = [];
+  const place = (blueprintId, x, y) => {
+    const blueprint = blueprintById(blueprintId);
+    const entityId = `${blueprint.kind}-${state.nextEntityId}`;
+    state.nextEntityId += 1;
+    const structure = {
+      entityId,
+      blueprintId,
+      condition: 100,
+      inherited: true,
+      aiEnabled: false,
+      aiConnected: false,
+      aiFault: null,
+    };
+    if (blueprint.kind === 'computer') structure.runtime = computerRuntime(blueprint);
+    getCell(state, x, y).layers[blueprint.layer] = structure;
+    inheritedIds.push(entityId);
+    return structure;
+  };
+
+  const generator = place('generator', layout.generator.x, layout.generator.y);
+  const coolingPump = place('cooling_pump', layout.coolingPump.x, layout.coolingPump.y);
+  place(kit.computerBlueprintId, layout.computer.x, layout.computer.y);
+  for (const [x, y] of layout.power) place('power_line', x, y);
+  for (const [x, y] of layout.cooling) place('cooling_pipe', x, y);
+  let dataSwitch = null;
+  for (const [x, y] of layout.data) {
+    const structure = place(
+      x === layout.dataSwitch.x && y === layout.dataSwitch.y ? 'data_switch' : 'data_cable',
+      x,
+      y,
+    );
+    if (structure.blueprintId === 'data_switch') dataSwitch = structure;
+  }
+  const critical = [generator, coolingPump, dataSwitch];
+
+  const variantIndex = Math.floor(nextRandom(rng) * critical.length);
+  const repairTargets = [
+    critical[variantIndex],
+    critical[(variantIndex + 1) % critical.length],
+  ];
+  for (const structure of repairTargets) structure.condition = 0;
+  const siteNames = OVERHAUL_BALANCE.recovery.siteNames;
+  const siteName = siteNames[Math.floor(nextRandom(rng) * siteNames.length)];
+  state.recovery = {
+    siteName,
+    variantId: `wreck-${variantIndex + 1}`,
+    phase: 'triage',
+    inheritedIds,
+    repairTargetIds: repairTargets.map((item) => item.entityId),
+    completedRepairIds: [],
+    activeRepair: null,
+    completionBonusPaid: false,
+  };
+}
+
 function initialState(seed) {
   const canonical = canonicalSeed(seed);
   const rng = { value: hashSeed(canonical) };
@@ -239,11 +320,15 @@ function initialState(seed) {
     networks: emptyNetworks(),
     utilities: defaultUtilityState(),
     ai: defaultAiState(),
+    recovery: null,
+    research: defaultResearchState(),
     tick: 0,
     completedTick: 0,
     nextEntityId: 3,
     eventSequence: 0,
   };
+  seedInheritedDatacenter(state, rng, kit);
+  state.rngState = rng.value;
   recomputeFrontier(state);
   return state;
 }
@@ -267,6 +352,19 @@ function restoreState(snapshot) {
   restored.ai = { ...defaultAiState(), ...(restored.ai || {}) };
   restored.ai.activeFaults = Array.isArray(restored.ai.activeFaults)
     ? restored.ai.activeFaults : [];
+  restored.research = { ...defaultResearchState(), ...(restored.research || {}) };
+  restored.research.completedIds = Array.isArray(restored.research.completedIds)
+    ? restored.research.completedIds : [];
+  restored.recovery = restored.recovery || {
+    siteName: 'Imported Datacenter',
+    variantId: 'legacy-import',
+    phase: 'online',
+    inheritedIds: [],
+    repairTargetIds: [],
+    completedRepairIds: [],
+    activeRepair: null,
+    completionBonusPaid: true,
+  };
   for (const cell of restored.floor.cells.flat()) {
     cell.layers = { facility: null, power: null, cooling: null, data: null, ai: null,
       ...(cell.layers || {}) };
@@ -1052,6 +1150,57 @@ function dominantWorkload(parts) {
   return choices[0][0];
 }
 
+function researchUnlockIds(state, node) {
+  return node.unlocks.map((id) => (id === 'computer:starter' ? state.computerBlueprintId : id));
+}
+
+function researchSnapshot(state) {
+  const completed = new Set(state.research.completedIds);
+  const recoveryOnline = state.recovery?.phase === 'online';
+  const nodes = OVERHAUL_BALANCE.research.nodes.map((node) => {
+    const unlocks = researchUnlockIds(state, node);
+    const complete = completed.has(node.id);
+    const available = recoveryOnline && state.progress.research + EPSILON >= node.threshold;
+    return {
+      ...clone(node),
+      unlocks,
+      state: complete ? 'complete' : available ? 'available' : 'locked',
+      progress: Math.min(state.progress.research, node.threshold),
+    };
+  });
+  return {
+    completedIds: [...state.research.completedIds],
+    lastUnlock: state.research.lastUnlock ? clone(state.research.lastUnlock) : null,
+    points: state.progress.research,
+    nodes,
+    next: nodes.find((node) => node.state !== 'complete') || null,
+  };
+}
+
+function recoverySnapshot(state) {
+  const entries = new Map(structureEntries(state)
+    .map((entry) => [entry.structure.entityId, entry]));
+  const targets = (state.recovery?.repairTargetIds || []).map((entityId) => {
+    const entry = entries.get(entityId);
+    return {
+      entityId,
+      blueprintId: entry?.blueprint?.id || null,
+      label: entry?.blueprint?.name || entityId,
+      x: entry?.cell?.x ?? null,
+      y: entry?.cell?.y ?? null,
+      condition: entry?.structure?.condition ?? 0,
+      state: state.recovery?.activeRepair?.entityId === entityId
+        ? 'repairing' : (entry?.structure?.condition || 0) > 0 ? 'repaired' : 'broken',
+    };
+  });
+  return {
+    ...clone(state.recovery),
+    targets,
+    repaired: targets.filter((target) => target.state === 'repaired').length,
+    total: targets.length,
+  };
+}
+
 function semanticSnapshot(state) {
   const owned = allCells(state).filter((cell) => cell.owned).map((cell) => ({
     key: cell.key, uiKey: `f0:${cell.x},${cell.y}`,
@@ -1120,6 +1269,8 @@ function semanticSnapshot(state) {
       x: entry.cell.x,
       y: entry.cell.y,
       condition: entry.structure.condition,
+      inherited: entry.structure.inherited === true,
+      repairable: entry.structure.inherited === true && entry.structure.condition < 100,
       aiEnabled,
       aiConnected,
       aiEfficiencyMultiplier,
@@ -1130,6 +1281,15 @@ function semanticSnapshot(state) {
           ? value : value * aiEfficiencyMultiplier])),
     };
   });
+  const recovery = recoverySnapshot(state);
+  const research = researchSnapshot(state);
+  const progression = {
+    current: recovery.repaired + research.completedIds.length,
+    total: recovery.total + research.nodes.length,
+    label: recovery.phase === 'online'
+      ? (research.next ? `Research · ${research.next.name}` : 'Inherited site mastered')
+      : `Recovery · ${recovery.siteName}`,
+  };
   const result = {
     schemaVersion: OVERHAUL_SCHEMA_VERSION,
     seed: state.seed,
@@ -1156,6 +1316,9 @@ function semanticSnapshot(state) {
     ticks: { raw: state.tick, completed: state.completedTick },
     routes: clone(state.routes),
     progress: clone(state.progress),
+    recovery,
+    research,
+    progression,
     business: clone(state.business),
     jobs: clone(state.business.jobs),
     persistence: clone(state),
@@ -1184,6 +1347,10 @@ function semanticSnapshot(state) {
 export function createOverhaulGame(options = {}) {
   let state = options.snapshot ? restoreState(options.snapshot) : initialState(options.seed);
   const listeners = new Set();
+  if (!options.snapshot) {
+    state.networks = computeNetworks(state).snapshot;
+    updateUtilityBurden(state);
+  }
 
   function emit(type, payload = {}, entityId = null) {
     state.eventSequence += 1;
@@ -1217,6 +1384,43 @@ export function createOverhaulGame(options = {}) {
     return id;
   }
 
+  function unlockBlueprints(ids, source) {
+    const unlocked = [];
+    for (const id of ids) {
+      if (!blueprintById(id) || state.unlockIds.includes(id)) continue;
+      state.unlockIds.push(id);
+      unlocked.push(id);
+    }
+    if (unlocked.length) emit('research.blueprints-unlocked', { source, unlocks: unlocked });
+    return unlocked;
+  }
+
+  function updateResearchProgression() {
+    if (state.recovery?.phase !== 'online') return [];
+    const completed = new Set(state.research.completedIds);
+    const newlyCompleted = [];
+    for (const node of OVERHAUL_BALANCE.research.nodes) {
+      if (completed.has(node.id) || state.progress.research + EPSILON < node.threshold) continue;
+      const unlocks = unlockBlueprints(researchUnlockIds(state, node), node.id);
+      completed.add(node.id);
+      state.research.completedIds.push(node.id);
+      state.research.lastUnlock = {
+        id: node.id,
+        name: node.name,
+        unlocks,
+        tick: state.tick,
+      };
+      newlyCompleted.push(node.id);
+      emit('research.node-completed', {
+        nodeId: node.id,
+        name: node.name,
+        threshold: node.threshold,
+        unlocks,
+      });
+    }
+    return newlyCompleted;
+  }
+
   function purchaseFrontier(key) {
     const parsed = parseCellKey(key);
     if (!parsed || parsed.floor !== state.floor.id) return reject('not-frontier', { cellKey: key });
@@ -1244,19 +1448,7 @@ export function createOverhaulGame(options = {}) {
       structure.aiFault = null;
     }
     if (blueprint.kind === 'computer') {
-      structure.runtime = {
-        state: 'off',
-        bootRemaining: blueprint.stats.bootTicks,
-        powerDelivered: 0,
-        coolingDelivered: 0,
-        dataConnected: false,
-        rawFlops: 0,
-        workload: 'idle',
-        utilization: 0,
-        temperatureC: OVERHAUL_BALANCE.thermal.ambientC,
-        throttle: 1,
-        fault: null,
-      };
+      structure.runtime = computerRuntime(blueprint);
     }
     return structure;
   }
@@ -1264,9 +1456,9 @@ export function createOverhaulGame(options = {}) {
   function placementReason(blueprintId, x, y, candidateState = state) {
     const blueprint = blueprintById(blueprintId);
     if (!blueprint || !blueprint.layer) return 'unknown-blueprint';
-    if (!candidateState.unlockIds.includes(blueprintId)) return 'locked-blueprint';
     const cell = getCell(candidateState, x, y);
     if (!cell?.owned) return 'unowned-cell';
+    if (!candidateState.unlockIds.includes(blueprintId)) return 'locked-blueprint';
     if (cell.layers[blueprint.layer]) return 'layer-occupied';
     if (blueprint.placement?.floor && blueprint.placement.floor !== candidateState.floor.number) {
       return 'wrong-floor';
@@ -1441,6 +1633,55 @@ export function createOverhaulGame(options = {}) {
     refreshNetworks();
     emit('ai.enabled-changed', { enabled }, entityId);
     return { ok: true, entityId, enabled };
+  }
+
+  function repairStructure(entityId) {
+    const entry = structureEntries(state).find(
+      (item) => item.structure.entityId === entityId,
+    );
+    if (!entry) return reject('missing-structure', { entityId });
+    if (!state.recovery?.repairTargetIds.includes(entityId)) {
+      return reject('not-recovery-target', { entityId });
+    }
+    if (entry.structure.condition >= 100) return reject('no-repair-needed', { entityId });
+    if (state.recovery.activeRepair) {
+      if (state.recovery.activeRepair.entityId === entityId) {
+        return { ok: true, ...clone(state.recovery.activeRepair) };
+      }
+      return reject('repair-in-progress', {
+        entityId,
+        activeEntityId: state.recovery.activeRepair.entityId,
+      });
+    }
+    const cost = OVERHAUL_BALANCE.recovery.repairCost;
+    if (state.economy.cash + EPSILON < cost) {
+      return reject('insufficient-cash', { entityId, operation: 'recovery-repair' });
+    }
+    const robot = state.actors.find((actor) => actor.kind === 'robot' && actor.state === 'idle');
+    if (!robot) return reject('no-idle-robot', { entityId });
+    state.economy.cash -= cost;
+    state.recovery.phase = 'repairing';
+    state.recovery.activeRepair = {
+      entityId,
+      robotId: robot.id,
+      cost,
+      ticksRemaining: OVERHAUL_BALANCE.recovery.repairTicks,
+    };
+    const from = robot.state;
+    robot.state = 'repairing';
+    robot.assignment = { kind: 'recovery', entityId };
+    emit('robot.state-changed', {
+      from,
+      state: robot.state,
+      assignment: clone(robot.assignment),
+    }, robot.id);
+    emit('recovery.repair-started', {
+      siteName: state.recovery.siteName,
+      robotId: robot.id,
+      cost,
+      ticksRemaining: state.recovery.activeRepair.ticksRemaining,
+    }, entityId);
+    return { ok: true, ...clone(state.recovery.activeRepair) };
   }
 
   function repairAiFault(entityId) {
@@ -1629,6 +1870,7 @@ export function createOverhaulGame(options = {}) {
     remove,
     setRoutes,
     setAiEnabled,
+    repairStructure,
     repairAiFault,
     completeTextTraining,
     buildHarness,
@@ -1647,6 +1889,7 @@ export function createOverhaulGame(options = {}) {
       case 'remove': return remove(input.x, input.y, input.layer);
       case 'set-routes': return setRoutes(input.routes || input);
       case 'set-ai-enabled': return setAiEnabled(input.entityId, input.enabled);
+      case 'repair-structure': return repairStructure(input.entityId);
       case 'repair-ai-fault': return repairAiFault(input.entityId);
       case 'complete-text-training': return completeTextTraining();
       case 'build-harness': return buildHarness(input.textId);
@@ -1876,6 +2119,57 @@ export function createOverhaulGame(options = {}) {
     }
   }
 
+  function processRecoveryRepair() {
+    const active = state.recovery?.activeRepair;
+    if (!active) return;
+    active.ticksRemaining = Math.max(0, active.ticksRemaining - 1);
+    emit('recovery.repair-progressed', {
+      robotId: active.robotId,
+      ticksRemaining: active.ticksRemaining,
+    }, active.entityId);
+    if (active.ticksRemaining > 0) return;
+    const entry = structureEntries(state).find(
+      (item) => item.structure.entityId === active.entityId,
+    );
+    if (entry) entry.structure.condition = 100;
+    if (!state.recovery.completedRepairIds.includes(active.entityId)) {
+      state.recovery.completedRepairIds.push(active.entityId);
+    }
+    const robot = state.actors.find((actor) => actor.id === active.robotId);
+    if (robot) {
+      const from = robot.state;
+      robot.state = 'idle';
+      robot.assignment = null;
+      emit('robot.state-changed', { from, state: robot.state, assignment: null }, robot.id);
+    }
+    emit('recovery.repair-completed', {
+      siteName: state.recovery.siteName,
+      repaired: state.recovery.completedRepairIds.length,
+      total: state.recovery.repairTargetIds.length,
+    }, active.entityId);
+    state.recovery.activeRepair = null;
+    const remaining = state.recovery.repairTargetIds.some((entityId) => {
+      const target = structureEntries(state).find(
+        (item) => item.structure.entityId === entityId,
+      );
+      return !target || target.structure.condition <= 0;
+    });
+    if (remaining) {
+      state.recovery.phase = 'triage';
+      return;
+    }
+    state.recovery.phase = 'online';
+    if (!state.recovery.completionBonusPaid) {
+      state.recovery.completionBonusPaid = true;
+      state.economy.cash += OVERHAUL_BALANCE.recovery.completionBonus;
+    }
+    emit('recovery.site-online', {
+      siteName: state.recovery.siteName,
+      completionBonus: OVERHAUL_BALANCE.recovery.completionBonus,
+    });
+    updateResearchProgression();
+  }
+
   function processAiTraining(researchFlops, network) {
     if (network.onlineControllerCount <= 0 || researchFlops <= EPSILON) return;
     const balance = OVERHAUL_BALANCE.ai;
@@ -2035,6 +2329,7 @@ export function createOverhaulGame(options = {}) {
   }
 
   function simulateOneTick() {
+    processRecoveryRepair();
     processAiRepairs();
     const previousSell = clone(state.sell);
     const network = computeNetworks(state);
@@ -2113,6 +2408,7 @@ export function createOverhaulGame(options = {}) {
     state.progress.training += ledger.training;
     state.progress.inference += ledger.jobs;
     state.progress.rawFlopsSold += ledger.sell;
+    updateResearchProgression();
     processAiTraining(ledger.reserved, network);
 
     const saleIncome = ledger.sell * OVERHAUL_BALANCE.economy.rawFlopsSalePrice;
@@ -2232,11 +2528,34 @@ export function createOverhaulGame(options = {}) {
     throw new Error('Scenario computer did not reach loaded state');
   }
 
+  function prepareScenario() {
+    state.unlockIds = Object.keys(OVERHAUL_BLUEPRINTS);
+    for (const entry of structureEntries(state)) entry.structure.condition = 100;
+    if (state.recovery) {
+      state.recovery.phase = 'online';
+      state.recovery.activeRepair = null;
+      state.recovery.completedRepairIds = [...state.recovery.repairTargetIds];
+      state.recovery.completionBonusPaid = true;
+    }
+    const recoveryRobot = state.actors.find(
+      (actor) => actor.kind === 'robot' && actor.assignment?.kind === 'recovery',
+    );
+    if (recoveryRobot) {
+      recoveryRobot.state = 'idle';
+      recoveryRobot.assignment = null;
+    }
+    state.networks = computeNetworks(state).snapshot;
+  }
+
   function runScenario(name) {
     const snapshots = [];
     let scenarioEvents = null;
+    prepareScenario();
     switch (name) {
       case 'computer-path-disconnected': {
+        for (const entry of structureEntries(state)) {
+          if (entry.blueprint?.kind !== 'computer') entry.structure.condition = 0;
+        }
         const point = OVERHAUL_SCENARIO_LAYOUT.computer;
         ensurePlaced(state.computerBlueprintId, point.x, point.y);
         tick();
