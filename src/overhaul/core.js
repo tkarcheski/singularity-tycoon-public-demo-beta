@@ -310,13 +310,14 @@ function initialState(seed) {
     actors: [
       {
         id: 'human-1', kind: 'human', state: 'idle', role: 'founder',
-        floor: 0, floorKey: 'F1', x: 4, y: 7,
+        label: 'AYA', floor: 0, floorKey: 'F1', x: 4, y: 7, assignment: null,
       },
       {
         id: 'robot-2', kind: 'robot', state: 'idle', assignment: null,
-        floor: 0, floorKey: 'F1', x: 5, y: 7,
+        label: 'MICA-2', floor: 0, floorKey: 'F1', x: 5, y: 7,
       },
     ],
+    construction: { jobs: [], completed: 0 },
     networks: emptyNetworks(),
     utilities: defaultUtilityState(),
     ai: defaultAiState(),
@@ -355,6 +356,13 @@ function restoreState(snapshot) {
   restored.research = { ...defaultResearchState(), ...(restored.research || {}) };
   restored.research.completedIds = Array.isArray(restored.research.completedIds)
     ? restored.research.completedIds : [];
+  restored.construction = {
+    jobs: [],
+    completed: 0,
+    ...(restored.construction || {}),
+  };
+  restored.construction.jobs = Array.isArray(restored.construction.jobs)
+    ? restored.construction.jobs : [];
   restored.recovery = restored.recovery || {
     siteName: 'Imported Datacenter',
     variantId: 'legacy-import',
@@ -405,7 +413,7 @@ function utilityBurden(state) {
     .map((layer) => [layer, { segments: 0, maintenanceFlopsPerTick: 0 }]));
   for (const entry of structureEntries(state)) {
     const maintenance = entry.blueprint?.stats?.maintenanceFlopsPerTick || 0;
-    if (!maintenance || entry.layer === 'facility') continue;
+    if (!maintenance || entry.layer === 'facility' || entry.structure.condition <= 0) continue;
     byLayer[entry.layer].segments += 1;
     byLayer[entry.layer].maintenanceFlopsPerTick += maintenance;
   }
@@ -1229,9 +1237,11 @@ function semanticSnapshot(state) {
       temperatureC: runtime.temperatureC,
       throttle: runtime.throttle,
       fault: runtime.fault,
+      construction: entry.structure.construction ? clone(entry.structure.construction) : null,
     };
   });
-  const computerActors = computers.map((computer) => ({
+  const computerActors = computers.filter((computer) => !computer.construction
+      || computer.construction.state === 'complete').map((computer) => ({
     id: computer.id,
     kind: 'computer',
     state: computer.state,
@@ -1269,6 +1279,7 @@ function semanticSnapshot(state) {
       x: entry.cell.x,
       y: entry.cell.y,
       condition: entry.structure.condition,
+      construction: entry.structure.construction ? clone(entry.structure.construction) : null,
       inherited: entry.structure.inherited === true,
       repairable: entry.structure.inherited === true && entry.structure.condition < 100,
       aiEnabled,
@@ -1320,6 +1331,7 @@ function semanticSnapshot(state) {
     research,
     progression,
     business: clone(state.business),
+    construction: clone(state.construction),
     jobs: clone(state.business.jobs),
     persistence: clone(state),
   };
@@ -1384,6 +1396,190 @@ export function createOverhaulGame(options = {}) {
     return id;
   }
 
+  function transitionActor(actor, nextState, assignment = actor.assignment) {
+    if (!actor) return;
+    const from = actor.state;
+    actor.state = nextState;
+    actor.assignment = assignment ? clone(assignment) : null;
+    if (from !== nextState) {
+      emit(`${actor.kind}.state-changed`, {
+        from,
+        state: nextState,
+        assignment: actor.assignment ? clone(actor.assignment) : null,
+      }, actor.id);
+    }
+  }
+
+  function moveActorToward(actor, target) {
+    if (!actor || !target) return false;
+    const from = { x: actor.x, y: actor.y };
+    if (actor.x !== target.x) actor.x += Math.sign(target.x - actor.x);
+    if (actor.y !== target.y) actor.y += Math.sign(target.y - actor.y);
+    const arrived = actor.x === target.x && actor.y === target.y;
+    if (from.x !== actor.x || from.y !== actor.y) {
+      emit(`${actor.kind}.moved`, {
+        from,
+        to: { x: actor.x, y: actor.y },
+        target: clone(target),
+        arrived,
+      }, actor.id);
+    }
+    return arrived;
+  }
+
+  function availableCrew() {
+    const human = state.actors.find((actor) => actor.kind === 'human'
+      && actor.state === 'idle' && !actor.assignment);
+    const robot = state.actors.find((actor) => actor.kind === 'robot'
+      && actor.state === 'idle' && !actor.assignment);
+    return human && robot ? { human, robot } : null;
+  }
+
+  function assignCrew(kind, entityId, target, extra = {}) {
+    const crew = availableCrew();
+    if (!crew) return null;
+    const assignment = {
+      kind,
+      entityId,
+      target: clone(target),
+      phase: 'traveling',
+      ...clone(extra),
+    };
+    transitionActor(crew.human, 'moving', assignment);
+    transitionActor(crew.robot, 'moving', assignment);
+    return { humanId: crew.human.id, robotId: crew.robot.id };
+  }
+
+  function releaseCrew(taskKind, entityId, crew) {
+    for (const actorId of [crew?.humanId, crew?.robotId].filter(Boolean)) {
+      const actor = state.actors.find((item) => item.id === actorId);
+      if (!actor || actor.assignment?.kind !== taskKind
+          || actor.assignment?.entityId !== entityId) continue;
+      transitionActor(actor, 'idle', null);
+    }
+  }
+
+  function constructionEntry(entityId) {
+    return structureEntries(state).find((entry) => entry.structure.entityId === entityId);
+  }
+
+  function syncConstruction(job, structure) {
+    structure.construction = {
+      state: job.phase,
+      phase: job.phase,
+      totalTicks: job.totalTicks,
+      ticksRemaining: job.ticksRemaining,
+      progress: Math.max(0, Math.min(1,
+        (job.totalTicks - job.ticksRemaining) / Math.max(1, job.totalTicks))),
+      humanId: job.humanId || null,
+      robotId: job.robotId || null,
+      queuedTick: job.queuedTick,
+    };
+  }
+
+  function assignConstructionCrew(job, entry) {
+    const crew = assignCrew('construction', job.entityId, {
+      floor: 0,
+      floorKey: state.floor.id,
+      x: entry.cell.x,
+      y: entry.cell.y,
+    }, { jobId: job.id });
+    if (!crew) return false;
+    Object.assign(job, crew, { phase: 'traveling' });
+    syncConstruction(job, entry.structure);
+    emit('construction.crew-dispatched', {
+      jobId: job.id,
+      blueprintId: entry.blueprint.id,
+      cellKey: entry.cell.key,
+      ...crew,
+    }, job.entityId);
+    return true;
+  }
+
+  function completeConstruction(job, entry, reason = 'commissioned') {
+    entry.structure.condition = 100;
+    entry.structure.construction = {
+      ...entry.structure.construction,
+      state: 'complete',
+      phase: 'complete',
+      ticksRemaining: 0,
+      progress: 1,
+      completedTick: state.tick,
+    };
+    state.construction.completed += 1;
+    state.construction.jobs = state.construction.jobs.filter((item) => item.id !== job.id);
+    releaseCrew('construction', job.entityId, job);
+    emit('structure.construction-completed', {
+      jobId: job.id,
+      blueprintId: entry.blueprint.id,
+      cellKey: entry.cell.key,
+      humanId: job.humanId,
+      robotId: job.robotId,
+      reason,
+    }, job.entityId);
+  }
+
+  function processConstruction() {
+    for (const job of [...state.construction.jobs]) {
+      const entry = constructionEntry(job.entityId);
+      if (!entry) {
+        releaseCrew('construction', job.entityId, job);
+        state.construction.jobs = state.construction.jobs.filter((item) => item.id !== job.id);
+        continue;
+      }
+      if (!job.humanId || !job.robotId) {
+        job.phase = 'queued';
+        syncConstruction(job, entry.structure);
+        if (!assignConstructionCrew(job, entry)) continue;
+      }
+      const human = state.actors.find((actor) => actor.id === job.humanId);
+      const robot = state.actors.find((actor) => actor.id === job.robotId);
+      if (!human || !robot) {
+        releaseCrew('construction', job.entityId, job);
+        Object.assign(job, { humanId: null, robotId: null, phase: 'queued' });
+        syncConstruction(job, entry.structure);
+        continue;
+      }
+      const target = { floor: 0, floorKey: state.floor.id, x: entry.cell.x, y: entry.cell.y };
+      const humanArrived = moveActorToward(human, target);
+      const robotArrived = moveActorToward(robot, target);
+      if (!humanArrived || !robotArrived) {
+        job.phase = 'traveling';
+        human.assignment.phase = 'traveling';
+        robot.assignment.phase = 'traveling';
+        transitionActor(human, 'moving');
+        transitionActor(robot, 'moving');
+        syncConstruction(job, entry.structure);
+        continue;
+      }
+      const commissioning = job.ticksRemaining <= OVERHAUL_BALANCE.construction.commissioningTicks;
+      job.phase = commissioning ? 'commissioning' : 'assembling';
+      human.assignment.phase = job.phase;
+      robot.assignment.phase = job.phase;
+      transitionActor(human, commissioning ? 'inspecting' : 'working');
+      transitionActor(robot, commissioning ? 'maintaining' : 'building');
+      job.ticksRemaining = Math.max(0, job.ticksRemaining - 1);
+      if (!commissioning && job.ticksRemaining > 0
+          && job.ticksRemaining <= OVERHAUL_BALANCE.construction.commissioningTicks) {
+        job.phase = 'commissioning';
+        human.assignment.phase = job.phase;
+        robot.assignment.phase = job.phase;
+        transitionActor(human, 'inspecting');
+        transitionActor(robot, 'maintaining');
+      }
+      syncConstruction(job, entry.structure);
+      emit('structure.construction-progressed', {
+        jobId: job.id,
+        phase: job.phase,
+        ticksRemaining: job.ticksRemaining,
+        progress: entry.structure.construction.progress,
+        humanId: job.humanId,
+        robotId: job.robotId,
+      }, job.entityId);
+      if (job.ticksRemaining <= 0) completeConstruction(job, entry);
+    }
+  }
+
   function unlockBlueprints(ids, source) {
     const unlocked = [];
     for (const id of ids) {
@@ -1439,9 +1635,9 @@ export function createOverhaulGame(options = {}) {
     return purchaseFrontier(cellKey(state.floor.id, x, y));
   }
 
-  function createStructure(blueprint) {
+  function createStructure(blueprint, condition = 100) {
     const entityId = nextEntityId(blueprint.kind);
-    const structure = { entityId, blueprintId: blueprint.id, condition: 100 };
+    const structure = { entityId, blueprintId: blueprint.id, condition };
     if (isAiEligibleBlueprint(blueprint)) {
       structure.aiEnabled = false;
       structure.aiConnected = false;
@@ -1556,6 +1752,8 @@ export function createOverhaulGame(options = {}) {
       blueprintId,
       cellKey: cellKey(state.floor.id, x, y),
       cost: blueprint.cost,
+      constructionTicks: OVERHAUL_BALANCE.construction.assemblyTicks
+        + OVERHAUL_BALANCE.construction.commissioningTicks,
       recurringBurdenFlops: blueprint.stats?.maintenanceFlopsPerTick || 0,
       networkRole: blueprint.networkRole || null,
       networkDeltas,
@@ -1569,8 +1767,27 @@ export function createOverhaulGame(options = {}) {
     if (reason) return reject(reason, { blueprintId, x, y });
     const cell = getCell(state, x, y);
     state.economy.cash -= blueprint.cost;
-    const structure = createStructure(blueprint);
+    const structure = createStructure(blueprint, 0);
     cell.layers[blueprint.layer] = structure;
+    const totalTicks = OVERHAUL_BALANCE.construction.assemblyTicks
+      + OVERHAUL_BALANCE.construction.commissioningTicks;
+    const job = {
+      id: nextEntityId('construction'),
+      entityId: structure.entityId,
+      blueprintId,
+      cellKey: cell.key,
+      x,
+      y,
+      phase: 'queued',
+      totalTicks,
+      ticksRemaining: totalTicks,
+      humanId: null,
+      robotId: null,
+      queuedTick: state.tick,
+    };
+    state.construction.jobs.push(job);
+    syncConstruction(job, structure);
+    assignConstructionCrew(job, { cell, structure, blueprint });
     refreshNetworks();
     emit('structure.placed', {
       blueprintId,
@@ -1578,8 +1795,25 @@ export function createOverhaulGame(options = {}) {
       layer: blueprint.layer,
       cellKey: cell.key,
       cost: blueprint.cost,
+      constructionJobId: job.id,
+      operational: false,
     }, structure.entityId);
-    return { ok: true, entityId: structure.entityId, cellKey: cell.key };
+    emit('structure.construction-queued', {
+      jobId: job.id,
+      blueprintId,
+      cellKey: cell.key,
+      totalTicks,
+      humanId: job.humanId,
+      robotId: job.robotId,
+    }, structure.entityId);
+    return {
+      ok: true,
+      entityId: structure.entityId,
+      cellKey: cell.key,
+      constructionJobId: job.id,
+      state: job.phase,
+      operational: false,
+    };
   }
 
   function remove(x, y, layer) {
@@ -1587,6 +1821,15 @@ export function createOverhaulGame(options = {}) {
     const cell = getCell(state, x, y);
     const structure = cell?.layers[layer];
     if (!structure) return reject('nothing-to-remove', { x, y, layer });
+    const constructionJob = state.construction.jobs.find(
+      (job) => job.entityId === structure.entityId,
+    );
+    if (constructionJob) {
+      releaseCrew('construction', structure.entityId, constructionJob);
+      state.construction.jobs = state.construction.jobs.filter(
+        (job) => job.entityId !== structure.entityId,
+      );
+    }
     const removedFault = state.ai.activeFaults.find(
       (fault) => fault.entityId === structure.entityId,
     );
@@ -1657,28 +1900,27 @@ export function createOverhaulGame(options = {}) {
     if (state.economy.cash + EPSILON < cost) {
       return reject('insufficient-cash', { entityId, operation: 'recovery-repair' });
     }
-    const robot = state.actors.find((actor) => actor.kind === 'robot' && actor.state === 'idle');
-    if (!robot) return reject('no-idle-robot', { entityId });
+    const crew = assignCrew('recovery', entityId, {
+      floor: 0,
+      floorKey: state.floor.id,
+      x: entry.cell.x,
+      y: entry.cell.y,
+    });
+    if (!crew) return reject('no-idle-crew', { entityId });
     state.economy.cash -= cost;
     state.recovery.phase = 'repairing';
     state.recovery.activeRepair = {
       entityId,
-      robotId: robot.id,
+      ...crew,
       cost,
+      phase: 'traveling',
       ticksRemaining: OVERHAUL_BALANCE.recovery.repairTicks,
     };
-    const from = robot.state;
-    robot.state = 'repairing';
-    robot.assignment = { kind: 'recovery', entityId };
-    emit('robot.state-changed', {
-      from,
-      state: robot.state,
-      assignment: clone(robot.assignment),
-    }, robot.id);
     emit('recovery.repair-started', {
       siteName: state.recovery.siteName,
-      robotId: robot.id,
+      ...crew,
       cost,
+      phase: state.recovery.activeRepair.phase,
       ticksRemaining: state.recovery.activeRepair.ticksRemaining,
     }, entityId);
     return { ok: true, ...clone(state.recovery.activeRepair) };
@@ -2122,28 +2364,52 @@ export function createOverhaulGame(options = {}) {
   function processRecoveryRepair() {
     const active = state.recovery?.activeRepair;
     if (!active) return;
-    active.ticksRemaining = Math.max(0, active.ticksRemaining - 1);
-    emit('recovery.repair-progressed', {
-      robotId: active.robotId,
-      ticksRemaining: active.ticksRemaining,
-    }, active.entityId);
-    if (active.ticksRemaining > 0) return;
     const entry = structureEntries(state).find(
       (item) => item.structure.entityId === active.entityId,
     );
+    const human = state.actors.find((actor) => actor.id === active.humanId);
+    const robot = state.actors.find((actor) => actor.id === active.robotId);
+    if (!entry || !human || !robot) return;
+    const target = { floor: 0, floorKey: state.floor.id, x: entry.cell.x, y: entry.cell.y };
+    const humanArrived = moveActorToward(human, target);
+    const robotArrived = moveActorToward(robot, target);
+    if (!humanArrived || !robotArrived) {
+      active.phase = 'traveling';
+      human.assignment.phase = 'traveling';
+      robot.assignment.phase = 'traveling';
+      transitionActor(human, 'moving');
+      transitionActor(robot, 'moving');
+      emit('recovery.crew-traveled', {
+        humanId: active.humanId,
+        robotId: active.robotId,
+        phase: active.phase,
+        humanPosition: { x: human.x, y: human.y },
+        robotPosition: { x: robot.x, y: robot.y },
+      }, active.entityId);
+      return;
+    }
+    active.phase = 'maintaining';
+    human.assignment.phase = active.phase;
+    robot.assignment.phase = active.phase;
+    transitionActor(human, 'repairing');
+    transitionActor(robot, 'maintaining');
+    active.ticksRemaining = Math.max(0, active.ticksRemaining - 1);
+    emit('recovery.repair-progressed', {
+      humanId: active.humanId,
+      robotId: active.robotId,
+      phase: active.phase,
+      ticksRemaining: active.ticksRemaining,
+    }, active.entityId);
+    if (active.ticksRemaining > 0) return;
     if (entry) entry.structure.condition = 100;
     if (!state.recovery.completedRepairIds.includes(active.entityId)) {
       state.recovery.completedRepairIds.push(active.entityId);
     }
-    const robot = state.actors.find((actor) => actor.id === active.robotId);
-    if (robot) {
-      const from = robot.state;
-      robot.state = 'idle';
-      robot.assignment = null;
-      emit('robot.state-changed', { from, state: robot.state, assignment: null }, robot.id);
-    }
+    releaseCrew('recovery', active.entityId, active);
     emit('recovery.repair-completed', {
       siteName: state.recovery.siteName,
+      humanId: active.humanId,
+      robotId: active.robotId,
       repaired: state.recovery.completedRepairIds.length,
       total: state.recovery.repairTargetIds.length,
     }, active.entityId);
@@ -2213,23 +2479,30 @@ export function createOverhaulGame(options = {}) {
     }
     const robot = state.actors.find((actor) => actor.kind === 'robot' && actor.state === 'idle');
     if (!robot) return null;
-    const from = robot.state;
-    robot.state = 'repairing';
-    robot.assignment = {
+    const entry = structureEntries(state).find(
+      (item) => item.structure.entityId === fault.entityId,
+    );
+    const target = entry ? {
+      floor: 0,
+      floorKey: state.floor.id,
+      x: entry.cell.x,
+      y: entry.cell.y,
+    } : { floor: 0, floorKey: state.floor.id, x: robot.x, y: robot.y };
+    const assignment = {
       kind: 'ai-fault',
       faultId: fault.faultId,
       entityId: fault.entityId,
       repairRemaining: fault.repairRemaining,
+      phase: 'traveling',
+      target,
     };
+    transitionActor(robot, 'moving', assignment);
     fault.robotId = robot.id;
-    emit('robot.state-changed', {
-      from,
-      state: robot.state,
-      assignment: clone(robot.assignment),
-    }, robot.id);
+    fault.phase = 'traveling';
     emit('ai.repair-started', {
       faultId: fault.faultId,
       robotId: robot.id,
+      phase: fault.phase,
       repairRemaining: fault.repairRemaining,
     }, fault.entityId);
     return robot;
@@ -2262,14 +2535,38 @@ export function createOverhaulGame(options = {}) {
     }
     for (const fault of [...state.ai.activeFaults]) {
       if (!fault.robotId) continue;
-      fault.repairRemaining = Math.max(0, fault.repairRemaining - 1);
       const robot = state.actors.find((actor) => actor.id === fault.robotId);
+      let target = robot?.assignment?.target;
+      if (robot && !target) {
+        const entry = structureEntries(state).find(
+          (item) => item.structure.entityId === fault.entityId,
+        );
+        if (entry) {
+          target = { floor: 0, floorKey: state.floor.id, x: entry.cell.x, y: entry.cell.y };
+          robot.assignment.target = clone(target);
+        }
+      }
+      if (!robot || !moveActorToward(robot, target)) {
+        if (robot) transitionActor(robot, 'moving');
+        fault.phase = 'traveling';
+        emit('ai.repair-crew-traveled', {
+          faultId: fault.faultId,
+          robotId: fault.robotId,
+          position: robot ? { x: robot.x, y: robot.y } : null,
+        }, fault.entityId);
+        continue;
+      }
+      fault.phase = 'maintaining';
+      robot.assignment.phase = fault.phase;
+      transitionActor(robot, 'repairing');
+      fault.repairRemaining = Math.max(0, fault.repairRemaining - 1);
       if (robot?.assignment?.faultId === fault.faultId) {
         robot.assignment.repairRemaining = fault.repairRemaining;
       }
       emit('ai.repair-progressed', {
         faultId: fault.faultId,
         robotId: fault.robotId,
+        phase: fault.phase,
         repairRemaining: fault.repairRemaining,
       }, fault.entityId);
       if (fault.repairRemaining <= 0) completeAiRepair(fault);
@@ -2331,6 +2628,7 @@ export function createOverhaulGame(options = {}) {
   function simulateOneTick() {
     processRecoveryRepair();
     processAiRepairs();
+    processConstruction();
     const previousSell = clone(state.sell);
     const network = computeNetworks(state);
     state.networks = network.snapshot;
@@ -2483,9 +2781,22 @@ export function createOverhaulGame(options = {}) {
   function ensurePlaced(blueprintId, x, y) {
     const blueprint = blueprintById(blueprintId);
     const existing = getCell(state, x, y)?.layers[blueprint.layer];
-    if (existing?.blueprintId === blueprintId) return existing.entityId;
+    if (existing?.blueprintId === blueprintId) {
+      const pending = state.construction.jobs.find((job) => job.entityId === existing.entityId);
+      if (pending) {
+        completeConstruction(pending, constructionEntry(existing.entityId), 'scenario-fixture');
+        refreshNetworks();
+      }
+      return existing.entityId;
+    }
     if (existing) throw new Error(`Scenario cell ${x},${y} ${blueprint.layer} already occupied`);
-    return requireAction(place(blueprintId, x, y), blueprintId).entityId;
+    const placed = requireAction(place(blueprintId, x, y), blueprintId);
+    const pending = state.construction.jobs.find((job) => job.entityId === placed.entityId);
+    if (pending) {
+      completeConstruction(pending, constructionEntry(placed.entityId), 'scenario-fixture');
+      refreshNetworks();
+    }
+    return placed.entityId;
   }
 
   function buildComputerPath({ fiber = false } = {}) {

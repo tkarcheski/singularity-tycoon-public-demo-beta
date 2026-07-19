@@ -22,11 +22,12 @@ class LocalPlaytestAgent:
 
         active = recovery.get("activeRepair")
         if active:
+            phase = active.get("phase") or "working"
             return {
                 "kind": "wait",
                 "reason": (
-                    f"Repair crew is working on {active['entityId']}; "
-                    f"{active['ticksRemaining']} committed ticks remain."
+                    f"AYA and MICA-2 are {phase} for {active['entityId']}; "
+                    f"{active['ticksRemaining']} hands-on ticks remain after travel."
                 ),
             }
 

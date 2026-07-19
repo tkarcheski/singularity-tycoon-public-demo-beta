@@ -34,6 +34,10 @@ export const OVERHAUL_BALANCE = deepFreeze({
       'Orchid Municipal Cloud',
     ],
   },
+  construction: {
+    assemblyTicks: 3,
+    commissioningTicks: 1,
+  },
   research: {
     nodes: [
       {

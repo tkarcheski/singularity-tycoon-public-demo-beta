@@ -102,3 +102,26 @@ Run Local AI Playtest
     Playtest View Should Be Readable
     Capture Playtest Checkpoint    999-goal-met
     RETURN    ${decisions}
+
+Stage Blueprint Work Order
+    [Arguments]    ${blueprint_id}    ${x}    ${y}
+    [Documentation]    Place a blueprint through real controls and return its queued entity.
+    Click    css=[data-blueprint="${blueprint_id}"]
+    Click    css=.cell[data-x="${x}"][data-y="${y}"]
+    Wait For Elements State    css=.cell[data-x="${x}"][data-y="${y}"] [data-construction-site]    visible    3s
+    ${entity_id}=    Evaluate JavaScript    ${None}    ([blueprintId,x,y]) => window.__overhaulAcceptance.snapshot().presentation.structures.find(item => item.blueprintId === blueprintId && item.x === Number(x) && item.y === Number(y))?.id    arg=${{["${blueprint_id}", ${x}, ${y}]}}
+    Should Not Be Empty    ${entity_id}
+    RETURN    ${entity_id}
+
+Construction Phase Should Be
+    [Arguments]    ${entity_id}    ${phase}
+    ${state}=    Evaluate JavaScript    ${None}    ([entityId,phase]) => { const snapshot=window.__overhaulAcceptance.snapshot().presentation; const structure=snapshot.structures.find(item => item.id === entityId); const crew=snapshot.actors.filter(item => item.assignment?.entityId === entityId); const expected=phase === 'traveling' ? ['moving','moving'] : phase === 'assembling' ? ['building','working'] : phase === 'commissioning' ? ['inspecting','maintaining'] : []; return { phase:structure?.construction?.phase, condition:structure?.condition, crewStates:crew.map(item => item.state).sort(), expected:expected.sort(), sitePhase:document.querySelector(`[data-construction-site="${entityId}"]`)?.dataset.constructionPhase || null, uiTick:Number(document.documentElement.dataset.uiTick), completed:snapshot.ticks.completed } }    arg=${{["${entity_id}", "${phase}"]}}
+    Should Be Equal    ${state}[phase]    ${phase}
+    Should Be Equal    ${state}[crewStates]    ${state}[expected]
+    Should Be Equal As Integers    ${state}[uiTick]    ${state}[completed]
+    IF    "${phase}" == "complete"
+        Should Be Equal As Integers    ${state}[condition]    100
+        Should Be Equal    ${state}[sitePhase]    ${None}
+    ELSE
+        Should Be Equal    ${state}[sitePhase]    ${phase}
+    END

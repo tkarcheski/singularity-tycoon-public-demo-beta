@@ -23,6 +23,12 @@ Open `index.html` for the legacy demo or `overhaul.html` for the connected,
 tile-by-tile overhaul playtest. Remote playtesters on the development host use
 `http://ai1:8765/overhaul.html`.
 
+The overhaul opens inside a deterministic inherited datacenter. Seeded
+failures turn the first minutes into a recovery job, while new blueprints stay
+offline as visible worksites until the human-and-robot crew travels to the
+tile, assembles it, performs final inspection and maintenance, and commissions
+the structure.
+
 Python browser tooling is locked and managed with [uv](https://docs.astral.sh/uv/):
 
 ```bash

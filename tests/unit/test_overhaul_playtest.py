@@ -513,7 +513,100 @@ def test_visible_blueprint_and_owned_cell_click_build_through_real_ui(overhaul, 
     )
     feedback = overhaul.locator('.command-feedback[data-tone="good"]')
     feedback.wait_for(state="visible")
-    assert "placed" in feedback.inner_text().lower()
+    assert "blueprint staged" in feedback.inner_text().lower()
+
+    staged = _snapshot(overhaul)
+    staged_structure = next(
+        item for item in staged["structures"]
+        if item["blueprintId"] == blueprint_id
+        and item["x"] == target["x"] and item["y"] == target["y"]
+    )
+    entity_id = staged_structure["id"]
+    assert staged_structure["condition"] == 0
+    assert staged_structure["construction"]["phase"] == "traveling"
+    worksite = cell.locator(f'[data-construction-site="{entity_id}"]')
+    assert worksite.count() == 1 and worksite.is_visible()
+    moving_crew = overhaul.locator(
+        f'[data-assignment-kind="construction"][data-actor-state="moving"]'
+    )
+    assert moving_crew.count() == 2
+
+    overhaul.wait_for_function(
+        """entityId => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          const structure=snapshot.structures.find(item => item.id === entityId);
+          const actors=snapshot.actors.filter(item => item.assignment?.entityId === entityId);
+          return structure?.construction?.phase === 'assembling'
+            && actors.some(item => item.kind === 'human' && item.state === 'working')
+            && actors.some(item => item.kind === 'robot' && item.state === 'building');
+        }""",
+        arg=entity_id,
+        timeout=6_000,
+    )
+    assembly_art = overhaul.evaluate(
+        """entityId => {
+          const site=document.querySelector(`[data-construction-site="${entityId}"]`);
+          const human=document.querySelector('[data-assignment-kind="construction"][data-actor-kind="human"]');
+          const robot=document.querySelector('[data-assignment-kind="construction"][data-actor-kind="robot"]');
+          return {
+            phase:site?.dataset.constructionPhase,
+            progress:Number(site?.dataset.constructionProgress),
+            crane:getComputedStyle(site?.querySelector('.construction-crane')).animationName,
+            humanActivity:human?.dataset.activity,
+            humanTool:getComputedStyle(human?.querySelector('.human-arm.right')).animationName,
+            robotActivity:robot?.dataset.activity,
+            robotTool:getComputedStyle(robot?.querySelector('.robot-arm')).animationName,
+          };
+        }""",
+        entity_id,
+    )
+    assert assembly_art["phase"] == "assembling"
+    assert 0 < assembly_art["progress"] < 1
+    assert assembly_art["crane"] == "construction-crane-swing"
+    assert assembly_art["humanActivity"] == "assemble"
+    assert assembly_art["humanTool"] == "human-assembly-check"
+    assert assembly_art["robotActivity"] == "build"
+    assert assembly_art["robotTool"] == "assembly-arm"
+
+    overhaul.wait_for_function(
+        """entityId => window.__overhaulAcceptance.snapshot().structures
+          .find(item => item.id === entityId)?.construction?.phase === 'commissioning'""",
+        arg=entity_id,
+        timeout=4_000,
+    )
+    commissioning_art = overhaul.evaluate(
+        """() => {
+          const human=document.querySelector('[data-assignment-kind="construction"][data-actor-kind="human"]');
+          const robot=document.querySelector('[data-assignment-kind="construction"][data-actor-kind="robot"]');
+          return {
+            humanState:human?.dataset.actorState,
+            humanActivity:human?.dataset.activity,
+            humanMotion:getComputedStyle(human?.querySelector('.human-head')).animationName,
+            robotState:robot?.dataset.actorState,
+            robotActivity:robot?.dataset.activity,
+            robotMotion:getComputedStyle(robot?.querySelector('.robot-arm')).animationName,
+          };
+        }"""
+    )
+    assert commissioning_art == {
+        "humanState": "inspecting",
+        "humanActivity": "inspect",
+        "humanMotion": "human-inspection-look",
+        "robotState": "maintaining",
+        "robotActivity": "maintain",
+        "robotMotion": "maintenance-torque",
+    }
+    overhaul.wait_for_function(
+        """entityId => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          const structure=snapshot.structures.find(item => item.id === entityId);
+          return structure?.condition === 100 && structure?.construction?.state === 'complete'
+            && !snapshot.construction.jobs.some(item => item.entityId === entityId);
+        }""",
+        arg=entity_id,
+        timeout=4_000,
+    )
+    assert cell.locator('[data-construction-site]').count() == 0
 
     # The inspector button remains a keyboard/screen-reader-friendly alternate
     # after direct placement; the player does not need it for the primary flow.
@@ -577,7 +670,7 @@ def test_visible_blueprint_and_owned_cell_click_build_through_real_ui(overhaul, 
         overhaul.wait_for_function(
             """name => {
               const feedback = document.querySelector('.command-feedback[data-tone="good"]');
-              return feedback?.textContent.includes(name) && feedback.textContent.includes('placed');
+              return feedback?.textContent.includes(name) && feedback.textContent.includes('staged');
             }""",
             arg=utility_name,
         )
@@ -845,13 +938,25 @@ def test_manual_venture_controls_advance_business_and_actor_state(overhaul):
     assert after["economy"]["humansHired"] == before["economy"]["humansHired"] + 1
     assert after["economy"]["payroll"] > before["economy"]["payroll"]
 
-    committed = _atomic_commit_sample(overhaul)["snapshot"]
-    hired = next(actor for actor in committed["actors"] if actor["id"] not in before_actor_ids)
-    assert hired["kind"] == "human"
-    actor = overhaul.locator(f'[data-actor-id="{hired["id"]}"]')
-    assert actor.count() == 1 and actor.is_visible()
-    assert actor.get_attribute("data-actor-state") == hired["state"]
-    assert actor.get_attribute("data-animation-hook") == f'human:{hired["state"]}'
+    actor_commit = overhaul.evaluate(
+        """beforeIds => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          const actor=snapshot.actors.find(item => !beforeIds.includes(item.id));
+          const node=actor ? document.querySelector(`[data-actor-id="${CSS.escape(actor.id)}"]`) : null;
+          return {
+            actor,
+            domState:node?.dataset.actorState || null,
+            hook:node?.dataset.animationHook || null,
+            visible:!!node?.getClientRects().length && getComputedStyle(node).visibility === 'visible',
+          };
+        }""",
+        list(before_actor_ids),
+    )
+    hired = actor_commit["actor"]
+    assert hired and hired["kind"] == "human"
+    assert actor_commit["visible"] is True
+    assert actor_commit["domState"] == hired["state"]
+    assert actor_commit["hook"] == f'human:{hired["state"]}'
 
 
 def test_human_robot_computer_states_match_animation_hooks(overhaul):
@@ -1284,24 +1389,37 @@ def test_network_paths_use_clean_default_and_contextual_flow(overhaul, errors):
     groups = overhaul.locator("[data-network-group]")
     assert groups.count() >= 3, "connected scenario did not expose semantic route groups"
     assert overhaul.locator('[data-connections][data-network-mode="clean"]').count() == 1
-    for index in range(groups.count()):
-        group = groups.nth(index)
-        assert group.get_attribute("data-disclosure") == "idle"
-        style = group.evaluate(
-            "node => ({opacity:+getComputedStyle(node).opacity, visibility:getComputedStyle(node).visibility})"
-        )
-        assert style == {"opacity": 0, "visibility": "hidden"}, (
-            f"clean floor leaked a full connection path: {style!r}"
+    group_states = overhaul.evaluate(
+        """() => [...document.querySelectorAll('[data-network-group]')].map(node => ({
+          disclosure:node.dataset.disclosure,
+          opacity:+getComputedStyle(node).opacity,
+          visibility:getComputedStyle(node).visibility,
+        }))"""
+    )
+    for group in group_states:
+        assert group["disclosure"] == "idle"
+        assert group["opacity"] == 0 and group["visibility"] == "hidden", (
+            f"clean floor leaked a full connection path: {group!r}"
         )
 
     traces = overhaul.locator("[data-cell-utility]")
     assert traces.count() >= 3
-    for index in range(traces.count()):
-        trace = traces.nth(index)
-        assert trace.is_visible(), "clean floor removed its thin utility trace"
-        assert trace.get_attribute("data-resource-emphasis") == "idle"
-        opacity = trace.evaluate("node => +getComputedStyle(node).opacity")
-        assert 0 < opacity < 0.6, f"idle utility trace is not subtle: {opacity}"
+    trace_states = overhaul.evaluate(
+        """() => [...document.querySelectorAll('[data-cell-utility]')].map(node => ({
+          layer:node.dataset.cellUtility,
+          emphasis:node.dataset.resourceEmphasis,
+          overlayVisible:node.dataset.overlayVisible,
+          opacity:+getComputedStyle(node).opacity,
+          visibility:getComputedStyle(node).visibility,
+          rects:node.getClientRects().length,
+        }))"""
+    )
+    for trace in trace_states:
+        assert trace["rects"] and trace["visibility"] == "visible", (
+            f"clean floor removed its thin utility trace: {trace!r}"
+        )
+        assert trace["emphasis"] == "idle"
+        assert 0 < trace["opacity"] < 0.6, f"idle utility trace is not subtle: {trace!r}"
 
     power_focus = overhaul.locator('[data-network-focus="power"]')
     power_focus.click()

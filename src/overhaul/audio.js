@@ -90,7 +90,10 @@ function scoreStateFor(snapshot, holds) {
       || Boolean(computer.fault));
   if (pressure) return 'pressure';
   const actors = Array.isArray(snapshot?.actors) ? snapshot.actors : [];
-  const activeConstruction = actors.some((actor) => ['building', 'repairing'].includes(actor.state));
+  const activeConstruction = actors.some((actor) => [
+    'moving', 'building', 'maintaining', 'repairing', 'inspecting',
+  ].includes(actor.state) && ['construction', 'recovery', 'ai-fault']
+    .includes(actor.assignment?.kind));
   if (activeConstruction || tick <= holds.buildingUntil) return 'building';
   return 'calm';
 }
@@ -107,9 +110,15 @@ function recipesForEvent(event, snapshot) {
   if (event.type === 'ai.repair-started' || event.type === 'recovery.repair-started') {
     return ['repair-servo'];
   }
+  if (event.type === 'construction.crew-dispatched'
+      || event.type === 'structure.construction-queued') {
+    return ['repair-servo'];
+  }
   if (event.type === 'ai.repair-progressed' || event.type === 'recovery.repair-progressed') {
     return ['repair-tool'];
   }
+  if (event.type === 'structure.construction-progressed') return ['repair-tool'];
+  if (event.type === 'structure.construction-completed') return ['relay-snap'];
   if (event.type === 'ai.fault-cleared' || event.type === 'computer.fault-cleared') {
     return ['relay-snap'];
   }
@@ -428,10 +437,12 @@ export function createOverhaulAudio(options = {}) {
     for (const event of Array.isArray(events) ? events : []) {
       if (!rememberEvent(eventKey(event))) continue;
       if (['structure.placed', 'cell.claimed', 'ai.repair-started', 'ai.repair-progressed',
-        'recovery.repair-started', 'recovery.repair-progressed']
+        'recovery.repair-started', 'recovery.repair-progressed',
+        'construction.crew-dispatched', 'structure.construction-queued',
+        'structure.construction-progressed']
         .includes(event.type)) holds.buildingUntil = Math.max(holds.buildingUntil, tick + 8);
       if (['ai.level-up', 'text-trained', 'agent-created', 'job-completed', 'human-hired',
-        'recovery.site-online', 'research.node-completed']
+        'recovery.site-online', 'research.node-completed', 'structure.construction-completed']
         .includes(event.type)) holds.breakthroughUntil = Math.max(holds.breakthroughUntil, tick + 12);
       for (const recipe of recipesForEvent(event, snapshot)) playRecipe(recipe, event);
     }

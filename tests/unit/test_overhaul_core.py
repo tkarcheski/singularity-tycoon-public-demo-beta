@@ -124,8 +124,13 @@ def test_inherited_site_repair_boot_and_research_unlocks_form_a_real_opening_loo
         for (const target of initial.recovery.targets) {
           const started = game.command({type: "repair-structure", entityId: target.entityId});
           repairFrames.push({started, snapshot: game.snapshot()});
-          game.tick(OVERHAUL_BALANCE.recovery.repairTicks);
-          repairFrames.push({snapshot: game.snapshot()});
+          let elapsed = 0;
+          while (game.snapshot().recovery.targets.find((item) => item.entityId === target.entityId).state !== "repaired") {
+            game.tick();
+            elapsed += 1;
+            if (elapsed > 30) throw new Error("recovery crew did not finish");
+          }
+          repairFrames.push({elapsed, snapshot: game.snapshot()});
         }
         const recovered = game.snapshot();
         game.command({type: "set-routes", routes: {sell: 0, research: 1, train: 0, inference: 0}});
@@ -147,7 +152,12 @@ def test_inherited_site_repair_boot_and_research_unlocks_form_a_real_opening_loo
     first_started = result["repairFrames"][0]
     assert first_started["started"]["ok"] is True
     assert first_started["snapshot"]["recovery"]["phase"] == "repairing"
-    assert first_started["snapshot"]["actors"][1]["state"] == "repairing"
+    field_crew = [
+        actor for actor in first_started["snapshot"]["actors"]
+        if actor["kind"] in {"human", "robot"}
+    ]
+    assert {actor["state"] for actor in field_crew} == {"moving"}
+    assert {actor["assignment"]["kind"] for actor in field_crew} == {"recovery"}
     assert result["recovered"]["recovery"]["phase"] == "online"
     assert result["recovered"]["recovery"]["repaired"] == 2
     assert result["recovered"]["economy"]["cash"] == (
@@ -173,6 +183,102 @@ def test_inherited_site_repair_boot_and_research_unlocks_form_a_real_opening_loo
     assert event_types.count("recovery.repair-completed") == 2
     assert "recovery.site-online" in event_types
     assert event_types.count("research.node-completed") == 5
+
+
+def test_blueprint_creates_travel_assembly_and_commissioning_work_for_both_actors():
+    result = _run_core(
+        """
+        const game = createOverhaulGame({seed: "visible-workforce"});
+        game.runScenario("computer-path-connected");
+        const events = [];
+        game.subscribe((event) => events.push(event));
+        const placed = game.actions.place("generator", 8, 7);
+        const staged = game.snapshot();
+        const restored = createOverhaulGame({snapshot: staged});
+        let restoreGuard = 0;
+        while (restored.snapshot().construction.jobs.length) {
+          restored.tick();
+          if (++restoreGuard > 30) throw new Error("restored construction crew did not finish");
+        }
+        const restoredCompleted = restored.snapshot();
+        const frames = [staged];
+        let guard = 0;
+        while (game.snapshot().construction.jobs.length) {
+          frames.push(game.tick());
+          if (++guard > 30) throw new Error("construction crew did not finish");
+        }
+        const completed = game.snapshot();
+        console.log(JSON.stringify({placed, staged, frames, completed, restoredCompleted, events}));
+        """
+    )
+
+    assert result["placed"]["ok"] is True
+    assert result["placed"]["operational"] is False
+    entity_id = result["placed"]["entityId"]
+    staged_structure = next(
+        item for item in result["staged"]["structures"] if item["id"] == entity_id
+    )
+    assert staged_structure["condition"] == 0
+    assert staged_structure["construction"]["phase"] == "traveling"
+    staged_crew = [
+        actor for actor in result["staged"]["actors"]
+        if actor["kind"] in {"human", "robot"}
+    ]
+    assert {actor["state"] for actor in staged_crew} == {"moving"}
+    assert {actor["assignment"]["entityId"] for actor in staged_crew} == {entity_id}
+
+    phases = {
+        frame["construction"]["jobs"][0]["phase"]
+        for frame in result["frames"]
+        if frame["construction"]["jobs"]
+    }
+    assert {"traveling", "assembling", "commissioning"}.issubset(phases)
+    assembly = next(
+        frame for frame in result["frames"]
+        if frame["construction"]["jobs"]
+        and frame["construction"]["jobs"][0]["phase"] == "assembling"
+    )
+    assembly_crew = {
+        actor["kind"]: actor for actor in assembly["actors"]
+        if actor["kind"] in {"human", "robot"}
+    }
+    assert assembly_crew["human"]["state"] == "working"
+    assert assembly_crew["robot"]["state"] == "building"
+    assert {(actor["x"], actor["y"]) for actor in assembly_crew.values()} == {(8, 7)}
+
+    commissioning = next(
+        frame for frame in result["frames"]
+        if frame["construction"]["jobs"]
+        and frame["construction"]["jobs"][0]["phase"] == "commissioning"
+    )
+    commissioning_states = {
+        actor["kind"]: actor["state"] for actor in commissioning["actors"]
+        if actor["kind"] in {"human", "robot"}
+    }
+    assert commissioning_states == {"human": "inspecting", "robot": "maintaining"}
+
+    final_structure = next(
+        item for item in result["completed"]["structures"] if item["id"] == entity_id
+    )
+    assert final_structure["condition"] == 100
+    assert final_structure["construction"]["state"] == "complete"
+    assert final_structure["construction"]["progress"] == 1
+    assert result["completed"]["construction"]["jobs"] == []
+    assert {
+        actor["state"] for actor in result["completed"]["actors"]
+        if actor["kind"] in {"human", "robot"}
+    } == {"idle"}
+    restored_structure = next(
+        item for item in result["restoredCompleted"]["structures"] if item["id"] == entity_id
+    )
+    assert restored_structure["condition"] == 100
+    assert restored_structure["construction"]["state"] == "complete"
+    assert result["restoredCompleted"]["construction"]["jobs"] == []
+    event_types = [event["type"] for event in result["events"]]
+    assert "human.moved" in event_types
+    assert "robot.moved" in event_types
+    assert "construction.crew-dispatched" in event_types
+    assert "structure.construction-completed" in event_types
 
 
 def test_frontier_purchase_cost_and_placement_rules_prevent_islands():
@@ -679,17 +785,20 @@ def test_network_telemetry_is_authoritative_shared_and_numerically_consistent():
     ]["directionalDelivered"]
 
 
-def test_placement_preview_is_pure_and_topology_recomputes_without_waiting_for_a_tick():
+def test_placement_preview_is_pure_and_topology_activates_only_after_commissioning():
     result = _run_core(
         """
         const game = createOverhaulGame({seed: "placement-preview"});
         game.runScenario("computer-path-connected");
         game.actions.place("generator", 8, 7);
+        while (game.snapshot().construction.jobs.length) game.tick();
         const before = game.snapshot();
         const preview = game.actions.previewPlacement("power_line", 8, 7);
         const afterPreview = game.snapshot();
         const placed = game.actions.place("power_line", 8, 7);
         const afterPlace = game.snapshot();
+        while (game.snapshot().construction.jobs.length) game.tick();
+        const afterCommission = game.snapshot();
         const removed = game.actions.remove(8, 7, "power");
         const afterRemove = game.snapshot();
         console.log(JSON.stringify({
@@ -698,8 +807,10 @@ def test_placement_preview_is_pure_and_topology_recomputes_without_waiting_for_a
           placed,
           removed,
           capacityAfterPlace: afterPlace.networks.power.telemetry.capacity,
+          capacityAfterCommission: afterCommission.networks.power.telemetry.capacity,
           capacityAfterRemove: afterRemove.networks.power.telemetry.capacity,
           burdenAfterPlace: afterPlace.utilities.requiredFlopsPerTick,
+          burdenAfterCommission: afterCommission.utilities.requiredFlopsPerTick,
           burdenAfterRemove: afterRemove.utilities.requiredFlopsPerTick,
         }));
         """
@@ -716,10 +827,13 @@ def test_placement_preview_is_pure_and_topology_recomputes_without_waiting_for_a
         power_delta["maintenanceDelta"] - result["preview"]["recurringBurdenFlops"]
     ) < 1e-9
     assert result["placed"]["ok"] is result["removed"]["ok"] is True
-    assert result["capacityAfterPlace"] == power_delta["after"]["capacity"]
+    assert result["placed"]["operational"] is False
+    assert result["capacityAfterPlace"] == power_delta["before"]["capacity"]
+    assert result["capacityAfterCommission"] == power_delta["after"]["capacity"]
     assert result["capacityAfterRemove"] == power_delta["before"]["capacity"]
-    assert result["capacityAfterPlace"] - result["capacityAfterRemove"] == 16
-    assert result["burdenAfterPlace"] > result["burdenAfterRemove"]
+    assert result["capacityAfterCommission"] - result["capacityAfterRemove"] == 16
+    assert result["burdenAfterPlace"] == result["burdenAfterRemove"]
+    assert result["burdenAfterCommission"] > result["burdenAfterRemove"]
 
 
 def test_sparse_loop_and_carpet_shapes_have_visible_cost_and_real_redundancy_tradeoffs():
@@ -737,6 +851,11 @@ def test_sparse_loop_and_carpet_shapes_have_visible_cost_and_real_redundancy_tra
         for (const cell of carpet.snapshot().footprint.owned) {
           if (!occupied.has(`${cell.x},${cell.y}`)) carpet.actions.place("power_line", cell.x, cell.y);
         }
+        let carpetGuard = 0;
+        while (carpet.snapshot().construction.jobs.length) {
+          carpet.tick();
+          if (++carpetGuard > 500) throw new Error("carpet construction did not finish");
+        }
         carpet.tick();
         const carpetSnapshot = carpet.snapshot();
 
@@ -745,6 +864,11 @@ def test_sparse_loop_and_carpet_shapes_have_visible_cost_and_real_redundancy_tra
         const beforeLoop = loop.snapshot();
         for (const [x, y] of [[5, 6], [5, 5], [6, 5], [7, 5]]) {
           loop.actions.place("data_cable", x, y);
+        }
+        let loopGuard = 0;
+        while (loop.snapshot().construction.jobs.length) {
+          loop.tick();
+          if (++loopGuard > 100) throw new Error("loop construction did not finish");
         }
         const withLoop = loop.snapshot();
         loop.actions.remove(4, 5, "data");

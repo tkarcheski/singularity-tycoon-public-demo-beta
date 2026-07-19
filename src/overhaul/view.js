@@ -258,8 +258,8 @@
 
   function actorArtActivity(kind, state) {
     const maps = {
-      human: {moving:'travel',travel:'travel',working:'work',work:'work',training:'creative',creative:'creative',hired:'idle',repairing:'repair',repair:'repair',rest:'rest',blocked:'blocked',idle:'idle'},
-      robot: {moving:'move',move:'move',building:'repair',repairing:'repair',repair:'repair',charging:'charge',charge:'charge',blocked:'fault',fault:'fault',idle:'idle'},
+      human: {moving:'travel',travel:'travel',working:'work',work:'work',inspecting:'inspect',training:'creative',creative:'creative',hired:'idle',repairing:'repair',repair:'repair',rest:'rest',blocked:'blocked',idle:'idle'},
+      robot: {moving:'move',move:'move',building:'build',maintaining:'maintain',repairing:'repair',repair:'repair',charging:'charge',charge:'charge',blocked:'fault',fault:'fault',idle:'idle'},
       computer: {booting:'boot',boot:'boot',loaded:'load',working:'load',load:'load',throttled:'throttle',throttle:'throttle',blocked:'fault',fault:'fault',recovering:'recover',recover:'recover',off:'off',idle:'idle'},
     };
     return maps[kind]?.[state] || 'idle';
@@ -268,8 +268,10 @@
   function actorMarkup(actor) {
     const kind = ['human','robot','computer'].includes(actor.kind) ? actor.kind : 'computer';
     const state = actor.state || 'idle';
-    const activity = actorArtActivity(kind, state);
-    const attrs = `class="entity ${kind}" data-actor-id="${escapeHtml(actor.id)}" data-actor-kind="${kind}" data-actor-state="${escapeHtml(state)}" data-animation-hook="${kind}:${escapeHtml(state)}" data-activity="${activity}" aria-hidden="true"`;
+    const assignmentKind = actor.assignment?.kind || 'none';
+    const activity = kind === 'human' && state === 'working' && assignmentKind === 'construction'
+      ? 'assemble' : actorArtActivity(kind, state);
+    const attrs = `class="entity ${kind}" data-actor-id="${escapeHtml(actor.id)}" data-actor-kind="${kind}" data-actor-state="${escapeHtml(state)}" data-assignment-kind="${escapeHtml(assignmentKind)}" data-assignment-phase="${escapeHtml(actor.assignment?.phase || 'none')}" data-animation-hook="${kind}:${escapeHtml(state)}" data-activity="${activity}" aria-hidden="true"`;
     if (kind === 'computer') return `<div ${attrs}><span class="machine-case"></span><span class="machine-screen"></span><span class="machine-fan"></span><span class="machine-led"></span><span class="entity-status-mark">${state === 'throttled' ? '△' : state === 'blocked' ? '×' : ''}</span></div>`;
     if (kind === 'robot') return `<div ${attrs}><span class="robot-shadow"></span><span class="robot-body"></span><span class="robot-eye"></span><span class="robot-arm"></span><span class="robot-wheel"></span><span class="robot-tool">✦</span><span class="entity-status-mark">${state === 'blocked' ? '!' : ''}</span></div>`;
     return `<div ${attrs}><span class="human-head"></span><span class="human-body"></span><span class="human-arm left"></span><span class="human-arm right"></span><span class="human-leg left"></span><span class="human-leg right"></span><span class="human-prop"></span><span class="entity-status-mark">${state === 'blocked' ? '!' : ''}</span></div>`;
@@ -435,6 +437,7 @@
           x: cell.x,
           y: cell.y,
           condition: entity.condition,
+          construction: entity.construction || null,
         });
       }
     }
@@ -446,11 +449,14 @@
     const recovery = snapshot.recovery;
     if (recovery?.activeRepair) {
       const target = recovery.targets?.find((item) => item.entityId === recovery.activeRepair.entityId);
+      const traveling = recovery.activeRepair.phase === 'traveling';
       return {
         index:'01',
-        title:`MICA is repairing ${target?.label || 'inherited hardware'}`,
-        body:`${recovery.activeRepair.ticksRemaining} real-time tick${recovery.activeRepair.ticksRemaining === 1 ? '' : 's'} until the circuit is tested.`,
-        action:'Watch the repair crew',
+        title:`AYA + MICA ${traveling ? 'are en route' : 'are maintaining the plant'}`,
+        body:traveling
+          ? `The crew is crossing the floor to ${target?.label || 'inherited hardware'} before maintenance can begin.`
+          : `${recovery.activeRepair.ticksRemaining} hands-on tick${recovery.activeRepair.ticksRemaining === 1 ? '' : 's'} until ${target?.label || 'the circuit'} is tested.`,
+        action:traveling ? 'Track the field crew' : 'Watch live maintenance',
         hotkey:'LIVE',
       };
     }
@@ -462,6 +468,22 @@
       action:`Repair ${broken.label}`,
       hotkey:'$90',
     };
+    const activeBuild = snapshot.construction?.jobs?.[0];
+    if (activeBuild) {
+      const structure = structures.find((item) => item.id === activeBuild.entityId);
+      const phase = activeBuild.phase || 'queued';
+      const phaseCopy = phase === 'queued' ? 'waiting for AYA and MICA-2'
+        : phase === 'traveling' ? 'crew traveling to the worksite'
+          : phase === 'commissioning' ? 'human inspection and robot maintenance'
+            : 'robot assembly with human quality control';
+      return {
+        index:'BUILD',
+        title:`Construct ${structure?.label || activeBuild.blueprintId}`,
+        body:`${phaseCopy} · ${activeBuild.ticksRemaining} hands-on ticks remain before this blueprint becomes operational.`,
+        action:'Watch the assembly crew',
+        hotkey:`${Math.round((structure?.construction?.progress || 0) * 100)}%`,
+      };
+    }
     if (recovery?.phase === 'online' && (snapshot.flops?.raw || 0) <= 0) return {
       index:'02',
       title:'Wake the inherited rack',
@@ -596,6 +618,7 @@
     });
     const entityPositions = new Map(structures.map((item) => [item.id, {floor:item.floor,x:item.x,y:item.y}]));
     const actors = (snapshot.actors || []).map((actor, index) => ({
+      ...actor,
       id: actor.id || `${actor.kind || 'actor'}-${index}`,
       kind: actor.kind || 'computer', state: actor.state || actor.activity || 'idle', label: actor.label || actor.id || `Actor ${index + 1}`,
       floor: uiFloor(actor.uiFloor, uiFloor(actor.floor, entityPositions.get(actor.id)?.floor || 0)),
@@ -671,6 +694,7 @@
       recovery: snapshot.recovery || {siteName:'Blank Site',phase:'online',targets:[],repaired:0,total:0,activeRepair:null},
       research: snapshot.research || {points:Number(snapshot.progress?.research)||0,completedIds:[],nodes:[],next:null,lastUnlock:null},
       business,
+      construction: snapshot.construction || {jobs:[],completed:0},
       economy: {cash:Number(economy.cash ?? snapshot.cash ?? 0),invoicesPaid:0,humansHired:0,payroll:0,...economy},
       ticks: {raw:Number(ticks.raw)||0,completed:Number(ticks.completed)||0},
       floors: snapshot.floors || [{id:0,sourceId:snapshot.persistence?.floor?.id || 'F1',name:'Floor 1',status:'online'}],
@@ -764,7 +788,11 @@
       return {owned,frontier};
     }
 
-    function actorAt(x, y) { return snapshot.actors.find((actor) => actor.floor === ui.floor && actor.x === x && actor.y === y); }
+    function actorsAt(x, y) {
+      return snapshot.actors.filter((actor) => actor.floor === ui.floor
+        && actor.x === x && actor.y === y);
+    }
+    function actorAt(x, y) { return actorsAt(x, y)[0]; }
     function structuresAt(x, y) {
       return snapshot.structures.filter((item) => Number(item.floor || 0) === ui.floor
         && Number(item.x) === x && Number(item.y) === y);
@@ -807,22 +835,28 @@
       return null;
     }
 
-    function tileActivity(actor, structures) {
-      const actorState = String(actor?.state || '').toLowerCase();
+    function tileActivity(actors, structures) {
+      const actorStates = actors.map((actor) => String(actor?.state || '').toLowerCase());
       const faults = structures.map((item) => item.aiFault).filter(Boolean);
       const repairing = structures.some((item) => snapshot.recovery.activeRepair?.entityId === item.id);
+      const constructing = structures.find((item) => item.construction
+        && item.construction.state !== 'complete');
       const broken = structures.some((item) => item.inherited && Number(item.condition) <= 0);
       if (repairing) return {activity:'repairing',fault:true};
+      if (constructing) return {activity:'building',fault:false};
+      if (actorStates.some((state) => ['repairing','maintaining'].includes(state))
+          || faults.some((fault) => Number(fault?.repairRemaining) > 0)) return {activity:'repairing',fault:true};
       if (broken) return {activity:'broken',fault:true};
-      if (actorState === 'repairing' || faults.some((fault) => Number(fault?.repairRemaining) > 0)) return {activity:'repairing',fault:true};
-      if (['blocked','fault'].includes(actorState) || faults.length) return {activity:'broken',fault:true};
-      if (actorState === 'throttled') return {activity:'overloaded',fault:false};
-      const ids = new Set([actor?.id,...structures.map((item) => item.id)].filter(Boolean));
+      if (actorStates.some((state) => ['blocked','fault'].includes(state)) || faults.length) return {activity:'broken',fault:true};
+      if (actorStates.includes('throttled')) return {activity:'overloaded',fault:false};
+      const ids = new Set([...actors.map((actor) => actor.id),...structures.map((item) => item.id)].filter(Boolean));
       const paths = Object.values(snapshot.networks).flatMap((network) => network?.paths || [])
         .filter((path) => ids.has(path.source) || ids.has(path.target));
       if (paths.some((path) => ['fault','blocked'].includes(path.status) && ids.has(path.target))) return {activity:'broken',fault:true};
       if (paths.some((path) => path.status === 'saturated' && Number(path.delivered) > 0)) return {activity:'overloaded',fault:false};
-      const actorBusy = ['moving','working','training','building','charging','booting','loaded'].includes(actorState);
+      const actorBusy = actorStates.some((state) => [
+        'moving','working','inspecting','training','building','maintaining','charging','booting','loaded',
+      ].includes(state));
       const realThroughput = paths.some((path) => path.connected !== false && Number(path.delivered) > 0);
       return {activity:actorBusy || realThroughput ? 'working' : 'idle',fault:false};
     }
@@ -911,8 +945,13 @@
       for (const cell of refs.worldGrid.children) {
         const x = Number(cell.dataset.x), y = Number(cell.dataset.y), key = cellKey(ui.floor,x,y);
         const territory = owned.has(key) ? 'owned' : frontier.has(key) ? 'frontier' : 'locked';
-        const actor = actorAt(x,y), structures = structuresAt(x,y), frontierCell = frontier.get(key);
+        const actors = actorsAt(x,y), actor = actors.find((item) => item.kind !== 'computer')
+          || actors[0], structures = structuresAt(x,y), frontierCell = frontier.get(key);
+        const machineActor = actors.find((item) => item.kind === 'computer');
+        const fieldActors = actors.filter((item) => item.kind !== 'computer');
         const primary = structures.find((item) => item.layer === 'facility' || item.blueprintId === 'ai_controller');
+        const worksite = structures.find((item) => item.construction
+          && item.construction.state !== 'complete');
         const utilityItems = ['power','cooling','data','ai'].map((layer) => ({
           layer,
           structure:structures.find((item) => item.layer === layer),
@@ -920,15 +959,19 @@
         })).filter((item) => item.structure);
         const utilities = utilityItems.map((item) => item.layer);
         const utilityCopy = utilities.length ? `; ${utilities.join(', ')} connected` : '';
-        const label = actor ? `${actor.label}, ${actor.kind}, ${actor.state}${utilityCopy}` : primary ? `${primary.label}, ${primary.kind}${utilityCopy}` : utilities.length ? `${utilities.join(', ')} utility routes` : territory === 'frontier' ? `Frontier cell ${x+1}, ${y+1}, costs $${frontierCell.cost}` : `${territory} cell ${x+1}, ${y+1}`;
+        const label = worksite ? `${worksite.label} worksite, ${worksite.construction.phase}, ${Math.round(worksite.construction.progress * 100)} percent complete${primary && primary.id !== worksite.id ? `; ${primary.label} remains installed` : ''}`
+          : actors.length ? `${actors.map((item) => `${item.label}, ${item.kind}, ${item.state}`).join('; ')}${utilityCopy}`
+            : primary ? `${primary.label}, ${primary.kind}${utilityCopy}` : utilities.length ? `${utilities.join(', ')} utility routes` : territory === 'frontier' ? `Frontier cell ${x+1}, ${y+1}, costs $${frontierCell.cost}` : `${territory} cell ${x+1}, ${y+1}`;
         const selectedBlueprint = BLUEPRINT_BY_ID.get(ui.selectedBlueprint);
         const blueprintUnlocked = snapshot.unlocks.some((item) => item.id === ui.selectedBlueprint);
-        const activity = tileActivity(actor,structures);
+        const activity = tileActivity(actors,structures);
         cell.dataset.territory = territory;
         cell.dataset.buildTarget = String(territory === 'owned' && Boolean(selectedBlueprint) && blueprintUnlocked);
         cell.dataset.utilityLayers = utilities.join(' ');
         cell.dataset.tileActivity = activity.activity;
         cell.dataset.inherited = String(structures.some((item) => item.inherited));
+        cell.dataset.construction = worksite?.construction?.phase || 'none';
+        cell.dataset.constructionProgress = String(worksite?.construction?.progress || 0);
         cell.dataset.condition = String(Math.min(100, ...structures.map((item) => Number(item.condition) || 0), 100));
         if (activity.fault) cell.dataset.tileFault = 'true';
         else delete cell.dataset.tileFault;
@@ -936,18 +979,21 @@
         cell.setAttribute('aria-label', label);
         cell.setAttribute('aria-pressed', String(ui.selectedCell === key));
         cell.setAttribute('aria-disabled', String(territory === 'locked'));
-        cell.dataset.tooltipTitle = actor?.label || primary?.label || (utilities.length ? `${utilities.join(' + ')} routes` : `${territory[0].toUpperCase()+territory.slice(1)} cell ${x+1}.${y+1}`);
-        cell.dataset.tooltipCopy = actor ? `${actor.kind} · ${actor.state}. Simulation actor ${actor.id}.${utilityCopy}` : primary ? `${primary.kind} infrastructure · ${primary.id}.${utilityCopy}` : utilities.length ? `Slim utility traces: ${utilities.join(', ')}.` : territory === 'frontier' ? `Connected frontier · purchase for $${frontierCell.cost}.` : territory === 'owned' ? 'Owned connected footprint. Select a blueprint to build.' : 'Expand the connected frontier to reveal this cell.';
+        cell.dataset.tooltipTitle = worksite?.label || actor?.label || primary?.label || (utilities.length ? `${utilities.join(' + ')} routes` : `${territory[0].toUpperCase()+territory.slice(1)} cell ${x+1}.${y+1}`);
+        cell.dataset.tooltipCopy = worksite ? `${worksite.construction.phase} · ${Math.round(worksite.construction.progress * 100)}% complete. AYA inspects while MICA-2 assembles and maintains.` : actor ? `${actor.kind} · ${actor.state}. Simulation actor ${actor.id}.${utilityCopy}` : primary ? `${primary.kind} infrastructure · ${primary.id}.${utilityCopy}` : utilities.length ? `Slim utility traces: ${utilities.join(', ')}.` : territory === 'frontier' ? `Connected frontier · purchase for $${frontierCell.cost}.` : territory === 'owned' ? 'Owned connected footprint. Select a blueprint to build.' : 'Expand the connected frontier to reveal this cell.';
         const content = cell.querySelector('.cell-content');
-        const primaryMarkup = actor ? actorMarkup(actor) : primary ? `<span class="structure structure-${escapeHtml(primary.icon)}" data-primary-layer="${escapeHtml(primary.layer || 'facility')}" data-primary-entity-id="${escapeHtml(primary.id)}" data-primary-blueprint-id="${escapeHtml(primary.blueprintId)}" aria-hidden="true">${icon(primary.icon)}</span>` : territory === 'frontier' ? '<span class="frontier-plus" aria-hidden="true">+</span>' : territory === 'locked' ? `<span class="locked-mark" aria-hidden="true">${icon('lock')}</span>` : '';
+        const primaryMarkup = machineActor ? actorMarkup(machineActor) : primary ? `<span class="structure structure-${escapeHtml(primary.icon)}${worksite?.id === primary.id ? ' structure-pending' : ''}" data-primary-layer="${escapeHtml(primary.layer || 'facility')}" data-primary-entity-id="${escapeHtml(primary.id)}" data-primary-blueprint-id="${escapeHtml(primary.blueprintId)}" aria-hidden="true">${icon(primary.icon)}</span>` : territory === 'frontier' ? '<span class="frontier-plus" aria-hidden="true">+</span>' : territory === 'locked' ? `<span class="locked-mark" aria-hidden="true">${icon('lock')}</span>` : '';
+        const worksiteMarkup = worksite ? `<span class="construction-site" data-construction-site="${escapeHtml(worksite.id)}" data-construction-phase="${escapeHtml(worksite.construction.phase)}" data-construction-progress="${worksite.construction.progress}" style="--construction-progress:${Math.round(worksite.construction.progress * 100)}%" aria-hidden="true"><span class="construction-frame"></span><span class="construction-progress"></span><span class="construction-crane"></span><span class="construction-materials"></span></span>` : '';
+        const crewMarkup = fieldActors.length ? `<span class="cell-crew" data-crew-size="${fieldActors.length}" aria-hidden="true">${fieldActors.map((item,index) => `<span class="crew-member" data-crew-index="${index}" data-crew-kind="${escapeHtml(item.kind)}">${actorMarkup(item)}</span>`).join('')}</span>` : '';
         const utilityMarkup = utilityItems.map(({layer,structure,overlay}) => {
           const emphasis = focusedKinds.size ? (focusedKinds.has(layer) ? 'active' : 'dim') : 'idle';
           return `<span class="cell-utility utility-${layer}" data-cell-utility="${layer}" data-route-layer="${layer}" data-layer-entity-id="${escapeHtml(structure.id)}" data-layer-blueprint-id="${escapeHtml(structure.blueprintId)}" data-overlay-visible="${ui.overlays.has(overlay)}" data-resource-emphasis="${emphasis}" aria-hidden="true"></span>`;
         }).join('');
-        content.innerHTML = `${primaryMarkup}${utilityMarkup}`;
+        content.innerHTML = `${primaryMarkup}${utilityMarkup}${worksiteMarkup}${crewMarkup}`;
         cell.querySelector('.cell-status').textContent = activity.activity === 'broken' ? 'FAULT'
           : activity.activity === 'repairing' ? 'REPAIR'
-            : actor?.state || primary?.kind || (utilities.length ? utilities.map((layer) => layer[0].toUpperCase()).join('·') : territory === 'frontier' ? `$${frontierCell.cost}` : '');
+            : activity.activity === 'building' ? `${worksite?.construction?.phase || 'BUILD'} ${Math.round((worksite?.construction?.progress || 0) * 100)}%`
+              : actor?.state || primary?.kind || (utilities.length ? utilities.map((layer) => layer[0].toUpperCase()).join('·') : territory === 'frontier' ? `$${frontierCell.cost}` : '');
       }
     }
 
@@ -1048,7 +1094,9 @@
       refs.inspectorCoord.textContent = `F${ui.floor+1} · ${selected.x+1},${selected.y+1}`;
       const actor = selected.actor, structure = selected.structure;
       const title = actor?.label || structure?.label || `${selected.territory} cell`;
-      const description = actor ? `${actor.kind} actor is ${actor.state}. Its visible pose and status are driven by the committed simulation snapshot.` : structure ? `${structure.kind} infrastructure endpoint. Select its overlay to trace actual delivery.` : selected.territory === 'frontier' ? 'Connected frontier. Purchasing this cell grows the legal footprint and recomputes its edge.' : selected.territory === 'owned' ? 'Connected owned ground. Click this tile with a blueprint selected to build immediately, or use the action below.' : 'Locked territory. Expand from an adjacent frontier cell.';
+      const description = structure?.construction && structure.construction.state !== 'complete'
+        ? `${structure.label} is a ${structure.construction.phase} worksite at ${Math.round(structure.construction.progress * 100)}%. It remains offline until AYA and MICA-2 finish commissioning.`
+        : actor ? `${actor.kind} actor is ${actor.state}. Its visible pose and status are driven by the committed simulation snapshot.` : structure ? `${structure.kind} infrastructure endpoint. Select its overlay to trace actual delivery.` : selected.territory === 'frontier' ? 'Connected frontier. Purchasing this cell grows the legal footprint and recomputes its edge.' : selected.territory === 'owned' ? 'Connected owned ground. Click this tile with a blueprint selected to create a crew work order.' : 'Locked territory. Expand from an adjacent frontier cell.';
       const selectedBlueprint = BLUEPRINT_BY_ID.get(ui.selectedBlueprint);
       let placementPreview = null;
       if (selected.territory === 'owned' && selectedBlueprint
@@ -1065,18 +1113,18 @@
           .map(([name,delta]) => `<span data-preview-resource="${escapeHtml(name)}"><strong>${escapeHtml(NETWORK_META[name]?.label || name)}</strong> ${Number(delta.capacityDelta) >= 0 ? '+' : ''}${metricText(delta.capacityDelta)} capacity · ${Number(delta.maintenanceDelta) >= 0 ? '+' : ''}${metricText(delta.maintenanceDelta)} FLOPS/tick · ${(delta.affectedEndpoints || []).length} endpoints changed</span>`)
           .join('') : '';
       const preview = placementPreview?.ok
-        ? `<section class="placement-preview" data-placement-preview data-preview-blueprint="${escapeHtml(selectedBlueprint.id)}" data-preview-role="${escapeHtml(placementPreview.networkRole || 'facility')}" data-preview-maintenance="${Number(placementPreview.recurringBurdenFlops) || 0}"><div class="module-head"><span class="module-title">Before you build</span><span class="state-chip warn">$${placementPreview.cost}</span></div><p>${escapeHtml(placementPreview.networkRole || 'facility')} role · ${metricText(placementPreview.recurringBurdenFlops)} recurring FLOPS/tick</p><div class="placement-preview-deltas">${previewDeltas || '<span>No route capacity changes until this tile is connected.</span>'}</div></section>`
+        ? `<section class="placement-preview" data-placement-preview data-preview-blueprint="${escapeHtml(selectedBlueprint.id)}" data-preview-role="${escapeHtml(placementPreview.networkRole || 'facility')}" data-preview-maintenance="${Number(placementPreview.recurringBurdenFlops) || 0}"><div class="module-head"><span class="module-title">Before you build</span><span class="state-chip warn">$${placementPreview.cost}</span></div><p>${escapeHtml(placementPreview.networkRole || 'facility')} role · AYA + MICA-2 crew · ${placementPreview.constructionTicks || 4} hands-on ticks after travel · ${metricText(placementPreview.recurringBurdenFlops)} recurring FLOPS/tick</p><div class="placement-preview-deltas">${previewDeltas || '<span>Capacity stays offline until the crew commissions this tile.</span>'}</div></section>`
         : '';
       const repairTarget = selected.structures.find((item) => item.inherited && Number(item.condition) < 100);
       const activeRepair = snapshot.recovery.activeRepair;
       const repairBlocked = Boolean(activeRepair && activeRepair.entityId !== repairTarget?.id);
       const repairAction = repairTarget
-        ? `<button class="recovery-action" type="button" data-repair-structure="${escapeHtml(repairTarget.id)}" ${repairBlocked || activeRepair?.entityId === repairTarget.id ? 'disabled aria-disabled="true"' : ''}><span class="recovery-action-icon">⚒</span><span><strong>${activeRepair?.entityId === repairTarget.id ? 'Repair crew deployed' : `Repair inherited ${escapeHtml(repairTarget.label)}`}</strong><small>${activeRepair?.entityId === repairTarget.id ? `${activeRepair.ticksRemaining} ticks remaining` : '$90 · MICA-2 · 3 live ticks'}</small></span><span class="state-chip ${activeRepair?.entityId === repairTarget.id ? 'warn' : 'bad'}">${activeRepair?.entityId === repairTarget.id ? 'working' : 'fault'}</span></button>`
+        ? `<button class="recovery-action" type="button" data-repair-structure="${escapeHtml(repairTarget.id)}" ${repairBlocked || activeRepair?.entityId === repairTarget.id ? 'disabled aria-disabled="true"' : ''}><span class="recovery-action-icon">⚒</span><span><strong>${activeRepair?.entityId === repairTarget.id ? 'Field crew deployed' : `Repair inherited ${escapeHtml(repairTarget.label)}`}</strong><small>${activeRepair?.entityId === repairTarget.id ? `${escapeHtml(activeRepair.phase || 'working')} · ${activeRepair.ticksRemaining} hands-on ticks` : '$90 · AYA + MICA-2 · travel + 3 maintenance ticks'}</small></span><span class="state-chip ${activeRepair?.entityId === repairTarget.id ? 'warn' : 'bad'}">${activeRepair?.entityId === repairTarget.id ? escapeHtml(activeRepair.phase || 'working') : 'fault'}</span></button>`
         : '';
       const action = selected.territory === 'frontier'
         ? `<button class="blueprint inspector-action" type="button" data-purchase-frontier="${escapeHtml(selected.frontier.commandKey)}"><span class="blueprint-icon">${icon('floor')}</span><span><span class="blueprint-name">Purchase frontier</span><span class="blueprint-detail">Grow connected footprint</span></span><span class="state-chip warn">$${selected.frontier.cost}</span></button>`
         : selected.territory === 'owned' && selectedBlueprint
-          ? `<button class="blueprint inspector-action" type="button" data-place-selected="${escapeHtml(selectedBlueprint.id)}" data-place-x="${selected.x}" data-place-y="${selected.y}"><span class="blueprint-icon">${icon(selectedBlueprint.icon)}</span><span><span class="blueprint-name">Place ${escapeHtml(selectedBlueprint.name)}</span><span class="blueprint-detail">Build at ${selected.x + 1},${selected.y + 1}</span></span><span class="state-chip good">$${selectedBlueprint.cost}</span></button>`
+          ? `<button class="blueprint inspector-action" type="button" data-place-selected="${escapeHtml(selectedBlueprint.id)}" data-place-x="${selected.x}" data-place-y="${selected.y}"><span class="blueprint-icon">${icon(selectedBlueprint.icon)}</span><span><span class="blueprint-name">Stage ${escapeHtml(selectedBlueprint.name)}</span><span class="blueprint-detail">Create crew work order at ${selected.x + 1},${selected.y + 1}</span></span><span class="state-chip good">$${selectedBlueprint.cost}</span></button>`
           : '';
       refs.inspector.innerHTML = `<div class="module-head"><span class="module-title">Selection</span><span class="state-chip ${selected.territory === 'owned' ? 'good' : selected.territory === 'frontier' ? 'warn' : ''}">${selected.territory}</span></div><h3 class="inspector-name">${escapeHtml(title)}</h3><p class="inspector-copy">${escapeHtml(description)}</p><div class="data-grid"><div class="datum"><span>Blueprint</span><strong>${escapeHtml(ui.selectedBlueprint || 'inspection')}</strong></div><div class="datum"><span>Actor state</span><strong>${escapeHtml(actor?.state || '—')}</strong></div><div class="datum"><span>Floor</span><strong>${ui.floor + 1}</strong></div><div class="datum"><span>Cell key</span><strong>${escapeHtml(selected.key)}</strong></div></div>${repairAction}${renderNetworkInspector(selected)}${preview}${action}<div class="command-feedback" data-tone="${escapeHtml(ui.feedback.tone)}">${escapeHtml(ui.feedback.message)}</div>${renderAiInspector(selected)}`;
     }
@@ -1150,7 +1198,7 @@
       const tabLabels = {actors:'actors',jobs:'venture',help:'help'};
       refs.tabs.innerHTML = ['actors','jobs','help'].map((tab) => `<button class="tab-button" type="button" role="tab" data-tab="${tab}" aria-selected="${ui.tab === tab}">${tabLabels[tab]}</button>`).join('');
       if (ui.tab === 'actors') {
-        refs.tabPanel.innerHTML = `<div class="actor-list">${snapshot.actors.map((actor) => `<button class="actor-row" type="button" data-focus-actor="${escapeHtml(actor.id)}"><span class="state-chip ${['blocked','fault','throttled'].includes(actor.state)?'bad':['booting','charging','training'].includes(actor.state)?'warn':'good'}">${actor.kind.slice(0,3)}</span><span class="row-copy"><strong>${escapeHtml(actor.label)}</strong><span>${escapeHtml(actor.state)} · F${actor.floor+1} ${actor.x+1},${actor.y+1}</span></span><span class="state-chip">${escapeHtml(actor.state)}</span></button>`).join('')}</div>`;
+        refs.tabPanel.innerHTML = `<div class="actor-list">${snapshot.actors.map((actor) => `<button class="actor-row" type="button" data-focus-actor="${escapeHtml(actor.id)}"><span class="state-chip ${['blocked','fault','throttled'].includes(actor.state)?'bad':['booting','charging','training','moving','building','maintaining','inspecting'].includes(actor.state)?'warn':'good'}">${actor.kind.slice(0,3)}</span><span class="row-copy"><strong>${escapeHtml(actor.label)}</strong><span>${escapeHtml(actor.state)}${actor.assignment?.kind ? ` · ${escapeHtml(actor.assignment.kind)}` : ''} · F${actor.floor+1} ${actor.x+1},${actor.y+1}</span></span><span class="state-chip">${escapeHtml(actor.state)}</span></button>`).join('')}</div>`;
       } else if (ui.tab === 'jobs') {
         refs.tabPanel.innerHTML = renderVenture();
       } else {
@@ -1233,7 +1281,7 @@
       if (target.dataset.floor != null) { ui.floor = Number(target.dataset.floor); ui.selectedCell = null; render(); return; }
       if (target.dataset.placeSelected) {
         const blueprint = BLUEPRINT_BY_ID.get(target.dataset.placeSelected);
-        send({type:'place',blueprintId:target.dataset.placeSelected,x:Number(target.dataset.placeX),y:Number(target.dataset.placeY)}).then((result) => { setFeedback(result.ok ? `${blueprint?.name || target.dataset.placeSelected} placed successfully.` : placementFailure(blueprint,result.reason), result.ok ? 'good' : 'bad', true); });
+        send({type:'place',blueprintId:target.dataset.placeSelected,x:Number(target.dataset.placeX),y:Number(target.dataset.placeY)}).then((result) => { setFeedback(result.ok ? `${blueprint?.name || target.dataset.placeSelected} staged. AYA and MICA-2 received work order ${result.constructionJobId}.` : placementFailure(blueprint,result.reason), result.ok ? 'good' : 'bad', true); });
         return;
       }
       if (target.dataset.x != null) {
@@ -1244,7 +1292,7 @@
         const blueprintUnlocked = snapshot.unlocks.some((item) => item.id === ui.selectedBlueprint);
         if (territory === 'owned' && blueprint && blueprintUnlocked) {
           send({type:'place',blueprintId:blueprint.id,x,y}).then((result) => {
-            setFeedback(result.ok ? `${blueprint.name} placed at ${x + 1},${y + 1}.` : placementFailure(blueprint,result.reason), result.ok ? 'good' : 'bad', !result.ok);
+            setFeedback(result.ok ? `${blueprint.name} blueprint staged at ${x + 1},${y + 1}; crew dispatched.` : placementFailure(blueprint,result.reason), result.ok ? 'good' : 'bad', !result.ok);
           });
           return;
         }
@@ -1259,7 +1307,7 @@
       if (target.dataset.repairStructure) {
         const entityId = target.dataset.repairStructure;
         send({type:'repair-structure',entityId}).then((result) => {
-          setFeedback(result.ok ? `MICA-2 started the field repair on ${entityId}.` : `Repair blocked: ${result.reason}.`, result.ok ? 'good' : 'bad');
+          setFeedback(result.ok ? `AYA and MICA-2 are traveling to maintain ${entityId}.` : `Repair blocked: ${result.reason}.`, result.ok ? 'good' : 'bad');
         });
         return;
       }
