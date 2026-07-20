@@ -90,6 +90,47 @@ function defaultAiState() {
   };
 }
 
+function defaultResearchState() {
+  return {
+    completedIds: [],
+    lastUnlock: null,
+  };
+}
+
+function defaultStoryState() {
+  return {
+    currentId: OVERHAUL_BALANCE.story.turns[0].id,
+    completedIds: [],
+    turnStartedTick: 0,
+    lastBeat: null,
+  };
+}
+
+function defaultOpeningState() {
+  return { checkpointTicks: {} };
+}
+
+function computerRuntime(blueprint) {
+  return {
+    state: 'off',
+    bootRemaining: blueprint.stats.bootTicks,
+    powerDelivered: 0,
+    coolingDelivered: 0,
+    dataConnected: false,
+    rawFlops: 0,
+    workload: 'idle',
+    utilization: 0,
+    temperatureC: OVERHAUL_BALANCE.thermal.ambientC,
+    throttle: 1,
+    fault: null,
+  };
+}
+
+function computeUpgradeMultiplier(structure) {
+  const level = Math.max(0, Number(structure?.computeUpgradeLevel) || 0);
+  return 1 + level * OVERHAUL_BALANCE.recovery.computeUpgradeBonusPercent / 100;
+}
+
 function isAiEligibleBlueprint(blueprint) {
   const stats = blueprint?.stats || {};
   return (stats.powerGeneration || 0) > 0
@@ -186,6 +227,67 @@ function recomputeFrontier(state) {
   }
 }
 
+function seedInheritedDatacenter(state, rng, kit) {
+  const layout = OVERHAUL_SCENARIO_LAYOUT;
+  const inheritedIds = [];
+  const place = (blueprintId, x, y) => {
+    const blueprint = blueprintById(blueprintId);
+    const entityId = `${blueprint.kind}-${state.nextEntityId}`;
+    state.nextEntityId += 1;
+    const structure = {
+      entityId,
+      blueprintId,
+      condition: 100,
+      inherited: true,
+      aiEnabled: false,
+      aiConnected: false,
+      aiFault: null,
+    };
+    if (blueprint.kind === 'computer') structure.runtime = computerRuntime(blueprint);
+    getCell(state, x, y).layers[blueprint.layer] = structure;
+    inheritedIds.push(entityId);
+    return structure;
+  };
+
+  const generator = place('generator', layout.generator.x, layout.generator.y);
+  const coolingPump = place('cooling_pump', layout.coolingPump.x, layout.coolingPump.y);
+  place(kit.computerBlueprintId, layout.computer.x, layout.computer.y);
+  for (const [x, y] of layout.power) {
+    place(x === layout.generator.x && y === layout.generator.y
+      ? 'power_pole' : 'power_line', x, y);
+  }
+  for (const [x, y] of layout.cooling) place('cooling_pipe', x, y);
+  let dataSwitch = null;
+  for (const [x, y] of layout.data) {
+    const structure = place(
+      x === layout.dataSwitch.x && y === layout.dataSwitch.y ? 'data_switch' : 'data_cable',
+      x,
+      y,
+    );
+    if (structure.blueprintId === 'data_switch') dataSwitch = structure;
+  }
+  const critical = [generator, coolingPump, dataSwitch];
+
+  const variantIndex = Math.floor(nextRandom(rng) * critical.length);
+  const repairTargets = [
+    critical[variantIndex],
+    critical[(variantIndex + 1) % critical.length],
+  ];
+  for (const structure of repairTargets) structure.condition = 0;
+  const siteNames = OVERHAUL_BALANCE.recovery.siteNames;
+  const siteName = siteNames[Math.floor(nextRandom(rng) * siteNames.length)];
+  state.recovery = {
+    siteName,
+    variantId: `wreck-${variantIndex + 1}`,
+    phase: 'triage',
+    inheritedIds,
+    repairTargetIds: repairTargets.map((item) => item.entityId),
+    completedRepairIds: [],
+    activeRepair: null,
+    completionBonusPaid: false,
+  };
+}
+
 function initialState(seed) {
   const canonical = canonicalSeed(seed);
   const rng = { value: hashSeed(canonical) };
@@ -208,6 +310,7 @@ function initialState(seed) {
       reason: null,
       fiberFloor: null,
       routedFlops: 0,
+      incomePerTick: 0,
     },
     economy: {
       cash: OVERHAUL_BALANCE.economy.startingCash,
@@ -229,21 +332,28 @@ function initialState(seed) {
     actors: [
       {
         id: 'human-1', kind: 'human', state: 'idle', role: 'founder',
-        floor: 0, floorKey: 'F1', x: 4, y: 7,
+        label: 'AYA', floor: 0, floorKey: 'F1', x: 4, y: 7, assignment: null,
       },
       {
         id: 'robot-2', kind: 'robot', state: 'idle', assignment: null,
-        floor: 0, floorKey: 'F1', x: 5, y: 7,
+        label: 'MICA-2', floor: 0, floorKey: 'F1', x: 5, y: 7,
       },
     ],
+    construction: { jobs: [], completed: 0 },
     networks: emptyNetworks(),
     utilities: defaultUtilityState(),
     ai: defaultAiState(),
+    recovery: null,
+    research: defaultResearchState(),
+    story: defaultStoryState(),
+    opening: defaultOpeningState(),
     tick: 0,
     completedTick: 0,
     nextEntityId: 3,
     eventSequence: 0,
   };
+  seedInheritedDatacenter(state, rng, kit);
+  state.rngState = rng.value;
   recomputeFrontier(state);
   return state;
 }
@@ -267,6 +377,34 @@ function restoreState(snapshot) {
   restored.ai = { ...defaultAiState(), ...(restored.ai || {}) };
   restored.ai.activeFaults = Array.isArray(restored.ai.activeFaults)
     ? restored.ai.activeFaults : [];
+  restored.research = { ...defaultResearchState(), ...(restored.research || {}) };
+  restored.research.completedIds = Array.isArray(restored.research.completedIds)
+    ? restored.research.completedIds : [];
+  restored.story = { ...defaultStoryState(), ...(restored.story || {}) };
+  restored.story.completedIds = Array.isArray(restored.story.completedIds)
+    ? restored.story.completedIds : [];
+  restored.opening = { ...defaultOpeningState(), ...(restored.opening || {}) };
+  restored.opening.checkpointTicks = {
+    ...defaultOpeningState().checkpointTicks,
+    ...(restored.opening.checkpointTicks || {}),
+  };
+  restored.construction = {
+    jobs: [],
+    completed: 0,
+    ...(restored.construction || {}),
+  };
+  restored.construction.jobs = Array.isArray(restored.construction.jobs)
+    ? restored.construction.jobs : [];
+  restored.recovery = restored.recovery || {
+    siteName: 'Imported Datacenter',
+    variantId: 'legacy-import',
+    phase: 'online',
+    inheritedIds: [],
+    repairTargetIds: [],
+    completedRepairIds: [],
+    activeRepair: null,
+    completionBonusPaid: true,
+  };
   for (const cell of restored.floor.cells.flat()) {
     cell.layers = { facility: null, power: null, cooling: null, data: null, ai: null,
       ...(cell.layers || {}) };
@@ -307,7 +445,7 @@ function utilityBurden(state) {
     .map((layer) => [layer, { segments: 0, maintenanceFlopsPerTick: 0 }]));
   for (const entry of structureEntries(state)) {
     const maintenance = entry.blueprint?.stats?.maintenanceFlopsPerTick || 0;
-    if (!maintenance || entry.layer === 'facility') continue;
+    if (!maintenance || entry.layer === 'facility' || entry.structure.condition <= 0) continue;
     byLayer[entry.layer].segments += 1;
     byLayer[entry.layer].maintenanceFlopsPerTick += maintenance;
   }
@@ -594,7 +732,12 @@ function computeNetworks(state) {
       const entry = { structure, blueprint, layer };
       return (blueprint?.stats?.capacity || 0) * (useAi ? aiMultiplierFor(state, entry) : 1);
     });
-    return capacities.length ? Math.min(...capacities) : 0;
+    // A connected utility component is modeled as a shared bus. Branch links
+    // establish reach while a trunk/hub raises that bus's transport ceiling;
+    // treating the weakest branch as the entire component's rating made every
+    // researched trunk a no-op (the inherited power grid could never exceed
+    // 16 MW). Endpoint delivery and source supply still cap usable throughput.
+    return capacities.length ? Math.max(...capacities) : 0;
   }
 
   const consumers = entries
@@ -1052,6 +1195,245 @@ function dominantWorkload(parts) {
   return choices[0][0];
 }
 
+function researchUnlockIds(state, node) {
+  return node.unlocks.map((id) => (id === 'computer:starter' ? state.computerBlueprintId : id));
+}
+
+function researchSnapshot(state) {
+  const completed = new Set(state.research.completedIds);
+  const recoveryOnline = state.recovery?.phase === 'online';
+  const nodes = OVERHAUL_BALANCE.research.nodes.map((node) => {
+    const unlocks = researchUnlockIds(state, node);
+    const complete = completed.has(node.id);
+    const available = recoveryOnline && state.progress.research + EPSILON >= node.threshold;
+    return {
+      ...clone(node),
+      unlocks,
+      state: complete ? 'complete' : available ? 'available' : 'locked',
+      progress: Math.min(state.progress.research, node.threshold),
+    };
+  });
+  return {
+    completedIds: [...state.research.completedIds],
+    lastUnlock: state.research.lastUnlock ? clone(state.research.lastUnlock) : null,
+    points: state.progress.research,
+    nodes,
+    next: nodes.find((node) => node.state !== 'complete') || null,
+  };
+}
+
+function recoverySnapshot(state) {
+  const entries = new Map(structureEntries(state)
+    .map((entry) => [entry.structure.entityId, entry]));
+  const targets = (state.recovery?.repairTargetIds || []).map((entityId) => {
+    const entry = entries.get(entityId);
+    return {
+      entityId,
+      blueprintId: entry?.blueprint?.id || null,
+      label: entry?.blueprint?.name || entityId,
+      x: entry?.cell?.x ?? null,
+      y: entry?.cell?.y ?? null,
+      condition: entry?.structure?.condition ?? 0,
+      state: state.recovery?.activeRepair?.entityId === entityId
+        ? 'repairing' : (entry?.structure?.condition || 0) > 0 ? 'repaired' : 'broken',
+    };
+  });
+  return {
+    ...clone(state.recovery),
+    targets,
+    repaired: targets.filter((target) => target.state === 'repaired').length,
+    total: targets.length,
+  };
+}
+
+function storyRequirement(state, turnId) {
+  const entries = structureEntries(state);
+  const initialOwned = (OVERHAUL_BALANCE.floor.initialOwned.maxX
+      - OVERHAUL_BALANCE.floor.initialOwned.minX + 1)
+    * (OVERHAUL_BALANCE.floor.initialOwned.maxY
+      - OVERHAUL_BALANCE.floor.initialOwned.minY + 1);
+  const extraOwned = Math.max(0, allCells(state).filter((cell) => cell.owned).length - initialOwned);
+  const completedBuilds = Math.max(0, Number(state.construction?.completed) || 0);
+  const operationalFiber = entries.some((entry) => entry.blueprint.id === 'fiber_gateway'
+    && entry.structure.condition > 0);
+  const textModels = state.business?.textModels?.length || 0;
+  const harnesses = state.business?.harnesses?.length || 0;
+  const agents = state.business?.agents?.length || 0;
+  const completedJobs = state.business?.jobs?.filter((job) => job.status === 'completed').length || 0;
+  const workingHumans = state.actors.filter((actor) => actor.kind === 'human'
+    && actor.role === 'text-operator' && actor.state === 'working').length;
+  const aiConnected = entries.filter((entry) => entry.structure.aiEnabled
+    && entry.structure.aiConnected && !entry.structure.aiFault).length;
+  const sold = Math.max(0, Number(state.progress?.rawFlopsSold) || 0);
+
+  const pair = (current, total, label, complete = current >= total) => ({
+    current, total, label, complete,
+  });
+  switch (turnId) {
+    case 'the-inheritance':
+      return pair(
+        state.recovery?.completedRepairIds?.length || 0,
+        state.recovery?.repairTargetIds?.length || 2,
+        `${state.recovery?.completedRepairIds?.length || 0} / ${state.recovery?.repairTargetIds?.length || 2} critical systems restored`,
+        state.recovery?.phase === 'online',
+      );
+    case 'first-light': {
+      const raw = Math.max(0, Number(state.flops?.raw) || 0);
+      return pair(raw > EPSILON ? 1 : 0, 1,
+        raw > EPSILON ? `${raw.toFixed(1)} raw FLOPS online` : 'Rack booting · waiting for one clean FLOP');
+    }
+    case 'room-to-breathe': {
+      const current = Math.min(1, extraOwned) + Math.min(1, completedBuilds);
+      return pair(current, 2,
+        `${extraOwned ? 'tile claimed' : 'claim a frontier tile'} · ${completedBuilds ? 'structure commissioned' : 'commission a structure'}`);
+    }
+    case 'the-outside-line': {
+      const researched = state.research.completedIds.includes('external-markets');
+      const connected = operationalFiber && state.sell?.fiberFloor === 1;
+      const current = Number(researched) + Number(connected) + Number(sold > EPSILON);
+      return pair(current, 3,
+        `${researched ? 'markets researched' : 'research External Markets'} · ${connected ? 'fiber live' : 'connect F1 Fiber'} · ${sold > EPSILON ? `${sold.toFixed(1)} FLOPS sold` : 'make first sale'}`);
+    }
+    case 'the-first-mind':
+      return pair(Math.min(1, textModels), 1,
+        textModels ? `${textModels} text model${textModels === 1 ? '' : 's'} trained` : 'Train / Text model not yet completed');
+    case 'hands-for-the-mind':
+      return pair(Math.min(1, harnesses), 1,
+        harnesses ? `${harnesses} harness${harnesses === 1 ? '' : 'es'} ready` : state.business.pendingHarness
+          ? `MICA fabricating · ${state.business.pendingHarness.remainingTicks} ticks remain`
+          : 'No completed harness');
+    case 'the-night-shift':
+      return pair(Math.min(1, agents), 1,
+        agents ? `${agents} agent${agents === 1 ? '' : 's'} active` : 'Bind a harness into an agent');
+    case 'prove-it': {
+      const running = state.business.jobs.find((job) => job.status === 'running');
+      return pair(Math.min(1, completedJobs), 1,
+        completedJobs ? `${completedJobs} contract${completedJobs === 1 ? '' : 's'} completed`
+          : running ? `${Math.min(running.requiredFlops, running.completedFlops).toFixed(1)} / ${running.requiredFlops} inference FLOPS`
+            : 'Start the first agent contract');
+    }
+    case 'make-payroll': {
+      const paid = Math.max(0, Number(state.economy?.invoicesPaid) || 0);
+      const issued = state.business.invoices.filter((invoice) => invoice.status === 'issued').length;
+      return pair(Math.min(1, paid), 1,
+        paid ? `${paid} invoice${paid === 1 ? '' : 's'} paid` : issued ? 'Invoice issued · collect through live fiber' : 'Finish a contract to issue an invoice');
+    }
+    case 'shared-control': {
+      const researched = state.research.completedIds.includes('machine-assistance');
+      const current = Number(researched) + Number(workingHumans > 0) + Number(aiConnected > 0);
+      return pair(current, 3,
+        `${researched ? 'machine assistance researched' : 'research Machine Assistance'} · ${workingHumans ? 'human operator online' : 'hire and onboard a human'} · ${aiConnected ? `${aiConnected} AI-connected structure${aiConnected === 1 ? '' : 's'}` : 'connect one structure to AI'}`);
+    }
+    default:
+      return pair(0, 1, 'Unknown campaign requirement', false);
+  }
+}
+
+function storySnapshot(state) {
+  const completed = new Set(state.story?.completedIds || []);
+  const turns = OVERHAUL_BALANCE.story.turns.map((turn) => {
+    const requirement = storyRequirement(state, turn.id);
+    const isCurrent = state.story?.currentId === turn.id;
+    return {
+      ...clone(turn),
+      state: completed.has(turn.id) ? 'complete' : isCurrent ? 'current' : 'locked',
+      progress: requirement,
+    };
+  });
+  const current = turns.find((turn) => turn.state === 'current') || null;
+  return {
+    state: current ? 'active' : 'complete',
+    completedIds: [...(state.story?.completedIds || [])],
+    completed: completed.size,
+    total: turns.length,
+    current,
+    turns,
+    turnStartedTick: state.story?.turnStartedTick ?? 0,
+    lastBeat: state.story?.lastBeat ? clone(state.story.lastBeat) : null,
+  };
+}
+
+function openingCheckpointSnapshot(state) {
+  const entries = structureEntries(state);
+  const initialOwned = (OVERHAUL_BALANCE.floor.initialOwned.maxX
+      - OVERHAUL_BALANCE.floor.initialOwned.minX + 1)
+    * (OVERHAUL_BALANCE.floor.initialOwned.maxY
+      - OVERHAUL_BALANCE.floor.initialOwned.minY + 1);
+  const upgradedComputers = entries.filter((entry) => entry.blueprint?.kind === 'computer'
+    && (Number(entry.structure.computeUpgradeLevel) || 0) > 0).length;
+  const addedGenerators = entries.filter((entry) => entry.blueprint?.stats?.powerGeneration > 0
+    && !entry.structure.inherited && entry.structure.condition > 0).length;
+  const addedPumps = entries.filter((entry) => entry.blueprint?.stats?.coolingGeneration > 0
+    && !entry.structure.inherited && entry.structure.condition > 0).length;
+  const powerExpanded = addedGenerators > 0
+    && Number(state.networks?.power?.telemetry?.capacity || 0) > 24 + EPSILON;
+  const coolingExpanded = addedPumps > 0
+    && Number(state.networks?.cooling?.telemetry?.capacity || 0) > 12 + EPSILON;
+  const extraOwned = Math.max(0, allCells(state).filter((cell) => cell.owned).length - initialOwned);
+  const unlockedFloors = Math.max(1, Number(state.expansion?.unlockedFloors) || 1);
+  const checkpointTicks = state.opening?.checkpointTicks || {};
+  const definitions = [
+    {
+      id: 'recover-and-retrofit', number: 1, title: 'Recover + Retrofit',
+      objective: 'Repair the inherited plant, then retrofit its compute node.',
+      current: Number(state.recovery?.phase === 'online') + Number(upgradedComputers > 0),
+      total: 2,
+      recordedComplete: checkpointTicks['recover-and-retrofit'] != null,
+      label: `${Number(state.recovery?.phase === 'online') + Number(upgradedComputers > 0)} / 2 · ${upgradedComputers ? 'retrofit complete' : 'retrofit pending'}`,
+    },
+    {
+      id: 'expand-utilities', number: 2, title: 'Expand Power + Cooling',
+      objective: 'Raise grid capacity above 24 MW and cooling capacity above 12 kW.',
+      current: Number(powerExpanded) + Number(coolingExpanded),
+      total: 2,
+      recordedComplete: checkpointTicks['expand-utilities'] != null,
+      label: `${Number(powerExpanded) + Number(coolingExpanded)} / 2 systems expanded`,
+    },
+    {
+      id: 'research-capability', number: 3, title: 'Research Capability',
+      objective: 'Complete a research project beyond basic recovery.',
+      current: checkpointTicks['research-capability'] != null ? 1 : 0, total: 1,
+      recordedComplete: checkpointTicks['research-capability'] != null,
+      label: checkpointTicks['research-capability'] != null ? '1 / 1 project complete' : '0 / 1 project complete',
+    },
+    {
+      id: 'expand-first-floor', number: 4, title: 'Expand Floor 1',
+      objective: 'Claim 12 additional connected tiles on Floor 1.',
+      current: Math.min(12, extraOwned), total: 12,
+      recordedComplete: checkpointTicks['expand-first-floor'] != null,
+      label: `${Math.min(12, extraOwned)} / 12 tiles claimed`,
+    },
+    {
+      id: 'unlock-second-floor', number: 5, title: 'Open Floor 2',
+      objective: 'Unlock and enter the second physical floor.',
+      current: Math.max(0, unlockedFloors - 1), total: 1,
+      recordedComplete: checkpointTicks['unlock-second-floor'] != null,
+      label: unlockedFloors > 1 ? 'Floor 2 open' : 'Floor 2 locked',
+    },
+  ];
+  let priorComplete = true;
+  const checkpoints = definitions.map((definition) => {
+    const complete = priorComplete && definition.recordedComplete;
+    const stateName = complete ? 'complete' : priorComplete ? 'current' : 'locked';
+    priorComplete = complete;
+    return {
+      ...definition,
+      complete,
+      state: stateName,
+      progress: definition.total > 0 ? definition.current / definition.total : 0,
+    };
+  });
+  const current = checkpoints.find((checkpoint) => checkpoint.state === 'current') || null;
+  const completed = checkpoints.filter((checkpoint) => checkpoint.state === 'complete').length;
+  return {
+    state: current ? 'active' : 'complete',
+    completed,
+    total: checkpoints.length,
+    current,
+    checkpoints,
+  };
+}
+
 function semanticSnapshot(state) {
   const owned = allCells(state).filter((cell) => cell.owned).map((cell) => ({
     key: cell.key, uiKey: `f0:${cell.x},${cell.y}`,
@@ -1075,14 +1457,18 @@ function semanticSnapshot(state) {
       coolingDelivered: runtime.coolingDelivered,
       dataConnected: runtime.dataConnected,
       rawFlops: runtime.rawFlops,
+      upgradeLevel: Math.max(0, Number(entry.structure.computeUpgradeLevel) || 0),
+      outputMultiplier: computeUpgradeMultiplier(entry.structure),
       workload: runtime.workload,
       utilization: runtime.utilization,
       temperatureC: runtime.temperatureC,
       throttle: runtime.throttle,
       fault: runtime.fault,
+      construction: entry.structure.construction ? clone(entry.structure.construction) : null,
     };
   });
-  const computerActors = computers.map((computer) => ({
+  const computerActors = computers.filter((computer) => !computer.construction
+      || computer.construction.state === 'complete').map((computer) => ({
     id: computer.id,
     kind: 'computer',
     state: computer.state,
@@ -1097,6 +1483,8 @@ function semanticSnapshot(state) {
     const aiConnected = entry.structure.aiConnected === true;
     const aiEfficiencyMultiplier = aiConnected && !entry.structure.aiFault
       ? state.ai.efficiencyMultiplier : 1;
+    const outputMultiplier = entry.blueprint.kind === 'computer'
+      ? computeUpgradeMultiplier(entry.structure) : 1;
     const baseMetrics = {
       powerGeneration: stats.powerGeneration || 0,
       powerCapacity: entry.layer === 'power' ? stats.capacity || 0 : 0,
@@ -1120,6 +1508,16 @@ function semanticSnapshot(state) {
       x: entry.cell.x,
       y: entry.cell.y,
       condition: entry.structure.condition,
+      construction: entry.structure.construction ? clone(entry.structure.construction) : null,
+      inherited: entry.structure.inherited === true,
+      repairable: entry.structure.inherited === true && entry.structure.condition < 100,
+      computeUpgradeLevel: Math.max(0, Number(entry.structure.computeUpgradeLevel) || 0),
+      outputMultiplier,
+      canUpgradeCompute: entry.blueprint.kind === 'computer'
+        && state.recovery?.phase === 'online'
+        && entry.structure.condition > 0
+        && (Number(entry.structure.computeUpgradeLevel) || 0) < 1
+        && !state.construction.jobs.some((job) => job.entityId === entry.structure.entityId),
       aiEnabled,
       aiConnected,
       aiEfficiencyMultiplier,
@@ -1127,9 +1525,22 @@ function semanticSnapshot(state) {
       baseMetrics,
       effectiveMetrics: Object.fromEntries(Object.entries(baseMetrics)
         .map(([key, value]) => [key, ['maintenanceFlopsPerTick', 'reliabilityPercent'].includes(key)
-          ? value : value * aiEfficiencyMultiplier])),
+          ? value : value * aiEfficiencyMultiplier * (key === 'rawFlops' ? outputMultiplier : 1)])),
     };
   });
+  const recovery = recoverySnapshot(state);
+  const research = researchSnapshot(state);
+  const story = storySnapshot(state);
+  const opening = openingCheckpointSnapshot(state);
+  const progression = opening.state === 'active' ? {
+    current: opening.completed,
+    total: opening.total,
+    label: 'Opening checkpoints',
+  } : {
+    current: story.completed,
+    total: story.total,
+    label: story.current ? `Turn ${story.current.number} · ${story.current.title}` : 'Opening campaign complete',
+  };
   const result = {
     schemaVersion: OVERHAUL_SCHEMA_VERSION,
     seed: state.seed,
@@ -1156,7 +1567,13 @@ function semanticSnapshot(state) {
     ticks: { raw: state.tick, completed: state.completedTick },
     routes: clone(state.routes),
     progress: clone(state.progress),
+    recovery,
+    research,
+    story,
+    opening,
+    progression,
     business: clone(state.business),
+    construction: clone(state.construction),
     jobs: clone(state.business.jobs),
     persistence: clone(state),
   };
@@ -1184,6 +1601,10 @@ function semanticSnapshot(state) {
 export function createOverhaulGame(options = {}) {
   let state = options.snapshot ? restoreState(options.snapshot) : initialState(options.seed);
   const listeners = new Set();
+  if (!options.snapshot) {
+    state.networks = computeNetworks(state).snapshot;
+    updateUtilityBurden(state);
+  }
 
   function emit(type, payload = {}, entityId = null) {
     state.eventSequence += 1;
@@ -1217,6 +1638,323 @@ export function createOverhaulGame(options = {}) {
     return id;
   }
 
+  function transitionActor(actor, nextState, assignment = actor.assignment) {
+    if (!actor) return;
+    const from = actor.state;
+    actor.state = nextState;
+    actor.assignment = assignment ? clone(assignment) : null;
+    if (from !== nextState) {
+      emit(`${actor.kind}.state-changed`, {
+        from,
+        state: nextState,
+        assignment: actor.assignment ? clone(actor.assignment) : null,
+      }, actor.id);
+    }
+  }
+
+  function moveActorToward(actor, target) {
+    if (!actor || !target) return false;
+    const from = { x: actor.x, y: actor.y };
+    if (actor.x !== target.x) actor.x += Math.sign(target.x - actor.x);
+    if (actor.y !== target.y) actor.y += Math.sign(target.y - actor.y);
+    const arrived = actor.x === target.x && actor.y === target.y;
+    if (from.x !== actor.x || from.y !== actor.y) {
+      emit(`${actor.kind}.moved`, {
+        from,
+        to: { x: actor.x, y: actor.y },
+        target: clone(target),
+        arrived,
+      }, actor.id);
+    }
+    return arrived;
+  }
+
+  function availableCrew() {
+    const human = state.actors.find((actor) => actor.kind === 'human'
+      && actor.state === 'idle' && !actor.assignment);
+    const robot = state.actors.find((actor) => actor.kind === 'robot'
+      && actor.state === 'idle' && !actor.assignment);
+    return human && robot ? { human, robot } : null;
+  }
+
+  function assignCrew(kind, entityId, target, extra = {}) {
+    const crew = availableCrew();
+    if (!crew) return null;
+    const assignment = {
+      kind,
+      entityId,
+      target: clone(target),
+      phase: 'traveling',
+      ...clone(extra),
+    };
+    transitionActor(crew.human, 'moving', assignment);
+    transitionActor(crew.robot, 'moving', assignment);
+    return { humanId: crew.human.id, robotId: crew.robot.id };
+  }
+
+  function releaseCrew(taskKind, entityId, crew) {
+    for (const actorId of [crew?.humanId, crew?.robotId].filter(Boolean)) {
+      const actor = state.actors.find((item) => item.id === actorId);
+      if (!actor || actor.assignment?.kind !== taskKind
+          || actor.assignment?.entityId !== entityId) continue;
+      transitionActor(actor, 'idle', null);
+    }
+  }
+
+  function constructionEntry(entityId) {
+    return structureEntries(state).find((entry) => entry.structure.entityId === entityId);
+  }
+
+  function syncConstruction(job, structure) {
+    structure.construction = {
+      kind: job.kind || 'build',
+      state: job.phase,
+      phase: job.phase,
+      totalTicks: job.totalTicks,
+      ticksRemaining: job.ticksRemaining,
+      progress: Math.max(0, Math.min(1,
+        (job.totalTicks - job.ticksRemaining) / Math.max(1, job.totalTicks))),
+      humanId: job.humanId || null,
+      robotId: job.robotId || null,
+      queuedTick: job.queuedTick,
+    };
+  }
+
+  function assignConstructionCrew(job, entry) {
+    const crew = assignCrew('construction', job.entityId, {
+      floor: 0,
+      floorKey: state.floor.id,
+      x: entry.cell.x,
+      y: entry.cell.y,
+    }, { jobId: job.id });
+    if (!crew) return false;
+    Object.assign(job, crew, { phase: 'traveling' });
+    syncConstruction(job, entry.structure);
+    emit('construction.crew-dispatched', {
+      jobId: job.id,
+      blueprintId: entry.blueprint.id,
+      cellKey: entry.cell.key,
+      ...crew,
+    }, job.entityId);
+    return true;
+  }
+
+  function completeConstruction(job, entry, reason = 'commissioned') {
+    if (job.kind === 'compute-upgrade') {
+      entry.structure.computeUpgradeLevel = Math.max(
+        0, Number(entry.structure.computeUpgradeLevel) || 0,
+      ) + 1;
+      entry.structure.lastUpgradeTick = state.tick;
+      reason = 'compute-retrofit';
+    }
+    entry.structure.condition = 100;
+    entry.structure.construction = {
+      ...entry.structure.construction,
+      state: 'complete',
+      phase: 'complete',
+      ticksRemaining: 0,
+      progress: 1,
+      completedTick: state.tick,
+    };
+    state.construction.completed += 1;
+    state.construction.jobs = state.construction.jobs.filter((item) => item.id !== job.id);
+    releaseCrew('construction', job.entityId, job);
+    emit('structure.construction-completed', {
+      jobId: job.id,
+      blueprintId: entry.blueprint.id,
+      cellKey: entry.cell.key,
+      humanId: job.humanId,
+      robotId: job.robotId,
+      reason,
+      computeUpgradeLevel: Math.max(0, Number(entry.structure.computeUpgradeLevel) || 0),
+    }, job.entityId);
+  }
+
+  function processConstruction() {
+    for (const job of [...state.construction.jobs]) {
+      const entry = constructionEntry(job.entityId);
+      if (!entry) {
+        releaseCrew('construction', job.entityId, job);
+        state.construction.jobs = state.construction.jobs.filter((item) => item.id !== job.id);
+        continue;
+      }
+      if (!job.humanId || !job.robotId) {
+        job.phase = 'queued';
+        syncConstruction(job, entry.structure);
+        if (!assignConstructionCrew(job, entry)) continue;
+      }
+      const human = state.actors.find((actor) => actor.id === job.humanId);
+      const robot = state.actors.find((actor) => actor.id === job.robotId);
+      if (!human || !robot) {
+        releaseCrew('construction', job.entityId, job);
+        Object.assign(job, { humanId: null, robotId: null, phase: 'queued' });
+        syncConstruction(job, entry.structure);
+        continue;
+      }
+      const target = { floor: 0, floorKey: state.floor.id, x: entry.cell.x, y: entry.cell.y };
+      const humanArrived = moveActorToward(human, target);
+      const robotArrived = moveActorToward(robot, target);
+      if (!humanArrived || !robotArrived) {
+        job.phase = 'traveling';
+        human.assignment.phase = 'traveling';
+        robot.assignment.phase = 'traveling';
+        transitionActor(human, 'moving');
+        transitionActor(robot, 'moving');
+        syncConstruction(job, entry.structure);
+        continue;
+      }
+      const commissioning = job.ticksRemaining <= OVERHAUL_BALANCE.construction.commissioningTicks;
+      job.phase = commissioning ? 'commissioning' : 'assembling';
+      human.assignment.phase = job.phase;
+      robot.assignment.phase = job.phase;
+      transitionActor(human, commissioning ? 'inspecting' : 'working');
+      transitionActor(robot, commissioning ? 'maintaining' : 'building');
+      job.ticksRemaining = Math.max(0, job.ticksRemaining - 1);
+      if (!commissioning && job.ticksRemaining > 0
+          && job.ticksRemaining <= OVERHAUL_BALANCE.construction.commissioningTicks) {
+        job.phase = 'commissioning';
+        human.assignment.phase = job.phase;
+        robot.assignment.phase = job.phase;
+        transitionActor(human, 'inspecting');
+        transitionActor(robot, 'maintaining');
+      }
+      syncConstruction(job, entry.structure);
+      emit('structure.construction-progressed', {
+        jobId: job.id,
+        phase: job.phase,
+        ticksRemaining: job.ticksRemaining,
+        progress: entry.structure.construction.progress,
+        humanId: job.humanId,
+        robotId: job.robotId,
+      }, job.entityId);
+      if (job.ticksRemaining <= 0) completeConstruction(job, entry);
+    }
+  }
+
+  function unlockBlueprints(ids, source) {
+    const unlocked = [];
+    for (const id of ids) {
+      if (!blueprintById(id) || state.unlockIds.includes(id)) continue;
+      state.unlockIds.push(id);
+      unlocked.push(id);
+    }
+    if (unlocked.length) emit('research.blueprints-unlocked', { source, unlocks: unlocked });
+    return unlocked;
+  }
+
+  function updateResearchProgression() {
+    if (state.recovery?.phase !== 'online') return [];
+    const completed = new Set(state.research.completedIds);
+    const newlyCompleted = [];
+    for (const node of OVERHAUL_BALANCE.research.nodes) {
+      if (completed.has(node.id) || state.progress.research + EPSILON < node.threshold) continue;
+      const unlocks = unlockBlueprints(researchUnlockIds(state, node), node.id);
+      completed.add(node.id);
+      state.research.completedIds.push(node.id);
+      state.research.lastUnlock = {
+        id: node.id,
+        name: node.name,
+        unlocks,
+        tick: state.tick,
+      };
+      newlyCompleted.push(node.id);
+      emit('research.node-completed', {
+        nodeId: node.id,
+        name: node.name,
+        threshold: node.threshold,
+        unlocks,
+      });
+    }
+    return newlyCompleted;
+  }
+
+  function updateOpeningProgression() {
+    const ticks = state.opening.checkpointTicks;
+    const entries = structureEntries(state);
+    const upgraded = entries.some((entry) => entry.blueprint?.kind === 'computer'
+      && (Number(entry.structure.computeUpgradeLevel) || 0) > 0);
+    if (ticks['recover-and-retrofit'] == null
+        && state.recovery?.phase === 'online' && upgraded) {
+      ticks['recover-and-retrofit'] = state.tick;
+      emit('opening.checkpoint-completed', {
+        checkpointId: 'recover-and-retrofit', number: 1,
+      }, 'recover-and-retrofit');
+    }
+
+    const addedGenerator = entries.some((entry) => entry.blueprint?.stats?.powerGeneration > 0
+      && !entry.structure.inherited && entry.structure.condition > 0);
+    const addedPump = entries.some((entry) => entry.blueprint?.stats?.coolingGeneration > 0
+      && !entry.structure.inherited && entry.structure.condition > 0);
+    const powerExpanded = addedGenerator
+      && Number(state.networks?.power?.telemetry?.capacity || 0) > 24 + EPSILON;
+    const coolingExpanded = addedPump
+      && Number(state.networks?.cooling?.telemetry?.capacity || 0) > 12 + EPSILON;
+    if (ticks['recover-and-retrofit'] != null && ticks['expand-utilities'] == null
+        && powerExpanded && coolingExpanded) {
+      ticks['expand-utilities'] = state.tick;
+      emit('opening.checkpoint-completed', {
+        checkpointId: 'expand-utilities', number: 2,
+        powerCapacity: state.networks.power.telemetry.capacity,
+        coolingCapacity: state.networks.cooling.telemetry.capacity,
+      }, 'expand-utilities');
+    }
+
+    const utilityTick = ticks['expand-utilities'];
+    if (utilityTick != null && ticks['research-capability'] == null
+        && Number(state.research?.lastUnlock?.tick) > utilityTick
+        && state.research.lastUnlock.id !== 'recovery-grid') {
+      ticks['research-capability'] = state.tick;
+      emit('opening.checkpoint-completed', {
+        checkpointId: 'research-capability', number: 3,
+        researchId: state.research.lastUnlock.id,
+      }, 'research-capability');
+    }
+
+    const initialOwned = (OVERHAUL_BALANCE.floor.initialOwned.maxX
+        - OVERHAUL_BALANCE.floor.initialOwned.minX + 1)
+      * (OVERHAUL_BALANCE.floor.initialOwned.maxY
+        - OVERHAUL_BALANCE.floor.initialOwned.minY + 1);
+    const extraOwned = allCells(state).filter((cell) => cell.owned).length - initialOwned;
+    if (ticks['research-capability'] != null && ticks['expand-first-floor'] == null
+        && extraOwned >= 12) {
+      ticks['expand-first-floor'] = state.tick;
+      emit('opening.checkpoint-completed', {
+        checkpointId: 'expand-first-floor', number: 4, extraOwned,
+      }, 'expand-first-floor');
+    }
+  }
+
+  function updateStoryProgression() {
+    const turns = OVERHAUL_BALANCE.story.turns;
+    const currentIndex = turns.findIndex((turn) => turn.id === state.story.currentId);
+    if (currentIndex < 0) return null;
+    const turn = turns[currentIndex];
+    const requirement = storyRequirement(state, turn.id);
+    if (!requirement.complete) return null;
+    if (!state.story.completedIds.includes(turn.id)) state.story.completedIds.push(turn.id);
+    state.story.lastBeat = {
+      id: turn.id,
+      number: turn.number,
+      title: turn.title,
+      copy: turn.completion,
+      tick: state.tick,
+    };
+    const next = turns[currentIndex + 1] || null;
+    state.story.currentId = next?.id || null;
+    state.story.turnStartedTick = state.tick;
+    emit('story.turn-completed', {
+      turnId: turn.id,
+      number: turn.number,
+      title: turn.title,
+      completion: turn.completion,
+      completed: state.story.completedIds.length,
+      total: turns.length,
+      nextTurnId: next?.id || null,
+      nextTitle: next?.title || null,
+    }, turn.id);
+    return turn.id;
+  }
+
   function purchaseFrontier(key) {
     const parsed = parseCellKey(key);
     if (!parsed || parsed.floor !== state.floor.id) return reject('not-frontier', { cellKey: key });
@@ -1235,28 +1973,16 @@ export function createOverhaulGame(options = {}) {
     return purchaseFrontier(cellKey(state.floor.id, x, y));
   }
 
-  function createStructure(blueprint) {
+  function createStructure(blueprint, condition = 100) {
     const entityId = nextEntityId(blueprint.kind);
-    const structure = { entityId, blueprintId: blueprint.id, condition: 100 };
+    const structure = { entityId, blueprintId: blueprint.id, condition };
     if (isAiEligibleBlueprint(blueprint)) {
       structure.aiEnabled = false;
       structure.aiConnected = false;
       structure.aiFault = null;
     }
     if (blueprint.kind === 'computer') {
-      structure.runtime = {
-        state: 'off',
-        bootRemaining: blueprint.stats.bootTicks,
-        powerDelivered: 0,
-        coolingDelivered: 0,
-        dataConnected: false,
-        rawFlops: 0,
-        workload: 'idle',
-        utilization: 0,
-        temperatureC: OVERHAUL_BALANCE.thermal.ambientC,
-        throttle: 1,
-        fault: null,
-      };
+      structure.runtime = computerRuntime(blueprint);
     }
     return structure;
   }
@@ -1264,9 +1990,9 @@ export function createOverhaulGame(options = {}) {
   function placementReason(blueprintId, x, y, candidateState = state) {
     const blueprint = blueprintById(blueprintId);
     if (!blueprint || !blueprint.layer) return 'unknown-blueprint';
-    if (!candidateState.unlockIds.includes(blueprintId)) return 'locked-blueprint';
     const cell = getCell(candidateState, x, y);
     if (!cell?.owned) return 'unowned-cell';
+    if (!candidateState.unlockIds.includes(blueprintId)) return 'locked-blueprint';
     if (cell.layers[blueprint.layer]) return 'layer-occupied';
     if (blueprint.placement?.floor && blueprint.placement.floor !== candidateState.floor.number) {
       return 'wrong-floor';
@@ -1316,6 +2042,45 @@ export function createOverhaulGame(options = {}) {
     }
     getCell(afterState, x, y).layers[blueprint.layer] = structure;
     const afterNetwork = computeNetworks(afterState).snapshot;
+    let networkExtension = null;
+    if (['power', 'cooling', 'data', 'ai'].includes(blueprint.layer)) {
+      const key = cellKey(afterState.floor.id, x, y);
+      const graph = createComponents(afterState, blueprint.layer);
+      const componentId = graph.byCell.get(key);
+      const component = graph.componentById.get(componentId);
+      const connectedNeighbors = neighbors(
+        x, y, afterState.floor.width, afterState.floor.height,
+      ).filter(([nx, ny]) => getCell(afterState, nx, ny)
+        ?.layers[blueprint.layer]?.condition > 0).length;
+      const sourceOnComponent = (component?.cells || []).some((componentKey) => {
+        const point = parseCellKey(componentKey);
+        const cell = point ? getCell(afterState, point.x, point.y) : null;
+        return Object.values(cell?.layers || {}).some((candidate) => {
+          const candidateBlueprint = blueprintById(candidate?.blueprintId);
+          if (!candidate || candidate.condition <= 0 || !candidateBlueprint) return false;
+          if (blueprint.layer === 'power') return (candidateBlueprint.stats?.powerGeneration || 0) > 0;
+          if (blueprint.layer === 'cooling') return (candidateBlueprint.stats?.coolingGeneration || 0) > 0;
+          if (blueprint.layer === 'data') return candidateBlueprint.id === 'data_switch';
+          return candidateBlueprint.id === 'ai_controller';
+        });
+      });
+      const componentKeys = new Set(component?.cells || []);
+      const livePath = (afterNetwork[blueprint.layer]?.paths || []).some((path) =>
+        path.connected && (path.cells || []).some((point) => componentKeys.has(
+          cellKey(afterState.floor.id, Number(point.x), Number(point.y)),
+        )));
+      networkExtension = {
+        layer: blueprint.layer,
+        connectedNeighbors,
+        reachableCells: component?.cells?.length || 1,
+        connectedToNetwork: connectedNeighbors > 0,
+        connectedToSource: sourceOnComponent,
+        live: livePath,
+        isolated: connectedNeighbors === 0,
+        routeCapacity: blueprint.stats?.capacity || 0,
+        supplyCapacity: afterNetwork[blueprint.layer]?.telemetry?.capacity || 0,
+      };
+    }
     const networkDeltas = {};
     const affectedEndpoints = [];
     for (const layer of ['power', 'cooling', 'data', 'ai']) {
@@ -1364,8 +2129,11 @@ export function createOverhaulGame(options = {}) {
       blueprintId,
       cellKey: cellKey(state.floor.id, x, y),
       cost: blueprint.cost,
+      constructionTicks: OVERHAUL_BALANCE.construction.assemblyTicks
+        + OVERHAUL_BALANCE.construction.commissioningTicks,
       recurringBurdenFlops: blueprint.stats?.maintenanceFlopsPerTick || 0,
       networkRole: blueprint.networkRole || null,
+      networkExtension,
       networkDeltas,
       affectedEndpoints,
     };
@@ -1377,8 +2145,28 @@ export function createOverhaulGame(options = {}) {
     if (reason) return reject(reason, { blueprintId, x, y });
     const cell = getCell(state, x, y);
     state.economy.cash -= blueprint.cost;
-    const structure = createStructure(blueprint);
+    const structure = createStructure(blueprint, 0);
     cell.layers[blueprint.layer] = structure;
+    const totalTicks = OVERHAUL_BALANCE.construction.assemblyTicks
+      + OVERHAUL_BALANCE.construction.commissioningTicks;
+    const job = {
+      id: nextEntityId('construction'),
+      kind: 'build',
+      entityId: structure.entityId,
+      blueprintId,
+      cellKey: cell.key,
+      x,
+      y,
+      phase: 'queued',
+      totalTicks,
+      ticksRemaining: totalTicks,
+      humanId: null,
+      robotId: null,
+      queuedTick: state.tick,
+    };
+    state.construction.jobs.push(job);
+    syncConstruction(job, structure);
+    assignConstructionCrew(job, { cell, structure, blueprint });
     refreshNetworks();
     emit('structure.placed', {
       blueprintId,
@@ -1386,8 +2174,77 @@ export function createOverhaulGame(options = {}) {
       layer: blueprint.layer,
       cellKey: cell.key,
       cost: blueprint.cost,
+      constructionJobId: job.id,
+      operational: false,
     }, structure.entityId);
-    return { ok: true, entityId: structure.entityId, cellKey: cell.key };
+    emit('structure.construction-queued', {
+      jobId: job.id,
+      blueprintId,
+      cellKey: cell.key,
+      totalTicks,
+      humanId: job.humanId,
+      robotId: job.robotId,
+    }, structure.entityId);
+    return {
+      ok: true,
+      entityId: structure.entityId,
+      cellKey: cell.key,
+      constructionJobId: job.id,
+      state: job.phase,
+      operational: false,
+    };
+  }
+
+  function upgradeCompute(entityId) {
+    const entry = computerEntries(state).find((item) => item.structure.entityId === entityId);
+    if (!entry) return reject('not-compute', { entityId });
+    if (state.recovery?.phase !== 'online') return reject('site-not-recovered', { entityId });
+    if (entry.structure.condition <= 0) return reject('compute-offline', { entityId });
+    if ((Number(entry.structure.computeUpgradeLevel) || 0) >= 1) {
+      return reject('compute-already-upgraded', { entityId });
+    }
+    if (state.construction.jobs.some((job) => job.entityId === entityId)) {
+      return reject('compute-work-in-progress', { entityId });
+    }
+    const cost = OVERHAUL_BALANCE.recovery.computeUpgradeCost;
+    if (state.economy.cash + EPSILON < cost) {
+      return reject('insufficient-cash', { entityId, operation: 'upgrade-compute' });
+    }
+    state.economy.cash -= cost;
+    entry.structure.condition = 0;
+    const totalTicks = OVERHAUL_BALANCE.recovery.computeUpgradeTicks;
+    const job = {
+      id: nextEntityId('construction'),
+      kind: 'compute-upgrade',
+      entityId,
+      blueprintId: entry.blueprint.id,
+      cellKey: entry.cell.key,
+      x: entry.cell.x,
+      y: entry.cell.y,
+      phase: 'queued',
+      totalTicks,
+      ticksRemaining: totalTicks,
+      humanId: null,
+      robotId: null,
+      queuedTick: state.tick,
+    };
+    state.construction.jobs.push(job);
+    syncConstruction(job, entry.structure);
+    assignConstructionCrew(job, entry);
+    refreshNetworks();
+    emit('computer.upgrade-queued', {
+      jobId: job.id,
+      cost,
+      bonusPercent: OVERHAUL_BALANCE.recovery.computeUpgradeBonusPercent,
+      cellKey: entry.cell.key,
+    }, entityId);
+    return {
+      ok: true,
+      entityId,
+      constructionJobId: job.id,
+      cost,
+      bonusPercent: OVERHAUL_BALANCE.recovery.computeUpgradeBonusPercent,
+    };
   }
 
   function remove(x, y, layer) {
@@ -1395,6 +2252,15 @@ export function createOverhaulGame(options = {}) {
     const cell = getCell(state, x, y);
     const structure = cell?.layers[layer];
     if (!structure) return reject('nothing-to-remove', { x, y, layer });
+    const constructionJob = state.construction.jobs.find(
+      (job) => job.entityId === structure.entityId,
+    );
+    if (constructionJob) {
+      releaseCrew('construction', structure.entityId, constructionJob);
+      state.construction.jobs = state.construction.jobs.filter(
+        (job) => job.entityId !== structure.entityId,
+      );
+    }
     const removedFault = state.ai.activeFaults.find(
       (fault) => fault.entityId === structure.entityId,
     );
@@ -1441,6 +2307,54 @@ export function createOverhaulGame(options = {}) {
     refreshNetworks();
     emit('ai.enabled-changed', { enabled }, entityId);
     return { ok: true, entityId, enabled };
+  }
+
+  function repairStructure(entityId) {
+    const entry = structureEntries(state).find(
+      (item) => item.structure.entityId === entityId,
+    );
+    if (!entry) return reject('missing-structure', { entityId });
+    if (!state.recovery?.repairTargetIds.includes(entityId)) {
+      return reject('not-recovery-target', { entityId });
+    }
+    if (entry.structure.condition >= 100) return reject('no-repair-needed', { entityId });
+    if (state.recovery.activeRepair) {
+      if (state.recovery.activeRepair.entityId === entityId) {
+        return { ok: true, ...clone(state.recovery.activeRepair) };
+      }
+      return reject('repair-in-progress', {
+        entityId,
+        activeEntityId: state.recovery.activeRepair.entityId,
+      });
+    }
+    const cost = OVERHAUL_BALANCE.recovery.repairCost;
+    if (state.economy.cash + EPSILON < cost) {
+      return reject('insufficient-cash', { entityId, operation: 'recovery-repair' });
+    }
+    const crew = assignCrew('recovery', entityId, {
+      floor: 0,
+      floorKey: state.floor.id,
+      x: entry.cell.x,
+      y: entry.cell.y,
+    });
+    if (!crew) return reject('no-idle-crew', { entityId });
+    state.economy.cash -= cost;
+    state.recovery.phase = 'repairing';
+    state.recovery.activeRepair = {
+      entityId,
+      ...crew,
+      cost,
+      phase: 'traveling',
+      ticksRemaining: OVERHAUL_BALANCE.recovery.repairTicks,
+    };
+    emit('recovery.repair-started', {
+      siteName: state.recovery.siteName,
+      ...crew,
+      cost,
+      phase: state.recovery.activeRepair.phase,
+      ticksRemaining: state.recovery.activeRepair.ticksRemaining,
+    }, entityId);
+    return { ok: true, ...clone(state.recovery.activeRepair) };
   }
 
   function repairAiFault(entityId) {
@@ -1626,9 +2540,11 @@ export function createOverhaulGame(options = {}) {
     claimCell,
     previewPlacement,
     place,
+    upgradeCompute,
     remove,
     setRoutes,
     setAiEnabled,
+    repairStructure,
     repairAiFault,
     completeTextTraining,
     buildHarness,
@@ -1640,22 +2556,30 @@ export function createOverhaulGame(options = {}) {
 
   function command(input) {
     if (!input || typeof input !== 'object') return reject('invalid-command');
+    let result;
     switch (input.type) {
-      case 'purchase-frontier': return purchaseFrontier(input.cellKey);
-      case 'preview-placement': return previewPlacement(input.blueprintId, input.x, input.y);
-      case 'place': return place(input.blueprintId, input.x, input.y);
-      case 'remove': return remove(input.x, input.y, input.layer);
-      case 'set-routes': return setRoutes(input.routes || input);
-      case 'set-ai-enabled': return setAiEnabled(input.entityId, input.enabled);
-      case 'repair-ai-fault': return repairAiFault(input.entityId);
-      case 'complete-text-training': return completeTextTraining();
-      case 'build-harness': return buildHarness(input.textId);
-      case 'create-agent': return createAgent(input.harnessId);
-      case 'start-job': return startJob(input.agentId);
-      case 'receive-invoice': return receiveInvoice(input.invoiceId);
-      case 'hire-human': return hireHuman();
-      default: return reject('unknown-command', { commandType: input.type });
+      case 'purchase-frontier': result = purchaseFrontier(input.cellKey); break;
+      case 'preview-placement': result = previewPlacement(input.blueprintId, input.x, input.y); break;
+      case 'place': result = place(input.blueprintId, input.x, input.y); break;
+      case 'upgrade-compute': result = upgradeCompute(input.entityId); break;
+      case 'remove': result = remove(input.x, input.y, input.layer); break;
+      case 'set-routes': result = setRoutes(input.routes || input); break;
+      case 'set-ai-enabled': result = setAiEnabled(input.entityId, input.enabled); break;
+      case 'repair-structure': result = repairStructure(input.entityId); break;
+      case 'repair-ai-fault': result = repairAiFault(input.entityId); break;
+      case 'complete-text-training': result = completeTextTraining(); break;
+      case 'build-harness': result = buildHarness(input.textId); break;
+      case 'create-agent': result = createAgent(input.harnessId); break;
+      case 'start-job': result = startJob(input.agentId); break;
+      case 'receive-invoice': result = receiveInvoice(input.invoiceId); break;
+      case 'hire-human': result = hireHuman(); break;
+      default: result = reject('unknown-command', { commandType: input.type });
     }
+    if (result?.ok && input.type !== 'preview-placement') {
+      updateOpeningProgression();
+      updateStoryProgression();
+    }
+    return result;
   }
 
   function transitionComputer(entry, nextState, eventType, extra = {}) {
@@ -1771,7 +2695,8 @@ export function createOverhaulGame(options = {}) {
       }
     }
     const gross = entry.structure.condition > 0 && !entry.structure.aiFault
-      ? stats.rawFlops * runtime.throttle * aiMultiplierFor(state, entry) : 0;
+      ? stats.rawFlops * computeUpgradeMultiplier(entry.structure)
+        * runtime.throttle * aiMultiplierFor(state, entry) : 0;
     runtime.rawFlops = gross;
     return { gross, external: network.externalConnected.get(entityId) || false };
   }
@@ -1876,6 +2801,81 @@ export function createOverhaulGame(options = {}) {
     }
   }
 
+  function processRecoveryRepair() {
+    const active = state.recovery?.activeRepair;
+    if (!active) return;
+    const entry = structureEntries(state).find(
+      (item) => item.structure.entityId === active.entityId,
+    );
+    const human = state.actors.find((actor) => actor.id === active.humanId);
+    const robot = state.actors.find((actor) => actor.id === active.robotId);
+    if (!entry || !human || !robot) return;
+    const target = { floor: 0, floorKey: state.floor.id, x: entry.cell.x, y: entry.cell.y };
+    const humanArrived = moveActorToward(human, target);
+    const robotArrived = moveActorToward(robot, target);
+    if (!humanArrived || !robotArrived) {
+      active.phase = 'traveling';
+      human.assignment.phase = 'traveling';
+      robot.assignment.phase = 'traveling';
+      transitionActor(human, 'moving');
+      transitionActor(robot, 'moving');
+      emit('recovery.crew-traveled', {
+        humanId: active.humanId,
+        robotId: active.robotId,
+        phase: active.phase,
+        humanPosition: { x: human.x, y: human.y },
+        robotPosition: { x: robot.x, y: robot.y },
+      }, active.entityId);
+      return;
+    }
+    active.phase = 'maintaining';
+    human.assignment.phase = active.phase;
+    robot.assignment.phase = active.phase;
+    transitionActor(human, 'repairing');
+    transitionActor(robot, 'maintaining');
+    active.ticksRemaining = Math.max(0, active.ticksRemaining - 1);
+    emit('recovery.repair-progressed', {
+      humanId: active.humanId,
+      robotId: active.robotId,
+      phase: active.phase,
+      ticksRemaining: active.ticksRemaining,
+    }, active.entityId);
+    if (active.ticksRemaining > 0) return;
+    if (entry) entry.structure.condition = 100;
+    if (!state.recovery.completedRepairIds.includes(active.entityId)) {
+      state.recovery.completedRepairIds.push(active.entityId);
+    }
+    releaseCrew('recovery', active.entityId, active);
+    emit('recovery.repair-completed', {
+      siteName: state.recovery.siteName,
+      humanId: active.humanId,
+      robotId: active.robotId,
+      repaired: state.recovery.completedRepairIds.length,
+      total: state.recovery.repairTargetIds.length,
+    }, active.entityId);
+    state.recovery.activeRepair = null;
+    const remaining = state.recovery.repairTargetIds.some((entityId) => {
+      const target = structureEntries(state).find(
+        (item) => item.structure.entityId === entityId,
+      );
+      return !target || target.structure.condition <= 0;
+    });
+    if (remaining) {
+      state.recovery.phase = 'triage';
+      return;
+    }
+    state.recovery.phase = 'online';
+    if (!state.recovery.completionBonusPaid) {
+      state.recovery.completionBonusPaid = true;
+      state.economy.cash += OVERHAUL_BALANCE.recovery.completionBonus;
+    }
+    emit('recovery.site-online', {
+      siteName: state.recovery.siteName,
+      completionBonus: OVERHAUL_BALANCE.recovery.completionBonus,
+    });
+    updateResearchProgression();
+  }
+
   function processAiTraining(researchFlops, network) {
     if (network.onlineControllerCount <= 0 || researchFlops <= EPSILON) return;
     const balance = OVERHAUL_BALANCE.ai;
@@ -1919,23 +2919,30 @@ export function createOverhaulGame(options = {}) {
     }
     const robot = state.actors.find((actor) => actor.kind === 'robot' && actor.state === 'idle');
     if (!robot) return null;
-    const from = robot.state;
-    robot.state = 'repairing';
-    robot.assignment = {
+    const entry = structureEntries(state).find(
+      (item) => item.structure.entityId === fault.entityId,
+    );
+    const target = entry ? {
+      floor: 0,
+      floorKey: state.floor.id,
+      x: entry.cell.x,
+      y: entry.cell.y,
+    } : { floor: 0, floorKey: state.floor.id, x: robot.x, y: robot.y };
+    const assignment = {
       kind: 'ai-fault',
       faultId: fault.faultId,
       entityId: fault.entityId,
       repairRemaining: fault.repairRemaining,
+      phase: 'traveling',
+      target,
     };
+    transitionActor(robot, 'moving', assignment);
     fault.robotId = robot.id;
-    emit('robot.state-changed', {
-      from,
-      state: robot.state,
-      assignment: clone(robot.assignment),
-    }, robot.id);
+    fault.phase = 'traveling';
     emit('ai.repair-started', {
       faultId: fault.faultId,
       robotId: robot.id,
+      phase: fault.phase,
       repairRemaining: fault.repairRemaining,
     }, fault.entityId);
     return robot;
@@ -1968,14 +2975,38 @@ export function createOverhaulGame(options = {}) {
     }
     for (const fault of [...state.ai.activeFaults]) {
       if (!fault.robotId) continue;
-      fault.repairRemaining = Math.max(0, fault.repairRemaining - 1);
       const robot = state.actors.find((actor) => actor.id === fault.robotId);
+      let target = robot?.assignment?.target;
+      if (robot && !target) {
+        const entry = structureEntries(state).find(
+          (item) => item.structure.entityId === fault.entityId,
+        );
+        if (entry) {
+          target = { floor: 0, floorKey: state.floor.id, x: entry.cell.x, y: entry.cell.y };
+          robot.assignment.target = clone(target);
+        }
+      }
+      if (!robot || !moveActorToward(robot, target)) {
+        if (robot) transitionActor(robot, 'moving');
+        fault.phase = 'traveling';
+        emit('ai.repair-crew-traveled', {
+          faultId: fault.faultId,
+          robotId: fault.robotId,
+          position: robot ? { x: robot.x, y: robot.y } : null,
+        }, fault.entityId);
+        continue;
+      }
+      fault.phase = 'maintaining';
+      robot.assignment.phase = fault.phase;
+      transitionActor(robot, 'repairing');
+      fault.repairRemaining = Math.max(0, fault.repairRemaining - 1);
       if (robot?.assignment?.faultId === fault.faultId) {
         robot.assignment.repairRemaining = fault.repairRemaining;
       }
       emit('ai.repair-progressed', {
         faultId: fault.faultId,
         robotId: fault.robotId,
+        phase: fault.phase,
         repairRemaining: fault.repairRemaining,
       }, fault.entityId);
       if (fault.repairRemaining <= 0) completeAiRepair(fault);
@@ -2035,7 +3066,9 @@ export function createOverhaulGame(options = {}) {
   }
 
   function simulateOneTick() {
+    processRecoveryRepair();
     processAiRepairs();
+    processConstruction();
     const previousSell = clone(state.sell);
     const network = computeNetworks(state);
     state.networks = network.snapshot;
@@ -2113,6 +3146,8 @@ export function createOverhaulGame(options = {}) {
     state.progress.training += ledger.training;
     state.progress.inference += ledger.jobs;
     state.progress.rawFlopsSold += ledger.sell;
+    updateResearchProgression();
+    updateOpeningProgression();
     processAiTraining(ledger.reserved, network);
 
     const saleIncome = ledger.sell * OVERHAUL_BALANCE.economy.rawFlopsSalePrice;
@@ -2138,6 +3173,7 @@ export function createOverhaulGame(options = {}) {
       reason,
       fiberFloor: network.onlineFiberCount > 0 ? 1 : null,
       routedFlops: routedSell,
+      incomePerTick: saleIncome,
     };
     if (state.sell.reason && state.sell.reason !== previousSell.reason) {
       emit('sell.blocked', {
@@ -2150,6 +3186,7 @@ export function createOverhaulGame(options = {}) {
     processHarnessBuild();
     processHumanStates();
     maybeRaiseAiFault();
+    updateStoryProgression();
   }
 
   function tick(steps = 1) {
@@ -2187,9 +3224,22 @@ export function createOverhaulGame(options = {}) {
   function ensurePlaced(blueprintId, x, y) {
     const blueprint = blueprintById(blueprintId);
     const existing = getCell(state, x, y)?.layers[blueprint.layer];
-    if (existing?.blueprintId === blueprintId) return existing.entityId;
+    if (existing?.blueprintId === blueprintId) {
+      const pending = state.construction.jobs.find((job) => job.entityId === existing.entityId);
+      if (pending) {
+        completeConstruction(pending, constructionEntry(existing.entityId), 'scenario-fixture');
+        refreshNetworks();
+      }
+      return existing.entityId;
+    }
     if (existing) throw new Error(`Scenario cell ${x},${y} ${blueprint.layer} already occupied`);
-    return requireAction(place(blueprintId, x, y), blueprintId).entityId;
+    const placed = requireAction(place(blueprintId, x, y), blueprintId);
+    const pending = state.construction.jobs.find((job) => job.entityId === placed.entityId);
+    if (pending) {
+      completeConstruction(pending, constructionEntry(placed.entityId), 'scenario-fixture');
+      refreshNetworks();
+    }
+    return placed.entityId;
   }
 
   function buildComputerPath({ fiber = false } = {}) {
@@ -2197,7 +3247,10 @@ export function createOverhaulGame(options = {}) {
     ensurePlaced('generator', layout.generator.x, layout.generator.y);
     ensurePlaced('cooling_pump', layout.coolingPump.x, layout.coolingPump.y);
     ensurePlaced(state.computerBlueprintId, layout.computer.x, layout.computer.y);
-    for (const [x, y] of layout.power) ensurePlaced('power_line', x, y);
+    for (const [x, y] of layout.power) {
+      ensurePlaced(x === layout.generator.x && y === layout.generator.y
+        ? 'power_pole' : 'power_line', x, y);
+    }
     for (const [x, y] of layout.cooling) ensurePlaced('cooling_pipe', x, y);
     for (const [x, y] of layout.data) {
       const blueprintId = x === layout.dataSwitch.x && y === layout.dataSwitch.y
@@ -2232,11 +3285,34 @@ export function createOverhaulGame(options = {}) {
     throw new Error('Scenario computer did not reach loaded state');
   }
 
+  function prepareScenario() {
+    state.unlockIds = Object.keys(OVERHAUL_BLUEPRINTS);
+    for (const entry of structureEntries(state)) entry.structure.condition = 100;
+    if (state.recovery) {
+      state.recovery.phase = 'online';
+      state.recovery.activeRepair = null;
+      state.recovery.completedRepairIds = [...state.recovery.repairTargetIds];
+      state.recovery.completionBonusPaid = true;
+    }
+    const recoveryRobot = state.actors.find(
+      (actor) => actor.kind === 'robot' && actor.assignment?.kind === 'recovery',
+    );
+    if (recoveryRobot) {
+      recoveryRobot.state = 'idle';
+      recoveryRobot.assignment = null;
+    }
+    state.networks = computeNetworks(state).snapshot;
+  }
+
   function runScenario(name) {
     const snapshots = [];
     let scenarioEvents = null;
+    prepareScenario();
     switch (name) {
       case 'computer-path-disconnected': {
+        for (const entry of structureEntries(state)) {
+          if (entry.blueprint?.kind !== 'computer') entry.structure.condition = 0;
+        }
         const point = OVERHAUL_SCENARIO_LAYOUT.computer;
         ensurePlaced(state.computerBlueprintId, point.x, point.y);
         tick();
@@ -2369,6 +3445,113 @@ export function createOverhaulGame(options = {}) {
           snapshots.push(snapshot());
         }
         scenarioEvents = clone(state.business.events.slice(eventOffset));
+        break;
+      }
+      case 'story-campaign': {
+        state.economy.cash = 10000;
+        state.ai.mistakeChance = 0;
+        const advanceTurn = (turnId, limit = 80) => {
+          for (let count = 0; state.story.currentId === turnId && count < limit; count++) {
+            tick();
+            snapshots.push(snapshot());
+          }
+          if (state.story.currentId === turnId) {
+            throw new Error(`Story scenario did not advance past ${turnId}`);
+          }
+        };
+
+        snapshots.push(snapshot());
+        advanceTurn('the-inheritance', 2);
+        advanceTurn('first-light', 12);
+
+        const frontier = allCells(state).find((cell) => cell.frontier);
+        if (!frontier) throw new Error('Story scenario has no frontier tile');
+        requireAction(command({ type: 'purchase-frontier', cellKey: frontier.key }),
+          'story frontier claim');
+        ensurePlaced('power_line', frontier.x, frontier.y);
+        snapshots.push(snapshot());
+        advanceTurn('room-to-breathe', 2);
+
+        const layout = OVERHAUL_SCENARIO_LAYOUT;
+        requireAction(command({
+          type: 'set-routes', routes: { sell: 0, research: 1, train: 0, inference: 0 },
+        }), 'story external-markets research');
+        while (!state.research.completedIds.includes('external-markets')) {
+          tick();
+          snapshots.push(snapshot());
+        }
+        ensurePlaced('fiber_gateway', layout.fiber.x, layout.fiber.y);
+        requireAction(command({
+          type: 'set-routes', routes: { sell: 1, research: 0, train: 0, inference: 0 },
+        }), 'story first-sale route');
+        snapshots.push(snapshot());
+        advanceTurn('the-outside-line', 12);
+
+        requireAction(command({
+          type: 'set-routes', routes: { sell: 0, research: 0, train: 1, inference: 0 },
+        }), 'story training route');
+        while (state.progress.training - state.business.trainingSpent
+            + EPSILON < OVERHAUL_BALANCE.business.textTrainingRequired) {
+          tick();
+          snapshots.push(snapshot());
+        }
+        const text = requireAction(command({ type: 'complete-text-training' }),
+          'story text training');
+        snapshots.push(snapshot());
+        if (state.story.currentId === 'the-first-mind') advanceTurn('the-first-mind', 2);
+
+        const harnessBuild = requireAction(command({ type: 'build-harness', textId: text.entityId }),
+          'story harness');
+        snapshots.push(snapshot());
+        while (state.business.pendingHarness) {
+          tick();
+          snapshots.push(snapshot());
+        }
+        if (state.story.currentId === 'hands-for-the-mind') advanceTurn('hands-for-the-mind', 2);
+        const harness = state.business.harnesses.find((item) => item.id === harnessBuild.entityId);
+        if (!harness) throw new Error('Story harness did not finish');
+
+        const agent = requireAction(command({ type: 'create-agent', harnessId: harness.id }),
+          'story agent');
+        snapshots.push(snapshot());
+        if (state.story.currentId === 'the-night-shift') advanceTurn('the-night-shift', 2);
+        const job = requireAction(command({ type: 'start-job', agentId: agent.entityId }),
+          'story contract');
+        requireAction(command({
+          type: 'set-routes', routes: { sell: 0, research: 0, train: 0, inference: 1 },
+        }), 'story inference route');
+        snapshots.push(snapshot());
+        while (state.business.jobs.find((item) => item.id === job.entityId)?.status === 'running') {
+          tick();
+          snapshots.push(snapshot());
+        }
+        if (state.story.currentId === 'prove-it') advanceTurn('prove-it', 2);
+
+        const completedJob = state.business.jobs.find((item) => item.id === job.entityId);
+        const invoice = state.business.invoices.find((item) => item.id === completedJob?.invoiceId);
+        if (!invoice) throw new Error('Story contract did not issue an invoice');
+        requireAction(command({ type: 'receive-invoice', invoiceId: invoice.id }),
+          'story invoice');
+        snapshots.push(snapshot());
+        if (state.story.currentId === 'make-payroll') advanceTurn('make-payroll', 2);
+
+        requireAction(command({
+          type: 'set-routes', routes: { sell: 0, research: 1, train: 0, inference: 0 },
+        }), 'story machine-assistance research');
+        while (!state.research.completedIds.includes('machine-assistance')) {
+          tick();
+          snapshots.push(snapshot());
+        }
+        buildAiTopology();
+        const aiTarget = structureEntries(state).find((entry) => entry.blueprint.kind === 'computer');
+        if (!aiTarget) throw new Error('Story scenario has no AI target');
+        requireAction(command({
+          type: 'set-ai-enabled', entityId: aiTarget.structure.entityId, enabled: true,
+        }), 'story AI opt-in');
+        requireAction(command({ type: 'hire-human' }), 'story human hire');
+        snapshots.push(snapshot());
+        advanceTurn('shared-control', 12);
+        snapshots.push(snapshot());
         break;
       }
       default:

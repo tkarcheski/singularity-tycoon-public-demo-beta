@@ -126,7 +126,14 @@ def test_main_commits_audio_on_the_same_tick_and_exposes_independent_mix(audio_p
     assert mixed["mix"]["music"] == {"volume": 0.21, "muted": True, "effective": 0}
     assert mixed["mix"]["sfx"] == {"volume": 0.83, "muted": False, "effective": 0.83}
 
-    audio_page.evaluate("window.__overhaulAcceptance.runScenario('computer-path-connected')")
+    audio_page.evaluate(
+        """() => {
+          const target=window.__overhaulAcceptance.snapshot().recovery.targets[0];
+          return window.__overhaulAcceptance.command({
+            type:'repair-structure', entityId:target.entityId
+          });
+        }"""
+    )
     committed = audio_page.evaluate(
         """() => ({
           audio: window.__overhaulAcceptance.audioSnapshot(),

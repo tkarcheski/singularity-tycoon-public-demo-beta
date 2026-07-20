@@ -1,5 +1,8 @@
-"""Robot Framework v3 listener that embeds a screenshot after every
-test-level keyword — no manual Snapshot calls required in the .robot files.
+"""Robot Framework v3 listener that records screenshots after test keywords.
+
+Each frame is both embedded in ``log.html`` and retained under Browser's
+``screenshot`` artifact directory with a readable test/step filename.  That
+makes the CI Robot artifact a visual playtest report, not just XML and prose.
 
 How it decides what to snap:
 - Only top-level keywords inside a test case (parent is a TestCase). Setup
@@ -13,6 +16,8 @@ How it decides what to snap:
 
 Wiring: `robot --listener tests/integration/listeners/screenshot_listener.py`.
 """
+import re
+
 from robot.libraries.BuiltIn import BuiltIn
 from robot.running.model import TestCase
 
@@ -38,6 +43,12 @@ class screenshot_listener:
     def __init__(self):
         self._taking = False
         self._browser_ready = False
+        self._test_slug = "robot-test"
+        self._sequence = 0
+
+    def start_test(self, data, result):
+        self._test_slug = self._slug(data.name)
+        self._sequence = 0
 
     def end_keyword(self, data, result):
         if self._taking:
@@ -72,12 +83,22 @@ class screenshot_listener:
     def _snap(self, tag):
         self._taking = True
         try:
-            BuiltIn().run_keyword(
-                "Take Screenshot", "filename=EMBED", "fullPage=True"
+            self._sequence += 1
+            filename = f"{self._test_slug}--{self._sequence:03d}--{self._slug(tag)}"
+            path = BuiltIn().run_keyword(
+                "Take Screenshot",
+                f"filename={filename}",
+                "fullPage=True",
+                "log_screenshot=True",
             )
-            BuiltIn().log(f"Snapshot: {tag}", level="INFO")
+            BuiltIn().log(f"Snapshot: {tag} -> {path}", level="INFO")
         except Exception as exc:
             # Browser may have been torn down mid-test; don't fail the suite.
             BuiltIn().log(f"Snapshot skipped ({tag}): {exc}", level="DEBUG")
         finally:
             self._taking = False
+
+    @staticmethod
+    def _slug(value):
+        slug = re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-")
+        return slug[:80] or "step"

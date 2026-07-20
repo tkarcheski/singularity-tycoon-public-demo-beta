@@ -29,13 +29,11 @@ VIEWPORTS = (
 )
 REQUIRED_UNLOCK_KINDS = {
     "floor",
-    "power-source",
     "power-link",
-    "cooling-source",
     "cooling-link",
-    "computer",
     "data-link",
 }
+REQUIRED_INHERITED_KINDS = {"power-source", "cooling-source", "computer", "data-link"}
 ACTOR_STATES = {
     "human": {"idle", "moving", "working", "training", "hired", "blocked"},
     "robot": {"idle", "moving", "building", "repairing", "charging", "blocked"},
@@ -306,11 +304,22 @@ def test_seeded_start_is_deterministic_and_randomized(overhaul):
     assert _unlock_ids(first) == _unlock_ids(repeat), "same seed changed starting unlock IDs"
     assert _cell_signature(first) == _cell_signature(repeat), "same seed changed owned footprint"
 
+    starts = [
+        _reset(overhaul, seed)
+        for seed in (
+            "overhaul-contract-alpha", "overhaul-contract-beta", "overhaul-contract-gamma",
+            "overhaul-contract-delta", "overhaul-contract-epsilon",
+        )
+    ]
     variants = {
-        _unlock_ids(_reset(overhaul, seed))
-        for seed in ("overhaul-contract-alpha", "overhaul-contract-beta", "overhaul-contract-gamma")
+        (
+            start["starterKitId"],
+            start["recovery"]["siteName"],
+            tuple(target["blueprintId"] for target in start["recovery"]["targets"]),
+        )
+        for start in starts
     }
-    assert len(variants) > 1, f"comparison seeds produced no unlock variation: {variants!r}"
+    assert len(variants) > 1, f"comparison seeds produced no inherited-site variation: {variants!r}"
 
 
 @pytest.mark.parametrize(
@@ -322,9 +331,124 @@ def test_every_seeded_start_has_a_viable_physical_toolkit(overhaul, seed):
     kinds = {item.get("kind") for item in snapshot["unlocks"]}
     missing = REQUIRED_UNLOCK_KINDS - kinds
     assert not missing, f"seed {seed!r} is not viable; missing capability kinds: {sorted(missing)!r}"
+    inherited_kinds = {item.get("kind") for item in snapshot["structures"] if item["inherited"]}
+    inherited_missing = REQUIRED_INHERITED_KINDS - inherited_kinds
+    assert not inherited_missing, (
+        f"seed {seed!r} inherited no viable datacenter; missing {sorted(inherited_missing)!r}"
+    )
+    assert snapshot["recovery"]["total"] == 2
+    assert snapshot["recovery"]["repaired"] == 0
     seed_text = overhaul.locator("[data-seed]")
     assert seed_text.is_visible(), "run seed is not visible"
-    assert seed in seed_text.inner_text(), f"visible seed does not contain {seed!r}"
+    assert snapshot["recovery"]["siteName"] in seed_text.inner_text()
+    assert seed in seed_text.get_attribute("title"), f"visible site does not expose seed {seed!r}"
+
+
+def test_player_recovers_inherited_site_and_research_unlocks_real_construction(overhaul, errors):
+    initial = _reset(overhaul, "browser-recovery-contract")
+    assert initial["recovery"]["phase"] == "triage"
+    assert overhaul.locator('[data-research-node="recovery-grid"]').is_visible()
+    assert overhaul.locator('[data-research-node][data-research-state="locked"]').count() >= 4
+    assert overhaul.locator('[data-ai-hud]').get_attribute("data-ai-state") == "manual"
+    assert "machine assistance" in overhaul.locator('[data-ai-hud]').inner_text().lower()
+    assert overhaul.locator("[data-ai-panel]").count() == 0
+
+    for target in initial["recovery"]["targets"]:
+        cell = overhaul.locator(f'.cell[data-x="{target["x"]}"][data-y="{target["y"]}"]')
+        assert cell.get_attribute("data-tile-activity") == "broken"
+        assert cell.get_attribute("data-inherited") == "true"
+        cell.click()
+        repair = overhaul.locator(f'[data-repair-structure="{target["entityId"]}"]')
+        repair.wait_for(state="visible")
+        assert "repair inherited" in repair.inner_text().lower()
+        repair.click()
+        overhaul.wait_for_function(
+            """entityId => {
+              const snapshot=window.__overhaulAcceptance.snapshot();
+              const target=snapshot.recovery.targets.find(item => item.entityId === entityId);
+              const cell=document.querySelector(`[data-x="${target.x}"][data-y="${target.y}"]`);
+              return snapshot.recovery.activeRepair?.entityId === entityId
+                && cell?.dataset.tileActivity === 'repairing';
+            }""",
+            arg=target["entityId"],
+        )
+        overhaul.wait_for_function(
+            """entityId => {
+              const snapshot=window.__overhaulAcceptance.snapshot();
+              return snapshot.recovery.targets.find(item => item.entityId === entityId)?.state
+                === 'repaired';
+            }""",
+            arg=target["entityId"],
+            timeout=5_000,
+        )
+
+    overhaul.wait_for_function(
+        """() => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          return snapshot.recovery.phase === 'online' && snapshot.flops.raw > 0
+            && document.querySelector('[data-research-node="recovery-grid"]')
+              ?.dataset.researchState === 'complete';
+        }""",
+        timeout=7_000,
+    )
+    generator = overhaul.locator('[data-blueprint="generator"]')
+    assert generator.get_attribute("aria-disabled") == "false"
+
+    research = overhaul.locator('[data-route-preset="ai-train"]')
+    research.scroll_into_view_if_needed()
+    research.click()
+    overhaul.wait_for_function(
+        """() => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          return snapshot.research.completedIds.includes('external-markets')
+            && document.querySelector('[data-blueprint="fiber_gateway"]')
+              ?.getAttribute('aria-disabled') === 'false';
+        }""",
+        timeout=10_000,
+    )
+    final = _snapshot(overhaul)
+    assert final["research"]["points"] >= 40
+    assert "external-markets" in final["research"]["completedIds"]
+    assert not errors, f"recovery/research UI emitted browser errors: {errors[-5:]!r}"
+
+
+def test_ten_turn_campaign_tracker_and_dossier_reach_the_final_signal(overhaul, errors):
+    initial = _reset(overhaul, "browser-ten-turn-story")
+    root = overhaul.locator("#overhaul-root")
+    assert root.get_attribute("data-story-turn") == "1"
+    assert root.get_attribute("data-story-completed") == "0"
+    assert root.get_attribute("data-story-state") == "active"
+    tracker = overhaul.locator("[data-opening-step]")
+    assert tracker.count() == 5
+    assert tracker.nth(0).get_attribute("data-story-state") == "current"
+    assert tracker.nth(4).get_attribute("data-story-state") == "locked"
+    assert initial["story"]["current"]["title"] == "The Inheritance"
+
+    campaign = _scenario(overhaul, "story-campaign")
+    assert len(campaign["snapshots"]) >= 10
+    overhaul.wait_for_function(
+        """() => {
+          const root=document.querySelector('#overhaul-root');
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          return snapshot.story.state === 'complete'
+            && snapshot.story.completed === 10
+            && root?.dataset.storyState === 'complete'
+            && root?.dataset.storyCompleted === '10';
+        }""",
+        timeout=10_000,
+    )
+    final = _snapshot(overhaul)
+    assert final["story"]["completed"] == final["story"]["total"] == 10
+    assert tracker.nth(0).get_attribute("data-story-state") == "current"
+
+    overhaul.locator('[data-tab="jobs"]').click()
+    dossier = overhaul.locator("[data-story-dossier]")
+    dossier.wait_for(state="visible")
+    assert dossier.get_attribute("data-story-state") == "complete"
+    assert "OPENING COMPLETE" in dossier.inner_text()
+    assert "WHO OWNS THE NEXT FLOOR" in dossier.inner_text()
+    assert overhaul.locator("[data-story-dossier-step]").count() == 10
+    assert not errors, f"ten-turn campaign UI emitted browser errors: {errors[-5:]!r}"
 
 
 def test_owned_footprint_is_connected_and_frontier_is_legal(overhaul):
@@ -378,7 +502,9 @@ def test_frontier_purchase_is_atomic_and_recomputes_boundary(overhaul):
 
 
 def test_visible_blueprint_and_owned_cell_click_build_through_real_ui(overhaul, errors):
-    before = _reset(overhaul, "manual-placement-contract")
+    _reset(overhaul, "manual-placement-contract")
+    _scenario(overhaul, "computer-path-connected")
+    before = _snapshot(overhaul)
     assert not errors, f"overhaul emitted errors before manual placement: {errors[-5:]!r}"
 
     blueprint_id = "generator"
@@ -426,14 +552,108 @@ def test_visible_blueprint_and_owned_cell_click_build_through_real_ui(overhaul, 
     )
     feedback = overhaul.locator('.command-feedback[data-tone="good"]')
     feedback.wait_for(state="visible")
-    assert "placed" in feedback.inner_text().lower()
+    assert "blueprint staged" in feedback.inner_text().lower()
 
-    # The inspector button remains a keyboard/screen-reader-friendly alternate
-    # after direct placement; the player does not need it for the primary flow.
+    staged = _snapshot(overhaul)
+    staged_structure = next(
+        item for item in staged["structures"]
+        if item["blueprintId"] == blueprint_id
+        and item["x"] == target["x"] and item["y"] == target["y"]
+    )
+    entity_id = staged_structure["id"]
+    assert staged_structure["condition"] == 0
+    assert staged_structure["construction"]["phase"] == "traveling"
+    worksite = cell.locator(f'[data-construction-site="{entity_id}"]')
+    assert worksite.count() == 1 and worksite.is_visible()
+    moving_crew = overhaul.locator(
+        f'[data-assignment-kind="construction"][data-actor-state="moving"]'
+    )
+    assert moving_crew.count() == 2
+
+    overhaul.wait_for_function(
+        """entityId => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          const structure=snapshot.structures.find(item => item.id === entityId);
+          const actors=snapshot.actors.filter(item => item.assignment?.entityId === entityId);
+          return structure?.construction?.phase === 'assembling'
+            && actors.some(item => item.kind === 'human' && item.state === 'working')
+            && actors.some(item => item.kind === 'robot' && item.state === 'building');
+        }""",
+        arg=entity_id,
+        timeout=6_000,
+    )
+    assembly_art = overhaul.evaluate(
+        """entityId => {
+          const site=document.querySelector(`[data-construction-site="${entityId}"]`);
+          const human=document.querySelector('[data-assignment-kind="construction"][data-actor-kind="human"]');
+          const robot=document.querySelector('[data-assignment-kind="construction"][data-actor-kind="robot"]');
+          return {
+            phase:site?.dataset.constructionPhase,
+            progress:Number(site?.dataset.constructionProgress),
+            crane:getComputedStyle(site?.querySelector('.construction-crane')).animationName,
+            humanActivity:human?.dataset.activity,
+            humanTool:getComputedStyle(human?.querySelector('.human-arm.right')).animationName,
+            robotActivity:robot?.dataset.activity,
+            robotTool:getComputedStyle(robot?.querySelector('.robot-arm')).animationName,
+          };
+        }""",
+        entity_id,
+    )
+    assert assembly_art["phase"] == "assembling"
+    assert 0 < assembly_art["progress"] < 1
+    assert assembly_art["crane"] == "construction-crane-swing"
+    assert assembly_art["humanActivity"] == "assemble"
+    assert assembly_art["humanTool"] == "human-assembly-check"
+    assert assembly_art["robotActivity"] == "build"
+    assert assembly_art["robotTool"] == "assembly-arm"
+
+    overhaul.wait_for_function(
+        """entityId => window.__overhaulAcceptance.snapshot().structures
+          .find(item => item.id === entityId)?.construction?.phase === 'commissioning'""",
+        arg=entity_id,
+        timeout=4_000,
+    )
+    commissioning_art = overhaul.evaluate(
+        """() => {
+          const human=document.querySelector('[data-assignment-kind="construction"][data-actor-kind="human"]');
+          const robot=document.querySelector('[data-assignment-kind="construction"][data-actor-kind="robot"]');
+          return {
+            humanState:human?.dataset.actorState,
+            humanActivity:human?.dataset.activity,
+            humanMotion:getComputedStyle(human?.querySelector('.human-head')).animationName,
+            robotState:robot?.dataset.actorState,
+            robotActivity:robot?.dataset.activity,
+            robotMotion:getComputedStyle(robot?.querySelector('.robot-arm')).animationName,
+          };
+        }"""
+    )
+    assert commissioning_art == {
+        "humanState": "inspecting",
+        "humanActivity": "inspect",
+        "humanMotion": "human-inspection-look",
+        "robotState": "maintaining",
+        "robotActivity": "maintain",
+        "robotMotion": "maintenance-torque",
+    }
+    overhaul.wait_for_function(
+        """entityId => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          const structure=snapshot.structures.find(item => item.id === entityId);
+          return structure?.condition === 100 && structure?.construction?.state === 'complete'
+            && !snapshot.construction.jobs.some(item => item.entityId === entityId);
+        }""",
+        arg=entity_id,
+        timeout=4_000,
+    )
+    assert cell.locator('[data-construction-site]').count() == 0
+
+    # Facilities are one-shot tools. Dismissing the tool after placement keeps
+    # the board clean and prevents a misleading duplicate-placement action.
     alternate = overhaul.locator(f'[data-place-selected="{blueprint_id}"]')
-    assert alternate.count() == 1
-    assert alternate.get_attribute("data-place-x") == str(target["x"])
-    assert alternate.get_attribute("data-place-y") == str(target["y"])
+    assert alternate.count() == 0
+    assert overhaul.locator(f'[data-blueprint="{blueprint_id}"]').get_attribute(
+        "aria-pressed"
+    ) == "false"
 
     after_facility = _snapshot(overhaul)
     placed = [
@@ -490,7 +710,7 @@ def test_visible_blueprint_and_owned_cell_click_build_through_real_ui(overhaul, 
         overhaul.wait_for_function(
             """name => {
               const feedback = document.querySelector('.command-feedback[data-tone="good"]');
-              return feedback?.textContent.includes(name) && feedback.textContent.includes('placed');
+              return feedback?.textContent.includes(name) && feedback.textContent.includes('staged');
             }""",
             arg=utility_name,
         )
@@ -501,7 +721,8 @@ def test_visible_blueprint_and_owned_cell_click_build_through_real_ui(overhaul, 
     total_visible_price += float(
         route_only_blueprint.locator(".state-chip").inner_text().strip().lstrip("$").replace(",", "")
     )
-    route_only_blueprint.click()
+    if route_only_blueprint.get_attribute("aria-pressed") != "true":
+        route_only_blueprint.click()
     route_cell = overhaul.locator(
         f'[data-x="{route_target["x"]}"][data-y="{route_target["y"]}"]'
     )
@@ -757,12 +978,25 @@ def test_manual_venture_controls_advance_business_and_actor_state(overhaul):
     assert after["economy"]["humansHired"] == before["economy"]["humansHired"] + 1
     assert after["economy"]["payroll"] > before["economy"]["payroll"]
 
-    hired = next(actor for actor in after["actors"] if actor["id"] not in before_actor_ids)
-    assert hired["kind"] == "human"
-    actor = overhaul.locator(f'[data-actor-id="{hired["id"]}"]')
-    assert actor.count() == 1 and actor.is_visible()
-    assert actor.get_attribute("data-actor-state") == hired["state"]
-    assert actor.get_attribute("data-animation-hook") == f'human:{hired["state"]}'
+    actor_commit = overhaul.evaluate(
+        """beforeIds => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          const actor=snapshot.actors.find(item => !beforeIds.includes(item.id));
+          const node=actor ? document.querySelector(`[data-actor-id="${CSS.escape(actor.id)}"]`) : null;
+          return {
+            actor,
+            domState:node?.dataset.actorState || null,
+            hook:node?.dataset.animationHook || null,
+            visible:!!node?.getClientRects().length && getComputedStyle(node).visibility === 'visible',
+          };
+        }""",
+        list(before_actor_ids),
+    )
+    hired = actor_commit["actor"]
+    assert hired and hired["kind"] == "human"
+    assert actor_commit["visible"] is True
+    assert actor_commit["domState"] == hired["state"]
+    assert actor_commit["hook"] == f'human:{hired["state"]}'
 
 
 def test_human_robot_computer_states_match_animation_hooks(overhaul):
@@ -857,6 +1091,7 @@ def test_critical_player_text_is_visible_and_unclipped(overhaul, viewport):
     overhaul.set_viewport_size(viewport)
     overhaul.wait_for_timeout(200)
     selectors = [
+        ".brand-title",
         "[data-seed]",
         "[data-cash]",
         "[data-flops-raw]",
@@ -864,6 +1099,9 @@ def test_critical_player_text_is_visible_and_unclipped(overhaul, viewport):
         "[data-world-grid]",
         "[data-router]",
         "[data-quest]",
+        "[data-quest] .quest-copy",
+        "[data-quest] .quest-action",
+        "[data-research-roadmap] .research-node-copy strong",
         "[data-blueprints] .blueprint",
         "[data-blueprints] .blueprint-name",
         "[data-blueprints] .blueprint > .state-chip",
@@ -1191,24 +1429,37 @@ def test_network_paths_use_clean_default_and_contextual_flow(overhaul, errors):
     groups = overhaul.locator("[data-network-group]")
     assert groups.count() >= 3, "connected scenario did not expose semantic route groups"
     assert overhaul.locator('[data-connections][data-network-mode="clean"]').count() == 1
-    for index in range(groups.count()):
-        group = groups.nth(index)
-        assert group.get_attribute("data-disclosure") == "idle"
-        style = group.evaluate(
-            "node => ({opacity:+getComputedStyle(node).opacity, visibility:getComputedStyle(node).visibility})"
-        )
-        assert style == {"opacity": 0, "visibility": "hidden"}, (
-            f"clean floor leaked a full connection path: {style!r}"
+    group_states = overhaul.evaluate(
+        """() => [...document.querySelectorAll('[data-network-group]')].map(node => ({
+          disclosure:node.dataset.disclosure,
+          opacity:+getComputedStyle(node).opacity,
+          visibility:getComputedStyle(node).visibility,
+        }))"""
+    )
+    for group in group_states:
+        assert group["disclosure"] == "idle"
+        assert group["opacity"] == 0 and group["visibility"] == "hidden", (
+            f"clean floor leaked a full connection path: {group!r}"
         )
 
     traces = overhaul.locator("[data-cell-utility]")
     assert traces.count() >= 3
-    for index in range(traces.count()):
-        trace = traces.nth(index)
-        assert trace.is_visible(), "clean floor removed its thin utility trace"
-        assert trace.get_attribute("data-resource-emphasis") == "idle"
-        opacity = trace.evaluate("node => +getComputedStyle(node).opacity")
-        assert 0 < opacity < 0.6, f"idle utility trace is not subtle: {opacity}"
+    trace_states = overhaul.evaluate(
+        """() => [...document.querySelectorAll('[data-cell-utility]')].map(node => ({
+          layer:node.dataset.cellUtility,
+          emphasis:node.dataset.resourceEmphasis,
+          overlayVisible:node.dataset.overlayVisible,
+          opacity:+getComputedStyle(node).opacity,
+          visibility:getComputedStyle(node).visibility,
+          rects:node.getClientRects().length,
+        }))"""
+    )
+    for trace in trace_states:
+        assert trace["rects"] and trace["visibility"] == "visible", (
+            f"clean floor removed its thin utility trace: {trace!r}"
+        )
+        assert trace["emphasis"] == "idle"
+        assert 0 < trace["opacity"] < 0.6, f"idle utility trace is not subtle: {trace!r}"
 
     power_focus = overhaul.locator('[data-network-focus="power"]')
     power_focus.click()
@@ -1246,12 +1497,12 @@ def test_network_paths_use_clean_default_and_contextual_flow(overhaul, errors):
     endpoint = overhaul.locator(f'[data-focus-actor="{endpoint_id}"]')
     endpoint.scroll_into_view_if_needed()
     endpoint.click()
-    assert overhaul.locator('[data-connections][data-network-mode="endpoint"]').count() == 1
+    assert overhaul.locator('[data-connections][data-network-mode="clean"]').count() == 1
     endpoint_paths = overhaul.locator(
         f'[data-network-group][data-path-id*="{endpoint_id}"][data-disclosure="active"]'
     )
-    assert endpoint_paths.count() >= 3, "selected compute endpoint did not reveal its utility paths"
-    assert overhaul.locator('[data-network-inspector][data-network-mode="selected endpoint"]').count() == 1
+    assert endpoint_paths.count() == 0, "selected endpoint leaked routes outside resource edit mode"
+    assert overhaul.locator('[data-network-inspector]').count() == 0
     assert not errors, f"progressive network disclosure emitted browser errors: {errors[-5:]!r}"
 
 
@@ -1415,32 +1666,44 @@ def test_ai_semantic_path_left_trace_text_liveness_and_errors(overhaul, errors):
     ai_focus = overhaul.locator('[data-network-focus="ai"]')
     ai_focus.click()
     assert ai_focus.get_attribute("aria-pressed") == "true"
-    final = _snapshot(overhaul)
 
     for blueprint_id in ("ai_controller", "ai_bus"):
         blueprint = overhaul.locator(f'[data-blueprint="{blueprint_id}"]')
         blueprint.scroll_into_view_if_needed()
         assert blueprint.is_visible(), f"{blueprint_id} is not visible at 1100x700"
 
-    connected_paths = [path for path in final["networks"]["ai"]["paths"] if path["connected"]]
-    assert connected_paths
-    for path in connected_paths:
-        dom = overhaul.locator(f'[data-ai-path-id="{path["id"]}"]')
-        assert dom.count() == 1
-        assert dom.get_attribute("data-ai-path-state") == path["status"]
-        visual = dom.evaluate(
-            """node => {
+    # The live game commits every 500 ms, so sample model + DOM in one browser
+    # task. Holding path data across a commit would compare different ticks.
+    connected_paths = overhaul.evaluate(
+        """() => window.__overhaulAcceptance.snapshot().networks.ai.paths
+          .filter(path => path.connected)
+          .map(path => {
+            const node = document.querySelector(`[data-ai-path-id="${CSS.escape(path.id)}"]`);
+            if (!node) return {id:path.id, missing:true};
               const style = getComputedStyle(node);
+              const group = node.closest('[data-network-group]');
+              const groupStyle = group ? getComputedStyle(group) : style;
               return {
+                id: path.id,
+                status: path.status,
+                domStatus: node.dataset.aiPathState,
+                disclosure: group?.dataset.disclosure,
                 length: node.getTotalLength(),
                 stroke: style.stroke,
-                opacity: parseFloat(style.opacity),
-                visibility: style.visibility,
+                pathOpacity: parseFloat(style.opacity || '0'),
+                opacity: parseFloat(groupStyle.opacity || '0'),
+                visibility: groupStyle.visibility,
               };
-            }"""
-        )
+          })"""
+    )
+    assert connected_paths
+    for visual in connected_paths:
+        assert not visual.get("missing"), visual
+        assert visual["domStatus"] == visual["status"]
+        assert visual["disclosure"] == "active"
         assert visual["length"] > 0
-        assert visual["opacity"] > 0 and visual["visibility"] == "visible"
+        assert visual["opacity"] > 0 and visual["visibility"] == "visible", visual
+        assert visual["pathOpacity"] > 0
         assert visual["stroke"] not in ("none", "transparent", "rgba(0, 0, 0, 0)")
 
     traces = overhaul.locator('[data-cell-utility="ai"]')
