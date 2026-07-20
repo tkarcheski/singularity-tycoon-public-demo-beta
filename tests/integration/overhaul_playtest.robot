@@ -9,6 +9,16 @@ Force Tags        playtest    local-ai    screenshots
 
 
 *** Test Cases ***
+Local AI Discovers The Retrofit And Unlocks Starter Compute
+    [Documentation]    The agent must read the committed opening state, select the inherited
+    ...                rack through the UI, authorize its retrofit, route research, and prove
+    ...                the seed-specific starter compute blueprint is visibly unlocked.
+    ${decisions}=    Run Local AI Playtest    unlock-starter-compute    40
+    ${kinds}=    Evaluate    [item["kind"] for item in $decisions]
+    Should Contain    ${kinds}    retrofit-compute
+    Should Contain    ${kinds}    route-research
+    Starter Compute Should Be Unlocked
+
 Local AI Recovers The Site Unlocks Research And Supervises Final Assembly
     [Documentation]    A local agent must understand the visible recovery problem,
     ...                repair it through real UI controls, boot compute, route
@@ -71,6 +81,6 @@ Cooling Can Expand Into The First Frontier Compute Tile
     Wait Until Keyword Succeeds    6s    100ms    Construction Phase Should Be    ${compute_id}    complete
     Wait Until Keyword Succeeds    8s    100ms    Expanded Starter Node Should Be Cooled    7    3
     Click    css=[data-network-focus="cooling"]
-    Scroll To Element    css=.research-roadmap-head
+    Scroll Committed Element Into View    css=.research-roadmap-head
     Playtest View Should Be Readable
     Capture Playtest Checkpoint    301-expanded-node-cooled

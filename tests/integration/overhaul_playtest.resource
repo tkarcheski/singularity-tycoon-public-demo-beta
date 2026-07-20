@@ -62,6 +62,12 @@ Capture Playtest Checkpoint
     Log    Playtest screenshot: ${path}
     RETURN    ${path}
 
+Scroll Committed Element Into View
+    [Arguments]    ${selector}
+    [Documentation]    Retry across one atomic DOM commit, but fail sustained UI churn.
+    Wait Until Keyword Succeeds    3s    100ms    Scroll To Element    ${selector}
+    Overhaul UI Commit Should Be Atomic
+
 Playtest View Should Be Readable
     [Documentation]    Fail the playtest when critical visible copy is clipped or truncated.
     Evaluate JavaScript    ${None}    () => { const rail=document.querySelector('.left-scroll'); if (rail) rail.scrollTop=0; }
@@ -77,6 +83,12 @@ Execute Local Playtest Move
         Wait Until Keyword Succeeds    2s    100ms    Overhaul UI Commit Should Be Atomic
     ELSE IF    $decision["kind"] == "route-research"
         Click    css=[data-route-preset="ai-train"]
+        Wait Until Keyword Succeeds    2s    100ms    Overhaul UI Commit Should Be Atomic
+    ELSE IF    $decision["kind"] == "retrofit-compute"
+        Wait For Elements State    css=[data-quest-action="locate-retrofit"]    visible    2s
+        Click    css=[data-quest-action="locate-retrofit"]
+        Wait For Elements State    css=[data-upgrade-compute="${decision}[entityId]"]    visible    2s
+        Click    css=[data-upgrade-compute="${decision}[entityId]"]
         Wait Until Keyword Succeeds    2s    100ms    Overhaul UI Commit Should Be Atomic
     ELSE IF    $decision["kind"] == "wait"
         Sleep    550ms
@@ -103,6 +115,19 @@ Run Local AI Playtest
     Playtest View Should Be Readable
     Capture Playtest Checkpoint    999-goal-met
     RETURN    ${decisions}
+
+Starter Compute Should Be Unlocked
+    [Documentation]    Prove the first gate, research state, and visible blueprint agree.
+    ${snapshot}=    Committed Overhaul Snapshot
+    ${starter}=    Evaluate    next(item for item in $snapshot["unlocks"] if item["kind"] == "computer")
+    Should Be Equal As Integers    ${snapshot}[opening][completed]    1
+    Should Be Equal    ${snapshot}[opening][current][id]    expand-utilities
+    Should Contain    ${snapshot}[research][completedIds]    rack-standard
+    Click    css=[data-layer="compute"]
+    Wait For Elements State    css=[data-blueprint="${starter}[id]"]    visible    2s
+    ${disabled}=    Get Attribute    css=[data-blueprint="${starter}[id]"]    aria-disabled
+    Should Be Equal    ${disabled}    false
+    Capture Playtest Checkpoint    125-starter-compute-unlocked
 
 Stage Blueprint Work Order
     [Arguments]    ${blueprint_id}    ${x}    ${y}
@@ -131,7 +156,7 @@ First Revenue Should Be Live
     Should Be Equal As Integers    ${state}[uiTick]    ${state}[completed]
 
 Revenue Guidance Should Be Readable
-    Scroll To Element    css=[data-revenue-state]
+    Scroll Committed Element Into View    css=[data-revenue-state]
     ${failures}=    Evaluate JavaScript    ${None}    () => { const failures=[]; for (const element of document.querySelectorAll('.revenue-status strong,.revenue-status span')) { const style=getComputedStyle(element); const rect=element.getBoundingClientRect(); const text=(element.textContent || '').trim(); if (!text) failures.push('empty revenue guidance'); if (!element.getClientRects().length || style.visibility === 'hidden' || style.display === 'none') failures.push('hidden revenue guidance: ' + text); if (rect.left < -0.5 || rect.top < -0.5 || rect.right > innerWidth + 0.5 || rect.bottom > innerHeight + 0.5) failures.push('clipped revenue guidance: ' + text); if (element.scrollWidth > element.clientWidth + 1) failures.push('truncated revenue guidance: ' + text); } return failures }
     Should Be Empty    ${failures}    Revenue guidance visibility failures: ${failures}
 
@@ -272,6 +297,6 @@ Complete Ten Turn Campaign
     Should Be Equal As Integers    ${snapshot}[story][completed]    10
     Click    css=[data-tab="jobs"]
     Wait For Elements State    css=[data-story-dossier][data-story-state="complete"]    visible    3s
-    Scroll To Element    css=[data-story-dossier]
+    Scroll Committed Element Into View    css=[data-story-dossier]
     Playtest View Should Be Readable
     RETURN    ${snapshot}

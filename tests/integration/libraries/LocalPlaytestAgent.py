@@ -16,6 +16,7 @@ class LocalPlaytestAgent:
         research = snapshot.get("research") or {}
         routes = snapshot.get("routes") or {}
         flops = snapshot.get("flops") or {}
+        opening = snapshot.get("opening") or {}
 
         if self.playtest_goal_is_met(snapshot, goal):
             return {"kind": "done", "reason": f"Goal {goal} is visibly complete."}
@@ -53,6 +54,45 @@ class LocalPlaytestAgent:
                 "kind": "wait",
                 "reason": "No repair button is available yet, but the recovery contract is not online.",
             }
+
+        compute = next(
+            (item for item in snapshot.get("structures", [])
+             if item.get("kind") == "computer"),
+            None,
+        )
+        first_gate_open = int(opening.get("completed") or 0) < 1
+        if first_gate_open and compute:
+            construction = compute.get("construction") or {}
+            if (construction.get("kind") == "compute-upgrade"
+                    and construction.get("state") != "complete"):
+                return {
+                    "kind": "wait",
+                    "entityId": compute["id"],
+                    "reason": (
+                        "The inherited rack retrofit is in progress; AYA and MICA-2 "
+                        f"are {construction.get('phase') or 'working'} at "
+                        f"{round(float(construction.get('progress') or 0) * 100)}%."
+                    ),
+                }
+            if int(compute.get("computeUpgradeLevel") or 0) < 1:
+                if float(flops.get("raw") or 0) <= 0:
+                    return {
+                        "kind": "wait",
+                        "reason": (
+                            "Critical plant is restored; wait for the inherited rack to "
+                            "finish booting before authorizing its retrofit."
+                        ),
+                    }
+                return {
+                    "kind": "retrofit-compute",
+                    "entityId": compute["id"],
+                    "x": compute["x"],
+                    "y": compute["y"],
+                    "reason": (
+                        "Repairs are complete. The opening checkpoint identifies the inherited "
+                        "rack as the next target; select it and authorize the $180 retrofit."
+                    ),
+                }
 
         if float(flops.get("raw") or 0) <= 0:
             return {
@@ -93,6 +133,13 @@ class LocalPlaytestAgent:
         raw = float((snapshot.get("flops") or {}).get("raw") or 0)
         if goal == "recover-site":
             return recovery.get("phase") == "online" and raw > 0
+        if goal == "unlock-starter-compute":
+            opening = snapshot.get("opening") or {}
+            unlocks = snapshot.get("unlocks") or []
+            computer_unlocked = any(
+                item.get("kind") == "computer" for item in unlocks
+            )
+            return int(opening.get("completed") or 0) >= 1 and computer_unlocked
         if goal == "unlock-external-markets":
             return "external-markets" in completed
         if goal == "complete-opening-research":
