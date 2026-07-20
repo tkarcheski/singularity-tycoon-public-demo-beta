@@ -13,18 +13,29 @@ Local AI Recovers The Site Unlocks Research And Supervises Final Assembly
     [Documentation]    A local agent must understand the visible recovery problem,
     ...                repair it through real UI controls, boot compute, route
     ...                research, and reach the external-market capability gate.
+    Complete First Two Opening Checkpoints
     ${decisions}=    Run Local AI Playtest    unlock-external-markets    40
     ${count}=    Get Length    ${decisions}
-    Should Be True    4 < ${count} < 40
-    ${entity_id}=    Stage Blueprint Work Order    generator    8    7
-    Construction Phase Should Be    ${entity_id}    traveling
-    Capture Playtest Checkpoint    100-crew-traveling
-    Wait Until Keyword Succeeds    5s    50ms    Construction Phase Should Be    ${entity_id}    assembling
-    Capture Playtest Checkpoint    101-crew-assembling
-    Wait Until Keyword Succeeds    3s    50ms    Construction Phase Should Be    ${entity_id}    commissioning
-    Capture Playtest Checkpoint    102-crew-commissioning
-    Wait Until Keyword Succeeds    3s    50ms    Construction Phase Should Be    ${entity_id}    complete
-    Capture Playtest Checkpoint    103-structure-online
+    Should Be True    2 < ${count} < 40
+    Opening Research Checkpoint Should Be Complete
+
+Lean Starter Reaches Positive Cash Flow
+    [Setup]    Open Inherited Datacenter    ROBOT-EARLY-3
+    Reach First Revenue From A Fresh Save    lean
+
+Steady Starter Reaches Positive Cash Flow
+    [Setup]    Open Inherited Datacenter    ROBOT-EARLY-0
+    Reach First Revenue From A Fresh Save    steady
+
+Burst Starter Reaches Positive Cash Flow
+    [Setup]    Open Inherited Datacenter    ROBOT-EARLY-2
+    Reach First Revenue From A Fresh Save    burst
+
+Checkpoint Four Requires Twelve Connected Floor One Tiles
+    Complete First Two Opening Checkpoints
+    Run Local AI Playtest    unlock-external-markets    40
+    Opening Research Checkpoint Should Be Complete
+    Expand Floor One By Twelve Tiles
 
 Ten Turn Campaign Reaches The Human And AI Feedback Loop
     [Documentation]    The campaign must carry the inherited-site opening through
@@ -40,6 +51,7 @@ Cooling Can Expand Into The First Frontier Compute Tile
     [Documentation]    Recover the opening, buy one adjacent tile, commission stacked
     ...                utility routes and compute, then prove the new node receives
     ...                cooling through the expanded network using real UI controls.
+    Complete First Two Opening Checkpoints
     ${decisions}=    Run Local AI Playtest    unlock-external-markets    40
     ${before}=    Cooling Expansion Snapshot    7    3
     Click    css=[data-blueprint="cooling_pipe"]

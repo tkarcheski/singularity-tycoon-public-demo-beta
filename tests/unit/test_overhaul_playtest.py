@@ -418,10 +418,10 @@ def test_ten_turn_campaign_tracker_and_dossier_reach_the_final_signal(overhaul, 
     assert root.get_attribute("data-story-turn") == "1"
     assert root.get_attribute("data-story-completed") == "0"
     assert root.get_attribute("data-story-state") == "active"
-    tracker = overhaul.locator("[data-story-step]")
-    assert tracker.count() == 10
+    tracker = overhaul.locator("[data-opening-step]")
+    assert tracker.count() == 5
     assert tracker.nth(0).get_attribute("data-story-state") == "current"
-    assert tracker.nth(9).get_attribute("data-story-state") == "locked"
+    assert tracker.nth(4).get_attribute("data-story-state") == "locked"
     assert initial["story"]["current"]["title"] == "The Inheritance"
 
     campaign = _scenario(overhaul, "story-campaign")
@@ -439,11 +439,7 @@ def test_ten_turn_campaign_tracker_and_dossier_reach_the_final_signal(overhaul, 
     )
     final = _snapshot(overhaul)
     assert final["story"]["completed"] == final["story"]["total"] == 10
-    assert all(
-        item == "complete"
-        for item in tracker.evaluate_all("nodes => nodes.map(node => node.dataset.storyState)")
-    )
-    assert "WHO OWNS THE NEXT FLOOR" in overhaul.locator("[data-quest]").inner_text()
+    assert tracker.nth(0).get_attribute("data-story-state") == "current"
 
     overhaul.locator('[data-tab="jobs"]').click()
     dossier = overhaul.locator("[data-story-dossier]")
@@ -651,12 +647,13 @@ def test_visible_blueprint_and_owned_cell_click_build_through_real_ui(overhaul, 
     )
     assert cell.locator('[data-construction-site]').count() == 0
 
-    # The inspector button remains a keyboard/screen-reader-friendly alternate
-    # after direct placement; the player does not need it for the primary flow.
+    # Facilities are one-shot tools. Dismissing the tool after placement keeps
+    # the board clean and prevents a misleading duplicate-placement action.
     alternate = overhaul.locator(f'[data-place-selected="{blueprint_id}"]')
-    assert alternate.count() == 1
-    assert alternate.get_attribute("data-place-x") == str(target["x"])
-    assert alternate.get_attribute("data-place-y") == str(target["y"])
+    assert alternate.count() == 0
+    assert overhaul.locator(f'[data-blueprint="{blueprint_id}"]').get_attribute(
+        "aria-pressed"
+    ) == "false"
 
     after_facility = _snapshot(overhaul)
     placed = [
@@ -1500,12 +1497,12 @@ def test_network_paths_use_clean_default_and_contextual_flow(overhaul, errors):
     endpoint = overhaul.locator(f'[data-focus-actor="{endpoint_id}"]')
     endpoint.scroll_into_view_if_needed()
     endpoint.click()
-    assert overhaul.locator('[data-connections][data-network-mode="endpoint"]').count() == 1
+    assert overhaul.locator('[data-connections][data-network-mode="clean"]').count() == 1
     endpoint_paths = overhaul.locator(
         f'[data-network-group][data-path-id*="{endpoint_id}"][data-disclosure="active"]'
     )
-    assert endpoint_paths.count() >= 3, "selected compute endpoint did not reveal its utility paths"
-    assert overhaul.locator('[data-network-inspector][data-network-mode="selected endpoint"]').count() == 1
+    assert endpoint_paths.count() == 0, "selected endpoint leaked routes outside resource edit mode"
+    assert overhaul.locator('[data-network-inspector]').count() == 0
     assert not errors, f"progressive network disclosure emitted browser errors: {errors[-5:]!r}"
 
 

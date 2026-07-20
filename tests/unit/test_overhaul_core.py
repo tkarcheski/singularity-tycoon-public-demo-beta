@@ -836,6 +836,79 @@ def test_placement_preview_is_pure_and_topology_activates_only_after_commissioni
     assert result["burdenAfterCommission"] > result["burdenAfterRemove"]
 
 
+def test_power_trunk_raises_the_connected_grid_above_the_16_mw_branch_rating():
+    result = _run_core(
+        """
+        const game = createOverhaulGame({seed: "power-trunk-regression"});
+        game.runScenario("computer-path-connected");
+        game.actions.remove(3, 4, "power");
+        game.actions.place("power_line", 3, 4);
+        while (game.snapshot().construction.jobs.length) game.tick();
+        const before = game.snapshot();
+        const preview = game.actions.previewPlacement("power_pole", 5, 5);
+        const placed = game.actions.place("power_pole", 5, 5);
+        while (game.snapshot().construction.jobs.length) game.tick();
+        const after = game.snapshot();
+        console.log(JSON.stringify({
+          preview,
+          placed,
+          before: before.networks.power.telemetry,
+          after: after.networks.power.telemetry,
+        }));
+        """
+    )
+
+    assert result["placed"]["ok"] is True
+    assert result["before"]["capacity"] == 16
+    assert result["preview"]["networkRole"] == "trunk"
+    assert result["preview"]["networkDeltas"]["power"]["capacityDelta"] == 8
+    assert result["after"]["capacity"] == 24
+    assert result["after"]["capacity"] > result["before"]["capacity"]
+
+
+def test_checkpoint_one_requires_a_real_compute_retrofit_and_increases_output():
+    result = _run_core(
+        """
+        const game = createOverhaulGame({seed: "compute-retrofit-checkpoint"});
+        game.runScenario("computer-path-connected");
+        const before = game.snapshot();
+        const target = before.structures.find(item => item.kind === "computer");
+        const queued = game.command({type: "upgrade-compute", entityId: target.id});
+        const during = game.snapshot();
+        while (game.snapshot().construction.jobs.length) game.tick();
+        for (let step = 0; step < 4; step++) game.tick();
+        const after = game.snapshot();
+        const upgraded = after.structures.find(item => item.id === target.id);
+        const computer = after.computers.find(item => item.id === target.id);
+        console.log(JSON.stringify({
+          queued,
+          beforeCash: before.economy.cash,
+          afterCash: after.economy.cash,
+          beforeOutput: before.computers.find(item => item.id === target.id).rawFlops,
+          duringCondition: during.structures.find(item => item.id === target.id).condition,
+          duringJob: during.construction.jobs.find(item => item.entityId === target.id),
+          upgraded,
+          computer,
+          beforeOpening: before.opening,
+          afterOpening: after.opening,
+        }));
+        """
+    )
+
+    assert result["beforeOpening"]["current"]["id"] == "recover-and-retrofit"
+    assert result["beforeOpening"]["current"]["current"] == 1
+    assert result["queued"]["ok"] is True
+    assert result["duringCondition"] == 0
+    assert result["duringJob"]["kind"] == "compute-upgrade"
+    assert result["afterCash"] == result["beforeCash"] - 180
+    assert result["upgraded"]["computeUpgradeLevel"] == 1
+    assert result["upgraded"]["outputMultiplier"] == 1.5
+    assert result["computer"]["upgradeLevel"] == 1
+    assert result["computer"]["rawFlops"] > result["beforeOutput"]
+    assert result["afterOpening"]["completed"] == 1
+    assert result["afterOpening"]["current"]["id"] == "expand-utilities"
+
+
 def test_cooling_preview_distinguishes_live_reach_from_supply_and_isolated_pipe():
     result = _run_core(
         """
@@ -870,7 +943,7 @@ def test_cooling_preview_distinguishes_live_reach_from_supply_and_isolated_pipe(
         "connectedToSource": True,
         "live": True,
         "isolated": False,
-        "routeCapacity": 12,
+        "routeCapacity": 24,
         "supplyCapacity": 12,
     }
     isolated = result["isolated"]["networkExtension"]

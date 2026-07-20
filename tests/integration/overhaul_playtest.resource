@@ -64,7 +64,8 @@ Capture Playtest Checkpoint
 
 Playtest View Should Be Readable
     [Documentation]    Fail the playtest when critical visible copy is clipped or truncated.
-    ${failures}=    Evaluate JavaScript    ${None}    () => { const failures = []; const selectors = ['.brand-title','.resource-name','.resource-value','.research-roadmap-head strong','.research-node-copy strong','.quest-copy strong','.quest-copy > span','.quest-action','.recovery-action strong','.recovery-action small','.story-dossier h3','.story-objective strong','.story-last-beat p']; for (const selector of selectors) { for (const [index, element] of [...document.querySelectorAll(selector)].entries()) { const style = getComputedStyle(element); const rect = element.getBoundingClientRect(); const name = selector + '[' + index + ']'; const text = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' '); if (!text) failures.push(name + ': empty text'); if (!element.getClientRects().length || style.visibility === 'hidden' || style.display === 'none') failures.push(name + ': not visible'); if (rect.left < -0.5 || rect.top < -0.5 || rect.right > innerWidth + 0.5 || rect.bottom > innerHeight + 0.5) failures.push(name + ': clipped outside viewport'); if (element.scrollWidth > element.clientWidth + 1 && !['auto','scroll'].includes(style.overflowX)) failures.push(name + ': horizontal truncation text="' + text + '"'); if (element.scrollHeight > element.clientHeight + 1 && !['auto','scroll'].includes(style.overflowY)) failures.push(name + ': vertical truncation text="' + text + '"'); } } return failures }
+    Evaluate JavaScript    ${None}    () => { const rail=document.querySelector('.left-scroll'); if (rail) rail.scrollTop=0; }
+    ${failures}=    Evaluate JavaScript    ${None}    () => { const failures = []; const selectors = ['.brand-title','.resource-name','.resource-value','.resource-detail','.research-roadmap-head strong','.research-node-copy strong','.quest-copy strong','.quest-copy > span','.quest-action','.recovery-action strong','.recovery-action small','.story-dossier h3','.story-objective strong','.story-last-beat p']; for (const selector of selectors) { for (const [index, element] of [...document.querySelectorAll(selector)].entries()) { const style = getComputedStyle(element); const rect = element.getBoundingClientRect(); const name = selector + '[' + index + ']'; const text = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' '); if (!text) failures.push(name + ': empty text'); if (!element.getClientRects().length || style.visibility === 'hidden' || style.display === 'none') failures.push(name + ': not visible'); if (rect.left < -0.5 || rect.top < -0.5 || rect.right > innerWidth + 0.5 || rect.bottom > innerHeight + 0.5) failures.push(name + ': clipped outside viewport'); if (element.scrollWidth > element.clientWidth + 1 && !['auto','scroll'].includes(style.overflowX)) failures.push(name + ': horizontal truncation text="' + text + '"'); if (element.scrollHeight > element.clientHeight + 1 && !['auto','scroll'].includes(style.overflowY)) failures.push(name + ': vertical truncation text="' + text + '"'); } } return failures }
     Should Be Empty    ${failures}    Playtest visibility failures: ${failures}
 
 Execute Local Playtest Move
@@ -113,6 +114,103 @@ Stage Blueprint Work Order
     ${entity_id}=    Evaluate JavaScript    ${None}    ([blueprintId,x,y]) => window.__overhaulAcceptance.snapshot().presentation.structures.find(item => item.blueprintId === blueprintId && item.x === Number(x) && item.y === Number(y))?.id    arg=${{["${blueprint_id}", ${x}, ${y}]}}
     Should Not Be Empty    ${entity_id}
     RETURN    ${entity_id}
+
+First Revenue Should Be Live
+    [Arguments]    ${cash_before}
+    [Documentation]    Prove the committed simulation, cash HUD, and router agree on revenue.
+    ${state}=    Evaluate JavaScript    ${None}    ([cashBefore]) => { const snapshot=window.__overhaulAcceptance.snapshot().presentation; const hud=document.querySelector('[data-cash]'); const router=document.querySelector('[data-revenue-state]'); return { cash:Number(snapshot.economy.cash), cashBefore:Number(cashBefore), sold:Number(snapshot.progress.rawFlopsSold), routed:Number(snapshot.sell.routedFlops), income:Number(snapshot.sell.incomePerTick || 0), blocked:snapshot.sell.blocked, fiberFloor:snapshot.sell.fiberFloor, hudCash:Number(hud?.dataset.value || 0), hudIncome:Number(hud?.dataset.incomePerTick || 0), revenueState:router?.dataset.revenueState || null, uiTick:Number(document.documentElement.dataset.uiTick), completed:Number(snapshot.ticks.completed) } }    arg=${{[${cash_before}]}}
+    Should Be True    ${state}[cash] > ${state}[cashBefore]
+    Should Be True    ${state}[sold] > 0
+    Should Be True    ${state}[routed] > 0
+    Should Be True    ${state}[income] > 0
+    Should Be Equal    ${state}[blocked]    ${False}
+    Should Be Equal As Integers    ${state}[fiberFloor]    1
+    Should Be Equal As Numbers    ${state}[hudCash]    ${state}[cash]    precision=5
+    Should Be Equal As Numbers    ${state}[hudIncome]    ${state}[income]    precision=5
+    Should Be Equal    ${state}[revenueState]    revenue-live
+    Should Be Equal As Integers    ${state}[uiTick]    ${state}[completed]
+
+Revenue Guidance Should Be Readable
+    Scroll To Element    css=[data-revenue-state]
+    ${failures}=    Evaluate JavaScript    ${None}    () => { const failures=[]; for (const element of document.querySelectorAll('.revenue-status strong,.revenue-status span')) { const style=getComputedStyle(element); const rect=element.getBoundingClientRect(); const text=(element.textContent || '').trim(); if (!text) failures.push('empty revenue guidance'); if (!element.getClientRects().length || style.visibility === 'hidden' || style.display === 'none') failures.push('hidden revenue guidance: ' + text); if (rect.left < -0.5 || rect.top < -0.5 || rect.right > innerWidth + 0.5 || rect.bottom > innerHeight + 0.5) failures.push('clipped revenue guidance: ' + text); if (element.scrollWidth > element.clientWidth + 1) failures.push('truncated revenue guidance: ' + text); } return failures }
+    Should Be Empty    ${failures}    Revenue guidance visibility failures: ${failures}
+
+Reach First Revenue From A Fresh Save
+    [Arguments]    ${seed}
+    [Documentation]    Play the real opening through repair, research, fiber, and first sale.
+    Complete First Two Opening Checkpoints
+    ${decisions}=    Run Local AI Playtest    unlock-external-markets    40
+    ${fiber_id}=    Stage Blueprint Work Order    fiber_gateway    3    7
+    Wait Until Keyword Succeeds    6s    100ms    Construction Phase Should Be    ${fiber_id}    complete
+    ${before}=    Committed Overhaul Snapshot
+    Click    css=[data-route-preset="sell"]
+    Wait Until Keyword Succeeds    8s    100ms    First Revenue Should Be Live    ${before}[economy][cash]
+    Playtest View Should Be Readable
+    Revenue Guidance Should Be Readable
+    Capture Playtest Checkpoint    150-first-revenue-${seed}
+
+Retrofit Inherited Compute Through The Inspector
+    [Documentation]    Complete checkpoint one with the real selected-rack action.
+    ${before}=    Committed Overhaul Snapshot
+    ${target}=    Evaluate    next(item for item in $before["structures"] if item["kind"] == "computer")
+    ${target_id}=    Set Variable    ${target}[id]
+    Click    css=.cell[data-x="${target}[x]"][data-y="${target}[y]"]
+    Wait For Elements State    css=[data-upgrade-compute="${target}[id]"]    visible    3s
+    Click    css=[data-upgrade-compute="${target}[id]"]
+    Wait Until Keyword Succeeds    3s    100ms    Construction Phase Should Be    ${target}[id]    assembling
+    Capture Playtest Checkpoint    120-compute-retrofit-active
+    Wait Until Keyword Succeeds    8s    100ms    Construction Phase Should Be    ${target}[id]    complete
+    ${after}=    Committed Overhaul Snapshot
+    ${upgraded}=    Evaluate    [item for item in $after["structures"] if item["id"] == "${target_id}"][0]
+    Should Be Equal As Integers    ${upgraded}[computeUpgradeLevel]    1
+    Should Be Equal As Numbers    ${upgraded}[outputMultiplier]    1.5
+    Should Be Equal As Integers    ${after}[opening][completed]    1
+    Should Be Equal    ${after}[opening][current][id]    expand-utilities
+    Capture Playtest Checkpoint    121-compute-retrofit-complete
+    RETURN    ${target}[id]
+
+Opening Utility Capacities Should Be Expanded
+    ${snapshot}=    Committed Overhaul Snapshot
+    Should Be True    ${snapshot}[networks][power][telemetry][capacity] > 24
+    Should Be True    ${snapshot}[networks][cooling][telemetry][capacity] > 12
+    Should Be Equal As Integers    ${snapshot}[opening][completed]    2
+    Should Be Equal    ${snapshot}[opening][current][id]    research-capability
+
+Opening Research Checkpoint Should Be Complete
+    ${snapshot}=    Committed Overhaul Snapshot
+    Should Be Equal As Integers    ${snapshot}[opening][completed]    3
+    Should Be Equal    ${snapshot}[opening][current][id]    expand-first-floor
+
+Complete First Two Opening Checkpoints
+    [Documentation]    Recover, retrofit, and visibly grow both utility capacities.
+    ${decisions}=    Run Local AI Playtest    recover-site    30
+    Retrofit Inherited Compute Through The Inspector
+    ${generator}=    Stage Blueprint Work Order    generator    4    4
+    Construction Phase Should Be    ${generator}    traveling
+    Capture Playtest Checkpoint    130-generator-crew-traveling
+    Wait Until Keyword Succeeds    5s    100ms    Construction Phase Should Be    ${generator}    complete
+    ${power}=    Stage Blueprint Work Order    power_line    5    5
+    Wait Until Keyword Succeeds    6s    100ms    Construction Phase Should Be    ${power}    complete
+    ${pump}=    Stage Blueprint Work Order    cooling_pump    5    5
+    Wait Until Keyword Succeeds    6s    100ms    Construction Phase Should Be    ${pump}    complete
+    Wait Until Keyword Succeeds    5s    100ms    Opening Utility Capacities Should Be Expanded
+    Capture Playtest Checkpoint    131-power-and-cooling-expanded
+    RETURN    ${decisions}
+
+Expand Floor One By Twelve Tiles
+    [Documentation]    Buy exactly twelve connected frontier tiles through the visible UI.
+    ${before}=    Committed Overhaul Snapshot
+    FOR    ${index}    IN RANGE    12
+        ${snapshot}=    Committed Overhaul Snapshot
+        ${target}=    Evaluate    min($snapshot["footprint"]["frontier"], key=lambda item: item["cost"])
+        Purchase Frontier Tile    ${target}[x]    ${target}[y]
+    END
+    ${after}=    Committed Overhaul Snapshot
+    Should Be Equal As Integers    ${{len($after["footprint"]["owned"]) - len($before["footprint"]["owned"])}}    12
+    Should Be True    ${after}[economy][cash] >= 0
+    Should Be Equal As Integers    ${after}[opening][completed]    4
+    Should Be Equal    ${after}[opening][current][id]    unlock-second-floor
+    Capture Playtest Checkpoint    140-twelve-floor-one-tiles-claimed
 
 Construction Phase Should Be
     [Arguments]    ${entity_id}    ${phase}

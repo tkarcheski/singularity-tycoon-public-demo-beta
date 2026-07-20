@@ -25,6 +25,9 @@ export const OVERHAUL_BALANCE = deepFreeze({
     repairCost: 90,
     repairTicks: 3,
     completionBonus: 240,
+    computeUpgradeCost: 180,
+    computeUpgradeTicks: 4,
+    computeUpgradeBonusPercent: 50,
     siteNames: [
       'Kestrel Relay',
       'Morrow Annex',
@@ -211,7 +214,7 @@ export const OVERHAUL_BALANCE = deepFreeze({
     minimumThrottle: 0.25,
   },
   routes: {
-    default: { sell: 0, research: 0.25, train: 0.25, inference: 0.25 },
+    default: { sell: 0, research: 0, train: 0, inference: 0 },
     epsilon: 1e-9,
   },
   utilities: {
@@ -296,7 +299,7 @@ export const OVERHAUL_BLUEPRINTS = deepFreeze({
     layer: 'cooling',
     cost: 5,
     networkRole: 'branch',
-    stats: { capacity: 12, maintenanceFlopsPerTick: 0.03, reliability: 0.975 },
+    stats: { capacity: 24, maintenanceFlopsPerTick: 0.03, reliability: 0.975 },
   },
   data_cable: {
     id: 'data_cable',

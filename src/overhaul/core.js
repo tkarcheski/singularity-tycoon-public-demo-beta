@@ -106,6 +106,10 @@ function defaultStoryState() {
   };
 }
 
+function defaultOpeningState() {
+  return { checkpointTicks: {} };
+}
+
 function computerRuntime(blueprint) {
   return {
     state: 'off',
@@ -120,6 +124,11 @@ function computerRuntime(blueprint) {
     throttle: 1,
     fault: null,
   };
+}
+
+function computeUpgradeMultiplier(structure) {
+  const level = Math.max(0, Number(structure?.computeUpgradeLevel) || 0);
+  return 1 + level * OVERHAUL_BALANCE.recovery.computeUpgradeBonusPercent / 100;
 }
 
 function isAiEligibleBlueprint(blueprint) {
@@ -243,7 +252,10 @@ function seedInheritedDatacenter(state, rng, kit) {
   const generator = place('generator', layout.generator.x, layout.generator.y);
   const coolingPump = place('cooling_pump', layout.coolingPump.x, layout.coolingPump.y);
   place(kit.computerBlueprintId, layout.computer.x, layout.computer.y);
-  for (const [x, y] of layout.power) place('power_line', x, y);
+  for (const [x, y] of layout.power) {
+    place(x === layout.generator.x && y === layout.generator.y
+      ? 'power_pole' : 'power_line', x, y);
+  }
   for (const [x, y] of layout.cooling) place('cooling_pipe', x, y);
   let dataSwitch = null;
   for (const [x, y] of layout.data) {
@@ -298,6 +310,7 @@ function initialState(seed) {
       reason: null,
       fiberFloor: null,
       routedFlops: 0,
+      incomePerTick: 0,
     },
     economy: {
       cash: OVERHAUL_BALANCE.economy.startingCash,
@@ -333,6 +346,7 @@ function initialState(seed) {
     recovery: null,
     research: defaultResearchState(),
     story: defaultStoryState(),
+    opening: defaultOpeningState(),
     tick: 0,
     completedTick: 0,
     nextEntityId: 3,
@@ -369,6 +383,11 @@ function restoreState(snapshot) {
   restored.story = { ...defaultStoryState(), ...(restored.story || {}) };
   restored.story.completedIds = Array.isArray(restored.story.completedIds)
     ? restored.story.completedIds : [];
+  restored.opening = { ...defaultOpeningState(), ...(restored.opening || {}) };
+  restored.opening.checkpointTicks = {
+    ...defaultOpeningState().checkpointTicks,
+    ...(restored.opening.checkpointTicks || {}),
+  };
   restored.construction = {
     jobs: [],
     completed: 0,
@@ -713,7 +732,12 @@ function computeNetworks(state) {
       const entry = { structure, blueprint, layer };
       return (blueprint?.stats?.capacity || 0) * (useAi ? aiMultiplierFor(state, entry) : 1);
     });
-    return capacities.length ? Math.min(...capacities) : 0;
+    // A connected utility component is modeled as a shared bus. Branch links
+    // establish reach while a trunk/hub raises that bus's transport ceiling;
+    // treating the weakest branch as the entire component's rating made every
+    // researched trunk a no-op (the inherited power grid could never exceed
+    // 16 MW). Endpoint delivery and source supply still cap usable throughput.
+    return capacities.length ? Math.max(...capacities) : 0;
   }
 
   const consumers = entries
@@ -1329,6 +1353,87 @@ function storySnapshot(state) {
   };
 }
 
+function openingCheckpointSnapshot(state) {
+  const entries = structureEntries(state);
+  const initialOwned = (OVERHAUL_BALANCE.floor.initialOwned.maxX
+      - OVERHAUL_BALANCE.floor.initialOwned.minX + 1)
+    * (OVERHAUL_BALANCE.floor.initialOwned.maxY
+      - OVERHAUL_BALANCE.floor.initialOwned.minY + 1);
+  const upgradedComputers = entries.filter((entry) => entry.blueprint?.kind === 'computer'
+    && (Number(entry.structure.computeUpgradeLevel) || 0) > 0).length;
+  const addedGenerators = entries.filter((entry) => entry.blueprint?.stats?.powerGeneration > 0
+    && !entry.structure.inherited && entry.structure.condition > 0).length;
+  const addedPumps = entries.filter((entry) => entry.blueprint?.stats?.coolingGeneration > 0
+    && !entry.structure.inherited && entry.structure.condition > 0).length;
+  const powerExpanded = addedGenerators > 0
+    && Number(state.networks?.power?.telemetry?.capacity || 0) > 24 + EPSILON;
+  const coolingExpanded = addedPumps > 0
+    && Number(state.networks?.cooling?.telemetry?.capacity || 0) > 12 + EPSILON;
+  const extraOwned = Math.max(0, allCells(state).filter((cell) => cell.owned).length - initialOwned);
+  const unlockedFloors = Math.max(1, Number(state.expansion?.unlockedFloors) || 1);
+  const checkpointTicks = state.opening?.checkpointTicks || {};
+  const definitions = [
+    {
+      id: 'recover-and-retrofit', number: 1, title: 'Recover + Retrofit',
+      objective: 'Repair the inherited plant, then retrofit its compute node.',
+      current: Number(state.recovery?.phase === 'online') + Number(upgradedComputers > 0),
+      total: 2,
+      recordedComplete: checkpointTicks['recover-and-retrofit'] != null,
+      label: `${Number(state.recovery?.phase === 'online') + Number(upgradedComputers > 0)} / 2 · ${upgradedComputers ? 'retrofit complete' : 'retrofit pending'}`,
+    },
+    {
+      id: 'expand-utilities', number: 2, title: 'Expand Power + Cooling',
+      objective: 'Raise grid capacity above 24 MW and cooling capacity above 12 kW.',
+      current: Number(powerExpanded) + Number(coolingExpanded),
+      total: 2,
+      recordedComplete: checkpointTicks['expand-utilities'] != null,
+      label: `${Number(powerExpanded) + Number(coolingExpanded)} / 2 systems expanded`,
+    },
+    {
+      id: 'research-capability', number: 3, title: 'Research Capability',
+      objective: 'Complete a research project beyond basic recovery.',
+      current: checkpointTicks['research-capability'] != null ? 1 : 0, total: 1,
+      recordedComplete: checkpointTicks['research-capability'] != null,
+      label: checkpointTicks['research-capability'] != null ? '1 / 1 project complete' : '0 / 1 project complete',
+    },
+    {
+      id: 'expand-first-floor', number: 4, title: 'Expand Floor 1',
+      objective: 'Claim 12 additional connected tiles on Floor 1.',
+      current: Math.min(12, extraOwned), total: 12,
+      recordedComplete: checkpointTicks['expand-first-floor'] != null,
+      label: `${Math.min(12, extraOwned)} / 12 tiles claimed`,
+    },
+    {
+      id: 'unlock-second-floor', number: 5, title: 'Open Floor 2',
+      objective: 'Unlock and enter the second physical floor.',
+      current: Math.max(0, unlockedFloors - 1), total: 1,
+      recordedComplete: checkpointTicks['unlock-second-floor'] != null,
+      label: unlockedFloors > 1 ? 'Floor 2 open' : 'Floor 2 locked',
+    },
+  ];
+  let priorComplete = true;
+  const checkpoints = definitions.map((definition) => {
+    const complete = priorComplete && definition.recordedComplete;
+    const stateName = complete ? 'complete' : priorComplete ? 'current' : 'locked';
+    priorComplete = complete;
+    return {
+      ...definition,
+      complete,
+      state: stateName,
+      progress: definition.total > 0 ? definition.current / definition.total : 0,
+    };
+  });
+  const current = checkpoints.find((checkpoint) => checkpoint.state === 'current') || null;
+  const completed = checkpoints.filter((checkpoint) => checkpoint.state === 'complete').length;
+  return {
+    state: current ? 'active' : 'complete',
+    completed,
+    total: checkpoints.length,
+    current,
+    checkpoints,
+  };
+}
+
 function semanticSnapshot(state) {
   const owned = allCells(state).filter((cell) => cell.owned).map((cell) => ({
     key: cell.key, uiKey: `f0:${cell.x},${cell.y}`,
@@ -1352,6 +1457,8 @@ function semanticSnapshot(state) {
       coolingDelivered: runtime.coolingDelivered,
       dataConnected: runtime.dataConnected,
       rawFlops: runtime.rawFlops,
+      upgradeLevel: Math.max(0, Number(entry.structure.computeUpgradeLevel) || 0),
+      outputMultiplier: computeUpgradeMultiplier(entry.structure),
       workload: runtime.workload,
       utilization: runtime.utilization,
       temperatureC: runtime.temperatureC,
@@ -1376,6 +1483,8 @@ function semanticSnapshot(state) {
     const aiConnected = entry.structure.aiConnected === true;
     const aiEfficiencyMultiplier = aiConnected && !entry.structure.aiFault
       ? state.ai.efficiencyMultiplier : 1;
+    const outputMultiplier = entry.blueprint.kind === 'computer'
+      ? computeUpgradeMultiplier(entry.structure) : 1;
     const baseMetrics = {
       powerGeneration: stats.powerGeneration || 0,
       powerCapacity: entry.layer === 'power' ? stats.capacity || 0 : 0,
@@ -1402,6 +1511,13 @@ function semanticSnapshot(state) {
       construction: entry.structure.construction ? clone(entry.structure.construction) : null,
       inherited: entry.structure.inherited === true,
       repairable: entry.structure.inherited === true && entry.structure.condition < 100,
+      computeUpgradeLevel: Math.max(0, Number(entry.structure.computeUpgradeLevel) || 0),
+      outputMultiplier,
+      canUpgradeCompute: entry.blueprint.kind === 'computer'
+        && state.recovery?.phase === 'online'
+        && entry.structure.condition > 0
+        && (Number(entry.structure.computeUpgradeLevel) || 0) < 1
+        && !state.construction.jobs.some((job) => job.entityId === entry.structure.entityId),
       aiEnabled,
       aiConnected,
       aiEfficiencyMultiplier,
@@ -1409,13 +1525,18 @@ function semanticSnapshot(state) {
       baseMetrics,
       effectiveMetrics: Object.fromEntries(Object.entries(baseMetrics)
         .map(([key, value]) => [key, ['maintenanceFlopsPerTick', 'reliabilityPercent'].includes(key)
-          ? value : value * aiEfficiencyMultiplier])),
+          ? value : value * aiEfficiencyMultiplier * (key === 'rawFlops' ? outputMultiplier : 1)])),
     };
   });
   const recovery = recoverySnapshot(state);
   const research = researchSnapshot(state);
   const story = storySnapshot(state);
-  const progression = {
+  const opening = openingCheckpointSnapshot(state);
+  const progression = opening.state === 'active' ? {
+    current: opening.completed,
+    total: opening.total,
+    label: 'Opening checkpoints',
+  } : {
     current: story.completed,
     total: story.total,
     label: story.current ? `Turn ${story.current.number} · ${story.current.title}` : 'Opening campaign complete',
@@ -1449,6 +1570,7 @@ function semanticSnapshot(state) {
     recovery,
     research,
     story,
+    opening,
     progression,
     business: clone(state.business),
     construction: clone(state.construction),
@@ -1585,6 +1707,7 @@ export function createOverhaulGame(options = {}) {
 
   function syncConstruction(job, structure) {
     structure.construction = {
+      kind: job.kind || 'build',
       state: job.phase,
       phase: job.phase,
       totalTicks: job.totalTicks,
@@ -1617,6 +1740,13 @@ export function createOverhaulGame(options = {}) {
   }
 
   function completeConstruction(job, entry, reason = 'commissioned') {
+    if (job.kind === 'compute-upgrade') {
+      entry.structure.computeUpgradeLevel = Math.max(
+        0, Number(entry.structure.computeUpgradeLevel) || 0,
+      ) + 1;
+      entry.structure.lastUpgradeTick = state.tick;
+      reason = 'compute-retrofit';
+    }
     entry.structure.condition = 100;
     entry.structure.construction = {
       ...entry.structure.construction,
@@ -1636,6 +1766,7 @@ export function createOverhaulGame(options = {}) {
       humanId: job.humanId,
       robotId: job.robotId,
       reason,
+      computeUpgradeLevel: Math.max(0, Number(entry.structure.computeUpgradeLevel) || 0),
     }, job.entityId);
   }
 
@@ -1735,6 +1866,62 @@ export function createOverhaulGame(options = {}) {
       });
     }
     return newlyCompleted;
+  }
+
+  function updateOpeningProgression() {
+    const ticks = state.opening.checkpointTicks;
+    const entries = structureEntries(state);
+    const upgraded = entries.some((entry) => entry.blueprint?.kind === 'computer'
+      && (Number(entry.structure.computeUpgradeLevel) || 0) > 0);
+    if (ticks['recover-and-retrofit'] == null
+        && state.recovery?.phase === 'online' && upgraded) {
+      ticks['recover-and-retrofit'] = state.tick;
+      emit('opening.checkpoint-completed', {
+        checkpointId: 'recover-and-retrofit', number: 1,
+      }, 'recover-and-retrofit');
+    }
+
+    const addedGenerator = entries.some((entry) => entry.blueprint?.stats?.powerGeneration > 0
+      && !entry.structure.inherited && entry.structure.condition > 0);
+    const addedPump = entries.some((entry) => entry.blueprint?.stats?.coolingGeneration > 0
+      && !entry.structure.inherited && entry.structure.condition > 0);
+    const powerExpanded = addedGenerator
+      && Number(state.networks?.power?.telemetry?.capacity || 0) > 24 + EPSILON;
+    const coolingExpanded = addedPump
+      && Number(state.networks?.cooling?.telemetry?.capacity || 0) > 12 + EPSILON;
+    if (ticks['recover-and-retrofit'] != null && ticks['expand-utilities'] == null
+        && powerExpanded && coolingExpanded) {
+      ticks['expand-utilities'] = state.tick;
+      emit('opening.checkpoint-completed', {
+        checkpointId: 'expand-utilities', number: 2,
+        powerCapacity: state.networks.power.telemetry.capacity,
+        coolingCapacity: state.networks.cooling.telemetry.capacity,
+      }, 'expand-utilities');
+    }
+
+    const utilityTick = ticks['expand-utilities'];
+    if (utilityTick != null && ticks['research-capability'] == null
+        && Number(state.research?.lastUnlock?.tick) > utilityTick
+        && state.research.lastUnlock.id !== 'recovery-grid') {
+      ticks['research-capability'] = state.tick;
+      emit('opening.checkpoint-completed', {
+        checkpointId: 'research-capability', number: 3,
+        researchId: state.research.lastUnlock.id,
+      }, 'research-capability');
+    }
+
+    const initialOwned = (OVERHAUL_BALANCE.floor.initialOwned.maxX
+        - OVERHAUL_BALANCE.floor.initialOwned.minX + 1)
+      * (OVERHAUL_BALANCE.floor.initialOwned.maxY
+        - OVERHAUL_BALANCE.floor.initialOwned.minY + 1);
+    const extraOwned = allCells(state).filter((cell) => cell.owned).length - initialOwned;
+    if (ticks['research-capability'] != null && ticks['expand-first-floor'] == null
+        && extraOwned >= 12) {
+      ticks['expand-first-floor'] = state.tick;
+      emit('opening.checkpoint-completed', {
+        checkpointId: 'expand-first-floor', number: 4, extraOwned,
+      }, 'expand-first-floor');
+    }
   }
 
   function updateStoryProgression() {
@@ -1964,6 +2151,7 @@ export function createOverhaulGame(options = {}) {
       + OVERHAUL_BALANCE.construction.commissioningTicks;
     const job = {
       id: nextEntityId('construction'),
+      kind: 'build',
       entityId: structure.entityId,
       blueprintId,
       cellKey: cell.key,
@@ -2004,6 +2192,58 @@ export function createOverhaulGame(options = {}) {
       constructionJobId: job.id,
       state: job.phase,
       operational: false,
+    };
+  }
+
+  function upgradeCompute(entityId) {
+    const entry = computerEntries(state).find((item) => item.structure.entityId === entityId);
+    if (!entry) return reject('not-compute', { entityId });
+    if (state.recovery?.phase !== 'online') return reject('site-not-recovered', { entityId });
+    if (entry.structure.condition <= 0) return reject('compute-offline', { entityId });
+    if ((Number(entry.structure.computeUpgradeLevel) || 0) >= 1) {
+      return reject('compute-already-upgraded', { entityId });
+    }
+    if (state.construction.jobs.some((job) => job.entityId === entityId)) {
+      return reject('compute-work-in-progress', { entityId });
+    }
+    const cost = OVERHAUL_BALANCE.recovery.computeUpgradeCost;
+    if (state.economy.cash + EPSILON < cost) {
+      return reject('insufficient-cash', { entityId, operation: 'upgrade-compute' });
+    }
+    state.economy.cash -= cost;
+    entry.structure.condition = 0;
+    const totalTicks = OVERHAUL_BALANCE.recovery.computeUpgradeTicks;
+    const job = {
+      id: nextEntityId('construction'),
+      kind: 'compute-upgrade',
+      entityId,
+      blueprintId: entry.blueprint.id,
+      cellKey: entry.cell.key,
+      x: entry.cell.x,
+      y: entry.cell.y,
+      phase: 'queued',
+      totalTicks,
+      ticksRemaining: totalTicks,
+      humanId: null,
+      robotId: null,
+      queuedTick: state.tick,
+    };
+    state.construction.jobs.push(job);
+    syncConstruction(job, entry.structure);
+    assignConstructionCrew(job, entry);
+    refreshNetworks();
+    emit('computer.upgrade-queued', {
+      jobId: job.id,
+      cost,
+      bonusPercent: OVERHAUL_BALANCE.recovery.computeUpgradeBonusPercent,
+      cellKey: entry.cell.key,
+    }, entityId);
+    return {
+      ok: true,
+      entityId,
+      constructionJobId: job.id,
+      cost,
+      bonusPercent: OVERHAUL_BALANCE.recovery.computeUpgradeBonusPercent,
     };
   }
 
@@ -2300,6 +2540,7 @@ export function createOverhaulGame(options = {}) {
     claimCell,
     previewPlacement,
     place,
+    upgradeCompute,
     remove,
     setRoutes,
     setAiEnabled,
@@ -2320,6 +2561,7 @@ export function createOverhaulGame(options = {}) {
       case 'purchase-frontier': result = purchaseFrontier(input.cellKey); break;
       case 'preview-placement': result = previewPlacement(input.blueprintId, input.x, input.y); break;
       case 'place': result = place(input.blueprintId, input.x, input.y); break;
+      case 'upgrade-compute': result = upgradeCompute(input.entityId); break;
       case 'remove': result = remove(input.x, input.y, input.layer); break;
       case 'set-routes': result = setRoutes(input.routes || input); break;
       case 'set-ai-enabled': result = setAiEnabled(input.entityId, input.enabled); break;
@@ -2333,7 +2575,10 @@ export function createOverhaulGame(options = {}) {
       case 'hire-human': result = hireHuman(); break;
       default: result = reject('unknown-command', { commandType: input.type });
     }
-    if (result?.ok && input.type !== 'preview-placement') updateStoryProgression();
+    if (result?.ok && input.type !== 'preview-placement') {
+      updateOpeningProgression();
+      updateStoryProgression();
+    }
     return result;
   }
 
@@ -2450,7 +2695,8 @@ export function createOverhaulGame(options = {}) {
       }
     }
     const gross = entry.structure.condition > 0 && !entry.structure.aiFault
-      ? stats.rawFlops * runtime.throttle * aiMultiplierFor(state, entry) : 0;
+      ? stats.rawFlops * computeUpgradeMultiplier(entry.structure)
+        * runtime.throttle * aiMultiplierFor(state, entry) : 0;
     runtime.rawFlops = gross;
     return { gross, external: network.externalConnected.get(entityId) || false };
   }
@@ -2901,6 +3147,7 @@ export function createOverhaulGame(options = {}) {
     state.progress.inference += ledger.jobs;
     state.progress.rawFlopsSold += ledger.sell;
     updateResearchProgression();
+    updateOpeningProgression();
     processAiTraining(ledger.reserved, network);
 
     const saleIncome = ledger.sell * OVERHAUL_BALANCE.economy.rawFlopsSalePrice;
@@ -2926,6 +3173,7 @@ export function createOverhaulGame(options = {}) {
       reason,
       fiberFloor: network.onlineFiberCount > 0 ? 1 : null,
       routedFlops: routedSell,
+      incomePerTick: saleIncome,
     };
     if (state.sell.reason && state.sell.reason !== previousSell.reason) {
       emit('sell.blocked', {
@@ -2999,7 +3247,10 @@ export function createOverhaulGame(options = {}) {
     ensurePlaced('generator', layout.generator.x, layout.generator.y);
     ensurePlaced('cooling_pump', layout.coolingPump.x, layout.coolingPump.y);
     ensurePlaced(state.computerBlueprintId, layout.computer.x, layout.computer.y);
-    for (const [x, y] of layout.power) ensurePlaced('power_line', x, y);
+    for (const [x, y] of layout.power) {
+      ensurePlaced(x === layout.generator.x && y === layout.generator.y
+        ? 'power_pole' : 'power_line', x, y);
+    }
     for (const [x, y] of layout.cooling) ensurePlaced('cooling_pipe', x, y);
     for (const [x, y] of layout.data) {
       const blueprintId = x === layout.dataSwitch.x && y === layout.dataSwitch.y
