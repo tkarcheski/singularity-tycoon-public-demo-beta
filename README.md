@@ -36,6 +36,12 @@ collect the invoice, and close the human-plus-AI control loop. Each turn is
 completed by authoritative game state rather than a narrative Next button, and
 the campaign tracker survives save and reload.
 
+Cooling expansion separates reach from supply: Cooling Pipe can share a tile
+with compute and extends a contiguous route, while only a powered Cooling Pump
+adds 12 kW of cooling supply. The build preview marks connected extension
+targets, warns before creating an isolated pipe island, and keeps the selected
+utility tool active after a frontier purchase.
+
 Python browser tooling is locked and managed with [uv](https://docs.astral.sh/uv/):
 
 ```bash

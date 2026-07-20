@@ -106,7 +106,8 @@ Run Local AI Playtest
 Stage Blueprint Work Order
     [Arguments]    ${blueprint_id}    ${x}    ${y}
     [Documentation]    Place a blueprint through real controls and return its queued entity.
-    Click    css=[data-blueprint="${blueprint_id}"]
+    ${pressed}=    Get Attribute    css=[data-blueprint="${blueprint_id}"]    aria-pressed
+    IF    "${pressed}" != "true"    Click    css=[data-blueprint="${blueprint_id}"]
     Click    css=.cell[data-x="${x}"][data-y="${y}"]
     Wait For Elements State    css=.cell[data-x="${x}"][data-y="${y}"] [data-construction-site]    visible    3s
     ${entity_id}=    Evaluate JavaScript    ${None}    ([blueprintId,x,y]) => window.__overhaulAcceptance.snapshot().presentation.structures.find(item => item.blueprintId === blueprintId && item.x === Number(x) && item.y === Number(y))?.id    arg=${{["${blueprint_id}", ${x}, ${y}]}}
@@ -125,6 +126,43 @@ Construction Phase Should Be
     ELSE
         Should Be Equal    ${state}[sitePhase]    ${phase}
     END
+
+Purchase Frontier Tile
+    [Arguments]    ${x}    ${y}
+    [Documentation]    Purchase a specific visible frontier tile through the inspector.
+    Click    css=.cell[data-x="${x}"][data-y="${y}"]
+    Wait For Elements State    css=[data-purchase-frontier]    visible    2s
+    Click    css=[data-purchase-frontier]
+    Wait Until Keyword Succeeds    3s    100ms    Tile Should Be Owned    ${x}    ${y}
+
+Tile Should Be Owned
+    [Arguments]    ${x}    ${y}
+    ${territory}=    Get Attribute    css=.cell[data-x="${x}"][data-y="${y}"]    data-territory
+    Should Be Equal    ${territory}    owned
+
+Cooling Expansion Snapshot
+    [Arguments]    ${x}    ${y}
+    ${state}=    Evaluate JavaScript    ${None}    ([x,y]) => { const snapshot=window.__overhaulAcceptance.snapshot().presentation; const computer=snapshot.computers.find(item => item.x === Number(x) && item.y === Number(y)); const path=computer ? snapshot.networks.cooling.paths.find(item => item.target === computer.id) : null; const pipe=snapshot.structures.find(item => item.blueprintId === 'cooling_pipe' && item.x === Number(x) && item.y === Number(y)); const telemetry=snapshot.networks.cooling.telemetry; return { computerId:computer?.id || null, computerState:computer?.state || null, coolingDelivered:Number(computer?.coolingDelivered || 0), rawFlops:Number(computer?.rawFlops || 0), pipeId:pipe?.id || null, pipeCondition:Number(pipe?.condition || 0), pathConnected:path?.connected === true, pathCells:path?.cells || [], segments:Number(snapshot.utilities.byLayer.cooling.segments || 0), delivered:Number(telemetry.delivered || 0), capacity:Number(telemetry.capacity || 0), uiTick:Number(document.documentElement.dataset.uiTick), completed:Number(snapshot.ticks.completed) } }    arg=${{[${x}, ${y}]}}
+    RETURN    ${state}
+
+Expanded Starter Node Should Be Cooled
+    [Arguments]    ${x}    ${y}
+    ${state}=    Cooling Expansion Snapshot    ${x}    ${y}
+    Should Not Be Empty    ${state}[pipeId]
+    Should Be Equal As Integers    ${state}[pipeCondition]    100
+    Should Not Be Empty    ${state}[computerId]
+    Should Be True    ${state}[pathConnected]
+    Should Be True    ${state}[coolingDelivered] > 0
+    Should Be True    ${state}[rawFlops] > 0
+    Should Be Equal As Integers    ${state}[uiTick]    ${state}[completed]
+
+Cooling Extension Preview Should Be Connected
+    ${connected}=    Get Attribute    css=[data-placement-preview][data-preview-blueprint="cooling_pipe"]    data-preview-network-connected
+    ${isolated}=    Get Attribute    css=[data-placement-preview][data-preview-blueprint="cooling_pipe"]    data-preview-isolated
+    ${copy}=    Get Text    css=[data-placement-preview][data-preview-blueprint="cooling_pipe"]
+    Should Be Equal    ${connected}    true
+    Should Be Equal    ${isolated}    false
+    Should Contain    ${copy}    Extends live cooling reach
 
 Complete Ten Turn Campaign
     [Documentation]    Exercise every persistent campaign gate and reveal the final dossier.

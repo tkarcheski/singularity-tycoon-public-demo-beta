@@ -1855,6 +1855,45 @@ export function createOverhaulGame(options = {}) {
     }
     getCell(afterState, x, y).layers[blueprint.layer] = structure;
     const afterNetwork = computeNetworks(afterState).snapshot;
+    let networkExtension = null;
+    if (['power', 'cooling', 'data', 'ai'].includes(blueprint.layer)) {
+      const key = cellKey(afterState.floor.id, x, y);
+      const graph = createComponents(afterState, blueprint.layer);
+      const componentId = graph.byCell.get(key);
+      const component = graph.componentById.get(componentId);
+      const connectedNeighbors = neighbors(
+        x, y, afterState.floor.width, afterState.floor.height,
+      ).filter(([nx, ny]) => getCell(afterState, nx, ny)
+        ?.layers[blueprint.layer]?.condition > 0).length;
+      const sourceOnComponent = (component?.cells || []).some((componentKey) => {
+        const point = parseCellKey(componentKey);
+        const cell = point ? getCell(afterState, point.x, point.y) : null;
+        return Object.values(cell?.layers || {}).some((candidate) => {
+          const candidateBlueprint = blueprintById(candidate?.blueprintId);
+          if (!candidate || candidate.condition <= 0 || !candidateBlueprint) return false;
+          if (blueprint.layer === 'power') return (candidateBlueprint.stats?.powerGeneration || 0) > 0;
+          if (blueprint.layer === 'cooling') return (candidateBlueprint.stats?.coolingGeneration || 0) > 0;
+          if (blueprint.layer === 'data') return candidateBlueprint.id === 'data_switch';
+          return candidateBlueprint.id === 'ai_controller';
+        });
+      });
+      const componentKeys = new Set(component?.cells || []);
+      const livePath = (afterNetwork[blueprint.layer]?.paths || []).some((path) =>
+        path.connected && (path.cells || []).some((point) => componentKeys.has(
+          cellKey(afterState.floor.id, Number(point.x), Number(point.y)),
+        )));
+      networkExtension = {
+        layer: blueprint.layer,
+        connectedNeighbors,
+        reachableCells: component?.cells?.length || 1,
+        connectedToNetwork: connectedNeighbors > 0,
+        connectedToSource: sourceOnComponent,
+        live: livePath,
+        isolated: connectedNeighbors === 0,
+        routeCapacity: blueprint.stats?.capacity || 0,
+        supplyCapacity: afterNetwork[blueprint.layer]?.telemetry?.capacity || 0,
+      };
+    }
     const networkDeltas = {};
     const affectedEndpoints = [];
     for (const layer of ['power', 'cooling', 'data', 'ai']) {
@@ -1907,6 +1946,7 @@ export function createOverhaulGame(options = {}) {
         + OVERHAUL_BALANCE.construction.commissioningTicks,
       recurringBurdenFlops: blueprint.stats?.maintenanceFlopsPerTick || 0,
       networkRole: blueprint.networkRole || null,
+      networkExtension,
       networkDeltas,
       affectedEndpoints,
     };

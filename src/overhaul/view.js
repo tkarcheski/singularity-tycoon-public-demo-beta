@@ -26,8 +26,8 @@
     { id: 'generator', layer: 'physical', name: 'Compact Generator', detail: '+24 power generation', cost: 220, state: 'locked', icon: 'power', kind: 'power' },
     { id: 'power_line', layer: 'physical', name: 'Power Line', detail: 'Branch · 16 cap · 0.025 FLOPS/tick', cost: 6, state: 'locked', icon: 'link', kind: 'power' },
     { id: 'power_pole', layer: 'physical', name: 'Power Pole', detail: 'Trunk · 36 cap · 0.08 FLOPS/tick', cost: 18, state: 'locked', icon: 'link', kind: 'power' },
-    { id: 'cooling_pump', layer: 'physical', name: 'Cooling Pump', detail: '+12 cooling generation', cost: 140, state: 'locked', icon: 'cooling', kind: 'cooling' },
-    { id: 'cooling_pipe', layer: 'physical', name: 'Cooling Pipe', detail: 'Branch · 12 cap · 0.03 FLOPS/tick', cost: 5, state: 'locked', icon: 'pipe', kind: 'cooling' },
+    { id: 'cooling_pump', layer: 'physical', name: 'Cooling Pump', detail: '+12 kW cooling supply · requires power + pipe', cost: 140, state: 'locked', icon: 'cooling', kind: 'cooling' },
+    { id: 'cooling_pipe', layer: 'physical', name: 'Cooling Pipe', detail: 'Extends reach · 12 kW route · +0 supply', cost: 5, state: 'locked', icon: 'pipe', kind: 'cooling' },
     { id: 'data_cable', layer: 'network', name: 'Data Cable', detail: 'Branch · 16 cap · 0.025 FLOPS/tick', cost: 5, state: 'locked', icon: 'network', kind: 'network' },
     { id: 'data_switch', layer: 'network', name: 'Internal Switch', detail: 'Hub · 48 cap · 0.1 FLOPS/tick', cost: 70, state: 'locked', icon: 'network', kind: 'network' },
     { id: 'fiber_gateway', layer: 'network', name: 'F1 Underground Fiber', detail: 'south-edge sell uplink', cost: 180, state: 'locked', icon: 'network', kind: 'network' },
@@ -38,6 +38,9 @@
     { id: 'ai_bus', layer: 'ai', name: 'AI Bus', detail: 'Automation · 32 cap · 0.04 FLOPS/tick', cost: 8, state: 'locked', icon: 'ai', kind: 'ai' },
   ];
   const BLUEPRINT_BY_ID = new Map(BLUEPRINTS.map((blueprint) => [blueprint.id, blueprint]));
+  const UTILITY_LINK_IDS = new Set([
+    'power_line', 'power_pole', 'cooling_pipe', 'data_cable', 'data_switch', 'ai_bus',
+  ]);
   const ROUTE_PRESETS = [
     { id:'balanced', label:'Balanced', detail:'25% each', routes:{sell:.25,research:.25,train:.25,inference:.25} },
     { id:'sell', label:'Sell', detail:'100% revenue', routes:{sell:1,research:0,train:0,inference:0} },
@@ -366,6 +369,17 @@
     if (String(kind).startsWith('cooling')) return 'cooling';
     if (String(kind).includes('data') || kind === 'external-link') return 'network';
     return 'floor';
+  }
+
+  function blueprintSlot(blueprint) {
+    if (!blueprint) return null;
+    if (['generator', 'cooling_pump', 'fiber_gateway', 'ai_controller'].includes(blueprint.id)
+        || blueprint.kind === 'computer') return 'facility';
+    if (blueprint.kind === 'power') return 'power';
+    if (blueprint.kind === 'cooling') return 'cooling';
+    if (blueprint.kind === 'network') return 'data';
+    if (blueprint.kind === 'ai') return 'ai';
+    return null;
   }
 
   function optionalNumber(value) {
@@ -981,9 +995,26 @@
             : primary ? `${primary.label}, ${primary.kind}${utilityCopy}` : utilities.length ? `${utilities.join(', ')} utility routes` : territory === 'frontier' ? `Frontier cell ${x+1}, ${y+1}, costs $${frontierCell.cost}` : `${territory} cell ${x+1}, ${y+1}`;
         const selectedBlueprint = BLUEPRINT_BY_ID.get(ui.selectedBlueprint);
         const blueprintUnlocked = snapshot.unlocks.some((item) => item.id === ui.selectedBlueprint);
+        const selectedSlot = blueprintSlot(selectedBlueprint);
+        const slotOccupied = Boolean(selectedSlot
+          && structures.some((item) => item.layer === selectedSlot));
+        const utilityLink = Boolean(selectedBlueprint && UTILITY_LINK_IDS.has(selectedBlueprint.id));
+        const networkAdjacent = utilityLink && [[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy]) => {
+          const nx = x + dx, ny = y + dy;
+          return nx >= 0 && nx < WIDTH && ny >= 0 && ny < HEIGHT
+            && structuresAt(nx,ny).some((item) => item.layer === selectedSlot
+              && Number(item.condition) > 0);
+        });
+        const legalBuildTarget = territory === 'owned' && Boolean(selectedBlueprint)
+          && blueprintUnlocked && !slotOccupied;
+        const placementState = !selectedBlueprint ? 'none' : slotOccupied ? 'occupied'
+          : utilityLink ? (networkAdjacent ? 'connected' : 'isolated') : 'available';
         const activity = tileActivity(actors,structures);
         cell.dataset.territory = territory;
-        cell.dataset.buildTarget = String(territory === 'owned' && Boolean(selectedBlueprint) && blueprintUnlocked);
+        cell.dataset.buildTarget = String(legalBuildTarget);
+        cell.dataset.placementState = placementState;
+        cell.dataset.networkAdjacent = String(networkAdjacent);
+        cell.dataset.buildNetwork = blueprintNetworkFocus(selectedBlueprint) || 'none';
         cell.dataset.utilityLayers = utilities.join(' ');
         cell.dataset.tileActivity = activity.activity;
         cell.dataset.inherited = String(structures.some((item) => item.inherited));
@@ -997,7 +1028,12 @@
         cell.setAttribute('aria-pressed', String(ui.selectedCell === key));
         cell.setAttribute('aria-disabled', String(territory === 'locked'));
         cell.dataset.tooltipTitle = worksite?.label || actor?.label || primary?.label || (utilities.length ? `${utilities.join(' + ')} routes` : `${territory[0].toUpperCase()+territory.slice(1)} cell ${x+1}.${y+1}`);
-        cell.dataset.tooltipCopy = worksite ? `${worksite.construction.phase} · ${Math.round(worksite.construction.progress * 100)}% complete. AYA inspects while MICA-2 assembles and maintains.` : actor ? `${actor.kind} · ${actor.state}. Simulation actor ${actor.id}.${utilityCopy}` : primary ? `${primary.kind} infrastructure · ${primary.id}.${utilityCopy}` : utilities.length ? `Slim utility traces: ${utilities.join(', ')}.` : territory === 'frontier' ? `Connected frontier · purchase for $${frontierCell.cost}.` : territory === 'owned' ? 'Owned connected footprint. Select a blueprint to build.' : 'Expand the connected frontier to reveal this cell.';
+        cell.dataset.tooltipCopy = worksite ? `${worksite.construction.phase} · ${Math.round(worksite.construction.progress * 100)}% complete. AYA inspects while MICA-2 assembles and maintains.` : selectedBlueprint && territory === 'owned' ? slotOccupied
+          ? `${selectedBlueprint.name} cannot be staged here: the ${selectedSlot} layer is occupied.`
+          : utilityLink && !networkAdjacent ? `${selectedBlueprint.name} fits here but would start an isolated route. Choose a highlighted tile beside the existing ${selectedSlot} trace.`
+            : utilityLink ? `${selectedBlueprint.name} will extend the connected ${selectedSlot} route onto this tile.`
+              : `${selectedBlueprint.name} can be staged on this owned tile.`
+          : actor ? `${actor.kind} · ${actor.state}. Simulation actor ${actor.id}.${utilityCopy}` : primary ? `${primary.kind} infrastructure · ${primary.id}.${utilityCopy}` : utilities.length ? `Slim utility traces: ${utilities.join(', ')}.` : territory === 'frontier' ? `Connected frontier · purchase for $${frontierCell.cost}.` : territory === 'owned' ? 'Owned connected footprint. Select a blueprint to build.' : 'Expand the connected frontier to reveal this cell.';
         const content = cell.querySelector('.cell-content');
         const primaryMarkup = machineActor ? actorMarkup(machineActor) : primary ? `<span class="structure structure-${escapeHtml(primary.icon)}${worksite?.id === primary.id ? ' structure-pending' : ''}" data-primary-layer="${escapeHtml(primary.layer || 'facility')}" data-primary-entity-id="${escapeHtml(primary.id)}" data-primary-blueprint-id="${escapeHtml(primary.blueprintId)}" aria-hidden="true">${icon(primary.icon)}</span>` : territory === 'frontier' ? '<span class="frontier-plus" aria-hidden="true">+</span>' : territory === 'locked' ? `<span class="locked-mark" aria-hidden="true">${icon('lock')}</span>` : '';
         const worksiteMarkup = worksite ? `<span class="construction-site" data-construction-site="${escapeHtml(worksite.id)}" data-construction-phase="${escapeHtml(worksite.construction.phase)}" data-construction-progress="${worksite.construction.progress}" style="--construction-progress:${Math.round(worksite.construction.progress * 100)}%" aria-hidden="true"><span class="construction-frame"></span><span class="construction-progress"></span><span class="construction-crane"></span><span class="construction-materials"></span></span>` : '';
@@ -1129,8 +1165,14 @@
             || (delta.affectedEndpoints || []).length)
           .map(([name,delta]) => `<span data-preview-resource="${escapeHtml(name)}"><strong>${escapeHtml(NETWORK_META[name]?.label || name)}</strong> ${Number(delta.capacityDelta) >= 0 ? '+' : ''}${metricText(delta.capacityDelta)} capacity · ${Number(delta.maintenanceDelta) >= 0 ? '+' : ''}${metricText(delta.maintenanceDelta)} FLOPS/tick · ${(delta.affectedEndpoints || []).length} endpoints changed</span>`)
           .join('') : '';
+      const extension = placementPreview?.networkExtension || null;
+      const extensionCopy = !extension ? '' : extension.isolated
+        ? `Isolated ${NETWORK_META[extension.layer]?.label || extension.layer} segment. Choose a highlighted tile beside the existing trace to expand live reach.`
+        : extension.layer === 'cooling' && extension.connectedToSource
+          ? `Extends live cooling reach to ${extension.reachableCells} connected tiles. Supply stays ${metricText(extension.supplyCapacity)} kW; add a Cooling Pump—not more pipe—to increase supply.`
+          : `Extends ${extension.connectedToSource ? 'live' : 'connected'} ${NETWORK_META[extension.layer]?.label || extension.layer} reach to ${extension.reachableCells} tiles.`;
       const preview = placementPreview?.ok
-        ? `<section class="placement-preview" data-placement-preview data-preview-blueprint="${escapeHtml(selectedBlueprint.id)}" data-preview-role="${escapeHtml(placementPreview.networkRole || 'facility')}" data-preview-maintenance="${Number(placementPreview.recurringBurdenFlops) || 0}"><div class="module-head"><span class="module-title">Before you build</span><span class="state-chip warn">$${placementPreview.cost}</span></div><p>${escapeHtml(placementPreview.networkRole || 'facility')} role · AYA + MICA-2 crew · ${placementPreview.constructionTicks || 4} hands-on ticks after travel · ${metricText(placementPreview.recurringBurdenFlops)} recurring FLOPS/tick</p><div class="placement-preview-deltas">${previewDeltas || '<span>Capacity stays offline until the crew commissions this tile.</span>'}</div></section>`
+        ? `<section class="placement-preview" data-placement-preview data-preview-blueprint="${escapeHtml(selectedBlueprint.id)}" data-preview-role="${escapeHtml(placementPreview.networkRole || 'facility')}" data-preview-maintenance="${Number(placementPreview.recurringBurdenFlops) || 0}" data-preview-network-connected="${Boolean(extension?.connectedToSource && !extension?.isolated)}" data-preview-isolated="${Boolean(extension?.isolated)}"><div class="module-head"><span class="module-title">Before you build</span><span class="state-chip ${extension?.isolated ? 'bad' : 'warn'}">${extension?.isolated ? 'ISLAND' : `$${placementPreview.cost}`}</span></div><p>${escapeHtml(placementPreview.networkRole || 'facility')} role · AYA + MICA-2 crew · ${placementPreview.constructionTicks || 4} hands-on ticks after travel · ${metricText(placementPreview.recurringBurdenFlops)} recurring FLOPS/tick</p>${extensionCopy ? `<p class="placement-extension" data-extension-state="${extension.isolated ? 'isolated' : 'connected'}">${escapeHtml(extensionCopy)}</p>` : ''}<div class="placement-preview-deltas">${previewDeltas || '<span>Capacity stays offline until the crew commissions this tile.</span>'}</div></section>`
         : '';
       const repairTarget = selected.structures.find((item) => item.inherited && Number(item.condition) < 100);
       const activeRepair = snapshot.recovery.activeRepair;
@@ -1139,7 +1181,7 @@
         ? `<button class="recovery-action" type="button" data-repair-structure="${escapeHtml(repairTarget.id)}" ${repairBlocked || activeRepair?.entityId === repairTarget.id ? 'disabled aria-disabled="true"' : ''}><span class="recovery-action-icon">⚒</span><span><strong>${activeRepair?.entityId === repairTarget.id ? 'Field crew deployed' : `Repair inherited ${escapeHtml(repairTarget.label)}`}</strong><small>${activeRepair?.entityId === repairTarget.id ? `${escapeHtml(activeRepair.phase || 'working')} · ${activeRepair.ticksRemaining} hands-on ticks` : '$90 · AYA + MICA-2 · travel + 3 maintenance ticks'}</small></span><span class="state-chip ${activeRepair?.entityId === repairTarget.id ? 'warn' : 'bad'}">${activeRepair?.entityId === repairTarget.id ? escapeHtml(activeRepair.phase || 'working') : 'fault'}</span></button>`
         : '';
       const action = selected.territory === 'frontier'
-        ? `<button class="blueprint inspector-action" type="button" data-purchase-frontier="${escapeHtml(selected.frontier.commandKey)}"><span class="blueprint-icon">${icon('floor')}</span><span><span class="blueprint-name">Purchase frontier</span><span class="blueprint-detail">Grow connected footprint</span></span><span class="state-chip warn">$${selected.frontier.cost}</span></button>`
+        ? `<button class="blueprint inspector-action" type="button" data-purchase-frontier="${escapeHtml(selected.frontier.commandKey)}"><span class="blueprint-icon">${icon('floor')}</span><span><span class="blueprint-name">${selectedBlueprint ? `Purchase for ${escapeHtml(selectedBlueprint.name)}` : 'Purchase frontier'}</span><span class="blueprint-detail">${selectedBlueprint ? 'Blueprint stays selected; stage it after purchase' : 'Grow connected footprint'}</span></span><span class="state-chip warn">$${selected.frontier.cost}</span></button>`
         : selected.territory === 'owned' && selectedBlueprint
           ? `<button class="blueprint inspector-action" type="button" data-place-selected="${escapeHtml(selectedBlueprint.id)}" data-place-x="${selected.x}" data-place-y="${selected.y}"><span class="blueprint-icon">${icon(selectedBlueprint.icon)}</span><span><span class="blueprint-name">Stage ${escapeHtml(selectedBlueprint.name)}</span><span class="blueprint-detail">Create crew work order at ${selected.x + 1},${selected.y + 1}</span></span><span class="state-chip good">$${selectedBlueprint.cost}</span></button>`
           : '';
@@ -1230,7 +1272,7 @@
       } else if (ui.tab === 'jobs') {
         refs.tabPanel.innerHTML = `${renderStoryDossier()}${renderVenture()}`;
       } else {
-        refs.tabPanel.innerHTML = `<div class="context-help"><strong>Read the floor, then route it.</strong><br>Solid cells are owned. Dashed cells are purchasable frontier. Lines report real delivered Power, Cooling, and Data—blocked routes never animate as live.<div class="shortcut-line">Arrow keys · move grid focus<br>P / C / N · toggle overlays<br>1–9 · select floor</div></div>`;
+        refs.tabPanel.innerHTML = `<div class="context-help"><strong>Read the floor, then route it.</strong><br>Solid cells are owned. Dashed cells are purchasable frontier. Lines report real delivered Power, Cooling, and Data—blocked routes never animate as live.<div class="utility-help" data-cooling-help><strong>Cooling: reach ≠ supply.</strong><br>Stack Cooling Pipe under every pump and compute tile, with an unbroken pipe path between them. More pipe extends the reachable floor; only another powered Cooling Pump adds 12 kW of supply.</div><div class="shortcut-line">Arrow keys · move grid focus<br>P / C / N · toggle overlays<br>1–9 · select floor</div></div>`;
       }
     }
 
@@ -1326,6 +1368,11 @@
         const blueprint = BLUEPRINT_BY_ID.get(ui.selectedBlueprint);
         const blueprintUnlocked = snapshot.unlocks.some((item) => item.id === ui.selectedBlueprint);
         if (territory === 'owned' && blueprint && blueprintUnlocked) {
+          const slot = blueprintSlot(blueprint);
+          if (slot && structuresAt(x,y).some((item) => item.layer === slot)) {
+            setFeedback(`${blueprint.name} cannot be staged here: the ${slot} layer is already occupied. Choose a highlighted open tile.`, 'warn', true);
+            return;
+          }
           send({type:'place',blueprintId:blueprint.id,x,y}).then((result) => {
             setFeedback(result.ok ? `${blueprint.name} blueprint staged at ${x + 1},${y + 1}; crew dispatched.` : placementFailure(blueprint,result.reason), result.ok ? 'good' : 'bad', !result.ok);
           });
@@ -1338,7 +1385,16 @@
         revealInspectorAction();
         return;
       }
-      if (target.dataset.purchaseFrontier) { send({type:'purchase-frontier',cellKey:target.dataset.purchaseFrontier}).then((result) => { setFeedback(result.ok ? 'Frontier cell purchased successfully.' : `Purchase blocked: ${result.reason}.`, result.ok ? 'good' : 'bad', true); }); return; }
+      if (target.dataset.purchaseFrontier) {
+        const heldBlueprint = BLUEPRINT_BY_ID.get(ui.selectedBlueprint);
+        send({type:'purchase-frontier',cellKey:target.dataset.purchaseFrontier}).then((result) => {
+          const success = heldBlueprint
+            ? `Frontier purchased. ${heldBlueprint.name} is still selected—review the connection preview, then stage it below.`
+            : 'Frontier cell purchased successfully.';
+          setFeedback(result.ok ? success : `Purchase blocked: ${result.reason}.`, result.ok ? 'good' : 'bad', true);
+        });
+        return;
+      }
       if (target.dataset.repairStructure) {
         const entityId = target.dataset.repairStructure;
         send({type:'repair-structure',entityId}).then((result) => {

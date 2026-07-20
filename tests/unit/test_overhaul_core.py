@@ -836,6 +836,53 @@ def test_placement_preview_is_pure_and_topology_activates_only_after_commissioni
     assert result["burdenAfterCommission"] > result["burdenAfterRemove"]
 
 
+def test_cooling_preview_distinguishes_live_reach_from_supply_and_isolated_pipe():
+    result = _run_core(
+        """
+        const game = createOverhaulGame({seed: "cooling-expansion-preview"});
+        game.runScenario("computer-path-connected");
+        const before = game.snapshot();
+        game.command({type: "purchase-frontier", cellKey: "F1:7,3"});
+        game.command({type: "purchase-frontier", cellKey: "F1:3,3"});
+        const claimed = game.snapshot();
+        const connected = game.actions.previewPlacement("cooling_pipe", 7, 3);
+        const isolated = game.actions.previewPlacement("cooling_pipe", 3, 3);
+        const after = game.snapshot();
+        console.log(JSON.stringify({
+          connected,
+          isolated,
+          previewPure: JSON.stringify(claimed) === JSON.stringify(after),
+          ownedDelta: claimed.footprint.owned.length - before.footprint.owned.length,
+        }));
+        """
+    )
+
+    assert result["previewPure"] is True
+    assert result["ownedDelta"] == 2
+    connected = result["connected"]
+    assert connected["ok"] is True
+    assert connected["networkDeltas"]["cooling"]["capacityDelta"] == 0
+    assert connected["networkExtension"] == {
+        "layer": "cooling",
+        "connectedNeighbors": 1,
+        "reachableCells": 7,
+        "connectedToNetwork": True,
+        "connectedToSource": True,
+        "live": True,
+        "isolated": False,
+        "routeCapacity": 12,
+        "supplyCapacity": 12,
+    }
+    isolated = result["isolated"]["networkExtension"]
+    assert isolated["connectedNeighbors"] == 0
+    assert isolated["reachableCells"] == 1
+    assert isolated["connectedToNetwork"] is False
+    assert isolated["connectedToSource"] is False
+    assert isolated["live"] is False
+    assert isolated["isolated"] is True
+    assert isolated["supplyCapacity"] == 12
+
+
 def test_sparse_loop_and_carpet_shapes_have_visible_cost_and_real_redundancy_tradeoffs():
     result = _run_core(
         """
