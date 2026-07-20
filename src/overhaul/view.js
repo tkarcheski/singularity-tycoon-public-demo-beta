@@ -447,11 +447,13 @@
   function contextualQuest(snapshot, structures) {
     if (snapshot.quest) return snapshot.quest;
     const recovery = snapshot.recovery;
+    const storyTurn = snapshot.story?.current || null;
+    const storyIndex = storyTurn ? `T${String(storyTurn.number).padStart(2, '0')}` : 'T10';
     if (recovery?.activeRepair) {
       const target = recovery.targets?.find((item) => item.entityId === recovery.activeRepair.entityId);
       const traveling = recovery.activeRepair.phase === 'traveling';
       return {
-        index:'01',
+        index:storyIndex,
         title:`AYA + MICA ${traveling ? 'are en route' : 'are maintaining the plant'}`,
         body:traveling
           ? `The crew is crossing the floor to ${target?.label || 'inherited hardware'} before maintenance can begin.`
@@ -462,7 +464,7 @@
     }
     const broken = recovery?.targets?.find((item) => item.state === 'broken');
     if (broken) return {
-      index:'01',
+      index:storyIndex,
       title:`Recover ${recovery.siteName}`,
       body:`The inherited ${broken.label} at ${broken.x + 1}.${broken.y + 1} is dead. Select it and authorize a field repair.`,
       action:`Repair ${broken.label}`,
@@ -477,7 +479,7 @@
           : phase === 'commissioning' ? 'human inspection and robot maintenance'
             : 'robot assembly with human quality control';
       return {
-        index:'BUILD',
+        index:storyIndex,
         title:`Construct ${structure?.label || activeBuild.blueprintId}`,
         body:`${phaseCopy} · ${activeBuild.ticksRemaining} hands-on ticks remain before this blueprint becomes operational.`,
         action:'Watch the assembly crew',
@@ -485,11 +487,25 @@
       };
     }
     if (recovery?.phase === 'online' && (snapshot.flops?.raw || 0) <= 0) return {
-      index:'02',
+      index:storyIndex,
       title:'Wake the inherited rack',
       body:'Critical plant is restored. The rack is negotiating power, cooling, and data before it can work.',
       action:'Watch the boot sequence',
       hotkey:'LIVE',
+    };
+    if (storyTurn) return {
+      index:storyIndex,
+      title:storyTurn.title,
+      body:`${storyTurn.objective} ${storyTurn.progress?.label || ''}`.trim(),
+      action:storyTurn.action,
+      hotkey:storyTurn.hotkey,
+    };
+    if (snapshot.story?.state === 'complete') return {
+      index:'10/10',
+      title:'The opening campaign is complete',
+      body:snapshot.story.lastBeat?.copy || 'Human judgment and machine speed now share the floor. The next chapter waits above.',
+      action:'Read the final signal',
+      hotkey:'NEXT FLOOR',
     };
     const nextResearch = snapshot.research?.next;
     if (nextResearch) {
@@ -693,6 +709,7 @@
       progress: {research:0,training:0,inference:0,rawFlopsSold:0,...(snapshot.progress || {})},
       recovery: snapshot.recovery || {siteName:'Blank Site',phase:'online',targets:[],repaired:0,total:0,activeRepair:null},
       research: snapshot.research || {points:Number(snapshot.progress?.research)||0,completedIds:[],nodes:[],next:null,lastUnlock:null},
+      story: snapshot.story || {state:'active',completedIds:[],completed:0,total:10,current:null,turns:[],lastBeat:null},
       business,
       construction: snapshot.construction || {jobs:[],completed:0},
       economy: {cash:Number(economy.cash ?? snapshot.cash ?? 0),invoicesPaid:0,humansHired:0,payroll:0,...economy},
@@ -1194,20 +1211,35 @@
       return `<div class="venture-panel" data-venture-panel><div class="venture-summary"><div><span class="section-kicker">Manual operations chain</span><strong>Text Venture</strong></div><span class="state-chip ${milestones === 6 ? 'good' : 'warn'}">${milestones} / 6</span></div><div class="venture-meter" aria-label="${milestones} of 6 venture milestones complete"><span style="--venture-progress:${milestones / 6 * 100}%"></span></div><div class="venture-training"><span>Available training</span><strong>${round(trainingAvailable,1)} / ${BUSINESS_BALANCE.textTrainingRequired} FLOPS</strong></div><section class="venture-next"><span class="section-kicker">Next operation</span><h3>${escapeHtml(next.label)}</h3><p>${escapeHtml(next.detail)}</p>${action}</section><div class="venture-inventory">${ventureGroup('Models',business.textModels,(item)=>({state:item.state || 'trained',tone:'good',copy:`${round(item.trainingFlops,1)} training FLOPS`}))}${ventureGroup('Harnesses',harnesses,(item)=>({state:item.state || 'ready',tone:item.state === 'building' ? 'warn' : 'good',copy:item.state === 'building' ? `${item.remainingTicks} ticks · ${item.robotId}` : `text ${item.textId}`}))}${ventureGroup('Agents',business.agents,(item)=>({state:item.state || 'idle',tone:item.state === 'working' ? 'warn' : 'good',copy:`harness ${item.harnessId}`}))}${ventureGroup('Jobs',business.jobs,(item)=>({state:item.status || 'queued',tone:item.status === 'completed' ? 'good' : 'warn',copy:`${round(item.completedFlops,1)} / ${round(item.requiredFlops,1)} inference FLOPS`}))}${ventureGroup('Invoices',business.invoices,(item)=>({state:item.status || 'issued',tone:item.status === 'paid' ? 'good' : 'warn',copy:`$${Number(item.amount || 0).toLocaleString()} · job ${item.jobId}`}))}</div></div>`;
     }
 
+    function renderStoryDossier() {
+      const story = snapshot.story;
+      if (!story?.turns?.length) return '';
+      const current = story.current;
+      const featured = current || story.turns.at(-1);
+      const completedBeats = story.turns.filter((turn) => turn.state === 'complete');
+      const beat = story.lastBeat;
+      const timeline = story.turns.map((turn) => `<span class="story-dossier-step" data-story-dossier-step="${turn.number}" data-story-state="${escapeHtml(turn.state)}" title="Turn ${turn.number}: ${escapeHtml(turn.title)}">${turn.number}</span>`).join('');
+      return `<section class="story-dossier" data-story-dossier data-story-state="${escapeHtml(story.state)}"><div class="story-dossier-head"><span><small>Campaign dossier</small><strong>${story.state === 'complete' ? 'Opening complete' : `Turn ${featured.number} of ${story.total}`}</strong></span><span class="state-chip ${story.state === 'complete' ? 'good' : 'warn'}">${story.completed} / ${story.total}</span></div><div class="story-dossier-timeline" aria-label="${story.completed} of ${story.total} campaign turns complete">${timeline}</div><span class="section-kicker">${escapeHtml(featured.kicker)}</span><h3>${escapeHtml(featured.title)}</h3><p>${escapeHtml(featured.narrative)}</p><div class="story-objective"><span>Objective</span><strong>${escapeHtml(featured.objective)}</strong><small>${escapeHtml(featured.progress?.label || '')}</small></div>${beat ? `<div class="story-last-beat"><span>Last transmission · Turn ${beat.number}</span><p>${escapeHtml(beat.copy)}</p></div>` : ''}<div class="story-history"><span>${completedBeats.length ? completedBeats.map((turn) => escapeHtml(turn.title)).join(' → ') : 'The story begins on the damaged floor.'}</span></div></section>`;
+    }
+
     function renderTabs() {
-      const tabLabels = {actors:'actors',jobs:'venture',help:'help'};
+      const tabLabels = {actors:'actors',jobs:'campaign',help:'help'};
       refs.tabs.innerHTML = ['actors','jobs','help'].map((tab) => `<button class="tab-button" type="button" role="tab" data-tab="${tab}" aria-selected="${ui.tab === tab}">${tabLabels[tab]}</button>`).join('');
       if (ui.tab === 'actors') {
         refs.tabPanel.innerHTML = `<div class="actor-list">${snapshot.actors.map((actor) => `<button class="actor-row" type="button" data-focus-actor="${escapeHtml(actor.id)}"><span class="state-chip ${['blocked','fault','throttled'].includes(actor.state)?'bad':['booting','charging','training','moving','building','maintaining','inspecting'].includes(actor.state)?'warn':'good'}">${actor.kind.slice(0,3)}</span><span class="row-copy"><strong>${escapeHtml(actor.label)}</strong><span>${escapeHtml(actor.state)}${actor.assignment?.kind ? ` · ${escapeHtml(actor.assignment.kind)}` : ''} · F${actor.floor+1} ${actor.x+1},${actor.y+1}</span></span><span class="state-chip">${escapeHtml(actor.state)}</span></button>`).join('')}</div>`;
       } else if (ui.tab === 'jobs') {
-        refs.tabPanel.innerHTML = renderVenture();
+        refs.tabPanel.innerHTML = `${renderStoryDossier()}${renderVenture()}`;
       } else {
         refs.tabPanel.innerHTML = `<div class="context-help"><strong>Read the floor, then route it.</strong><br>Solid cells are owned. Dashed cells are purchasable frontier. Lines report real delivered Power, Cooling, and Data—blocked routes never animate as live.<div class="shortcut-line">Arrow keys · move grid focus<br>P / C / N · toggle overlays<br>1–9 · select floor</div></div>`;
       }
     }
 
     function renderQuest() {
-      refs.quest.innerHTML = `<div class="quest-main"><span class="quest-index">${escapeHtml(snapshot.quest.index)}</span><span class="quest-copy"><strong>${escapeHtml(snapshot.quest.title)}</strong><span>${escapeHtml(snapshot.quest.body)}</span></span></div><span class="quest-action">${escapeHtml(snapshot.quest.action)} <kbd>${escapeHtml(snapshot.quest.hotkey)}</kbd></span>`;
+      const story = snapshot.story;
+      const track = story?.turns?.length
+        ? `<div class="story-turn-track" aria-label="Campaign: ${story.completed} of ${story.total} turns complete">${story.turns.map((turn) => `<span class="story-turn-dot" data-story-step="${turn.number}" data-story-state="${escapeHtml(turn.state)}" title="Turn ${turn.number}: ${escapeHtml(turn.title)}"><i>${turn.number}</i></span>`).join('')}</div>`
+        : '';
+      refs.quest.innerHTML = `<div class="quest-story-shell"><div class="quest-main"><span class="quest-index">${escapeHtml(snapshot.quest.index)}</span><span class="quest-copy"><strong>${escapeHtml(snapshot.quest.title)}</strong><span>${escapeHtml(snapshot.quest.body)}</span></span></div>${track}</div><span class="quest-action">${escapeHtml(snapshot.quest.action)} <kbd>${escapeHtml(snapshot.quest.hotkey)}</kbd></span>`;
     }
 
     function render(next) {
@@ -1216,6 +1248,9 @@
       if (snapshot.ticks.completed > snapshot.ticks.raw) snapshot.ticks.completed = snapshot.ticks.raw;
       root.dataset.recoveryPhase = snapshot.recovery.phase || 'online';
       root.dataset.researchCompleted = String(snapshot.research.completedIds.length);
+      root.dataset.storyTurn = String(snapshot.story?.current?.number || snapshot.story?.total || 0);
+      root.dataset.storyCompleted = String(snapshot.story?.completed || 0);
+      root.dataset.storyState = snapshot.story?.state || 'unknown';
       renderResources(); renderResearchRoadmap(); renderPalette(); renderToolbar(); renderGrid(); renderConnections(); renderInspector(); renderRouter(); renderTabs(); renderQuest();
       ui.lastTick = snapshot.ticks.completed;
     }

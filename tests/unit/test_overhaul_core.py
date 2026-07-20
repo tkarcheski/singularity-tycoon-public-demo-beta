@@ -899,3 +899,70 @@ def test_sparse_loop_and_carpet_shapes_have_visible_cost_and_real_redundancy_tra
     ]["reliabilityPercent"]
     assert result["loopBurden"] > result["beforeLoopBurden"]
     assert result["afterSingleLinkLoss"]["connected"] is True
+
+
+def test_ten_turn_campaign_requires_the_real_recovery_business_and_ai_loops():
+    result = _run_core(
+        """
+        const game = createOverhaulGame({seed: "ten-turn-story"});
+        const events = [];
+        game.subscribe((event) => events.push(event));
+        const initial = game.snapshot();
+        const campaign = game.runScenario("story-campaign");
+        const final = game.snapshot();
+        const restored = createOverhaulGame({snapshot: final.persistence}).snapshot();
+        const seenTurns = [...new Set(campaign.snapshots
+          .map((item) => item.story.current?.number).filter(Boolean))];
+        console.log(JSON.stringify({
+          initial: initial.story,
+          final: final.story,
+          restored: restored.story,
+          seenTurns,
+          completionEvents: events.filter((event) => event.type === "story.turn-completed"),
+          mechanics: {
+            claimed: final.footprint.owned.length - initial.footprint.owned.length,
+            builds: final.construction.completed,
+            sold: final.progress.rawFlopsSold,
+            models: final.business.textModels.length,
+            harnesses: final.business.harnesses.length,
+            agents: final.business.agents.length,
+            completedJobs: final.business.jobs.filter((item) => item.status === "completed").length,
+            invoicesPaid: final.economy.invoicesPaid,
+            workingHumans: final.actors.filter((item) => item.kind === "human"
+              && item.role === "text-operator" && item.state === "working").length,
+            aiConnected: final.structures.filter((item) => item.aiConnected).length,
+            machineAssistance: final.research.completedIds.includes("machine-assistance"),
+          },
+        }));
+        """
+    )
+
+    assert result["initial"]["current"]["number"] == 1
+    assert result["initial"]["completed"] == 0
+    assert result["seenTurns"] == list(range(1, 11))
+    assert result["final"]["state"] == "complete"
+    assert result["final"]["completed"] == result["final"]["total"] == 10
+    assert result["final"]["current"] is None
+    assert len(result["final"]["turns"]) == 10
+    assert all(turn["state"] == "complete" for turn in result["final"]["turns"])
+    assert result["final"]["lastBeat"]["id"] == "shared-control"
+    assert "WHO OWNS THE NEXT FLOOR" in result["final"]["lastBeat"]["copy"]
+    assert result["restored"] == result["final"]
+
+    completion_events = result["completionEvents"]
+    assert [event["number"] for event in completion_events] == list(range(1, 11))
+    assert [event["completed"] for event in completion_events] == list(range(1, 11))
+    assert completion_events[-1]["nextTurnId"] is None
+
+    mechanics = result["mechanics"]
+    assert mechanics["claimed"] >= 1
+    assert mechanics["builds"] >= 1
+    assert mechanics["sold"] > 0
+    assert mechanics["models"] >= 1
+    assert mechanics["harnesses"] >= 1
+    assert mechanics["agents"] >= 1
+    assert mechanics["completedJobs"] >= 1
+    assert mechanics["invoicesPaid"] >= 1
+    assert mechanics["workingHumans"] >= 1
+    assert mechanics["aiConnected"] >= 1
+    assert mechanics["machineAssistance"] is True

@@ -25,3 +25,12 @@ Local AI Recovers The Site Unlocks Research And Supervises Final Assembly
     Capture Playtest Checkpoint    102-crew-commissioning
     Wait Until Keyword Succeeds    3s    50ms    Construction Phase Should Be    ${entity_id}    complete
     Capture Playtest Checkpoint    103-structure-online
+
+Ten Turn Campaign Reaches The Human And AI Feedback Loop
+    [Documentation]    The campaign must carry the inherited-site opening through
+    ...                expansion, markets, model, harness, agent, contract, cash,
+    ...                and the final shared-control story beat.
+    ${snapshot}=    Complete Ten Turn Campaign
+    Should Be Equal    ${snapshot}[story][lastBeat][id]    shared-control
+    Should Contain    ${snapshot}[story][lastBeat][copy]    WHO OWNS THE NEXT FLOOR
+    Capture Playtest Checkpoint    200-ten-turn-campaign-complete

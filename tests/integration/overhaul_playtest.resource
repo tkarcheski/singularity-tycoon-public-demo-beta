@@ -64,7 +64,7 @@ Capture Playtest Checkpoint
 
 Playtest View Should Be Readable
     [Documentation]    Fail the playtest when critical visible copy is clipped or truncated.
-    ${failures}=    Evaluate JavaScript    ${None}    () => { const failures = []; const selectors = ['.brand-title','.resource-name','.resource-value','.research-roadmap-head strong','.research-node-copy strong','.quest-copy strong','.quest-copy > span','.quest-action','.recovery-action strong','.recovery-action small']; for (const selector of selectors) { for (const [index, element] of [...document.querySelectorAll(selector)].entries()) { const style = getComputedStyle(element); const rect = element.getBoundingClientRect(); const name = selector + '[' + index + ']'; const text = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' '); if (!text) failures.push(name + ': empty text'); if (!element.getClientRects().length || style.visibility === 'hidden' || style.display === 'none') failures.push(name + ': not visible'); if (rect.left < -0.5 || rect.top < -0.5 || rect.right > innerWidth + 0.5 || rect.bottom > innerHeight + 0.5) failures.push(name + ': clipped outside viewport'); if (element.scrollWidth > element.clientWidth + 1 && !['auto','scroll'].includes(style.overflowX)) failures.push(name + ': horizontal truncation text="' + text + '"'); if (element.scrollHeight > element.clientHeight + 1 && !['auto','scroll'].includes(style.overflowY)) failures.push(name + ': vertical truncation text="' + text + '"'); } } return failures }
+    ${failures}=    Evaluate JavaScript    ${None}    () => { const failures = []; const selectors = ['.brand-title','.resource-name','.resource-value','.research-roadmap-head strong','.research-node-copy strong','.quest-copy strong','.quest-copy > span','.quest-action','.recovery-action strong','.recovery-action small','.story-dossier h3','.story-objective strong','.story-last-beat p']; for (const selector of selectors) { for (const [index, element] of [...document.querySelectorAll(selector)].entries()) { const style = getComputedStyle(element); const rect = element.getBoundingClientRect(); const name = selector + '[' + index + ']'; const text = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' '); if (!text) failures.push(name + ': empty text'); if (!element.getClientRects().length || style.visibility === 'hidden' || style.display === 'none') failures.push(name + ': not visible'); if (rect.left < -0.5 || rect.top < -0.5 || rect.right > innerWidth + 0.5 || rect.bottom > innerHeight + 0.5) failures.push(name + ': clipped outside viewport'); if (element.scrollWidth > element.clientWidth + 1 && !['auto','scroll'].includes(style.overflowX)) failures.push(name + ': horizontal truncation text="' + text + '"'); if (element.scrollHeight > element.clientHeight + 1 && !['auto','scroll'].includes(style.overflowY)) failures.push(name + ': vertical truncation text="' + text + '"'); } } return failures }
     Should Be Empty    ${failures}    Playtest visibility failures: ${failures}
 
 Execute Local Playtest Move
@@ -125,3 +125,17 @@ Construction Phase Should Be
     ELSE
         Should Be Equal    ${state}[sitePhase]    ${phase}
     END
+
+Complete Ten Turn Campaign
+    [Documentation]    Exercise every persistent campaign gate and reveal the final dossier.
+    ${turn_samples}=    Evaluate JavaScript    ${None}    () => window.__overhaulAcceptance.runScenario('story-campaign').snapshots.length
+    Should Be True    ${turn_samples} >= 10
+    Wait Until Keyword Succeeds    5s    100ms    Overhaul UI Commit Should Be Atomic
+    ${snapshot}=    Committed Overhaul Snapshot
+    Should Be Equal    ${snapshot}[story][state]    complete
+    Should Be Equal As Integers    ${snapshot}[story][completed]    10
+    Click    css=[data-tab="jobs"]
+    Wait For Elements State    css=[data-story-dossier][data-story-state="complete"]    visible    3s
+    Scroll To Element    css=[data-story-dossier]
+    Playtest View Should Be Readable
+    RETURN    ${snapshot}

@@ -119,6 +119,7 @@ function recipesForEvent(event, snapshot) {
   }
   if (event.type === 'structure.construction-progressed') return ['repair-tool'];
   if (event.type === 'structure.construction-completed') return ['relay-snap'];
+  if (event.type === 'story.turn-completed') return ['relay-snap'];
   if (event.type === 'ai.fault-cleared' || event.type === 'computer.fault-cleared') {
     return ['relay-snap'];
   }
@@ -442,7 +443,8 @@ export function createOverhaulAudio(options = {}) {
         'structure.construction-progressed']
         .includes(event.type)) holds.buildingUntil = Math.max(holds.buildingUntil, tick + 8);
       if (['ai.level-up', 'text-trained', 'agent-created', 'job-completed', 'human-hired',
-        'recovery.site-online', 'research.node-completed', 'structure.construction-completed']
+        'recovery.site-online', 'research.node-completed', 'structure.construction-completed',
+        'story.turn-completed']
         .includes(event.type)) holds.breakthroughUntil = Math.max(holds.breakthroughUntil, tick + 12);
       for (const recipe of recipesForEvent(event, snapshot)) playRecipe(recipe, event);
     }

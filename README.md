@@ -29,6 +29,13 @@ offline as visible worksites until the human-and-robot crew travels to the
 tile, assembles it, performs final inspection and maintenance, and commissions
 the structure.
 
+That opening now continues through a persistent ten-turn campaign: recover the
+inheritance, wake compute, expand the floor, reach external markets, train a
+text model, fabricate its harness, activate an agent, finish a contract,
+collect the invoice, and close the human-plus-AI control loop. Each turn is
+completed by authoritative game state rather than a narrative Next button, and
+the campaign tracker survives save and reload.
+
 Python browser tooling is locked and managed with [uv](https://docs.astral.sh/uv/):
 
 ```bash

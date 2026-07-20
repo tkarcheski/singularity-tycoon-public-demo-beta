@@ -97,6 +97,15 @@ function defaultResearchState() {
   };
 }
 
+function defaultStoryState() {
+  return {
+    currentId: OVERHAUL_BALANCE.story.turns[0].id,
+    completedIds: [],
+    turnStartedTick: 0,
+    lastBeat: null,
+  };
+}
+
 function computerRuntime(blueprint) {
   return {
     state: 'off',
@@ -323,6 +332,7 @@ function initialState(seed) {
     ai: defaultAiState(),
     recovery: null,
     research: defaultResearchState(),
+    story: defaultStoryState(),
     tick: 0,
     completedTick: 0,
     nextEntityId: 3,
@@ -356,6 +366,9 @@ function restoreState(snapshot) {
   restored.research = { ...defaultResearchState(), ...(restored.research || {}) };
   restored.research.completedIds = Array.isArray(restored.research.completedIds)
     ? restored.research.completedIds : [];
+  restored.story = { ...defaultStoryState(), ...(restored.story || {}) };
+  restored.story.completedIds = Array.isArray(restored.story.completedIds)
+    ? restored.story.completedIds : [];
   restored.construction = {
     jobs: [],
     completed: 0,
@@ -1209,6 +1222,113 @@ function recoverySnapshot(state) {
   };
 }
 
+function storyRequirement(state, turnId) {
+  const entries = structureEntries(state);
+  const initialOwned = (OVERHAUL_BALANCE.floor.initialOwned.maxX
+      - OVERHAUL_BALANCE.floor.initialOwned.minX + 1)
+    * (OVERHAUL_BALANCE.floor.initialOwned.maxY
+      - OVERHAUL_BALANCE.floor.initialOwned.minY + 1);
+  const extraOwned = Math.max(0, allCells(state).filter((cell) => cell.owned).length - initialOwned);
+  const completedBuilds = Math.max(0, Number(state.construction?.completed) || 0);
+  const operationalFiber = entries.some((entry) => entry.blueprint.id === 'fiber_gateway'
+    && entry.structure.condition > 0);
+  const textModels = state.business?.textModels?.length || 0;
+  const harnesses = state.business?.harnesses?.length || 0;
+  const agents = state.business?.agents?.length || 0;
+  const completedJobs = state.business?.jobs?.filter((job) => job.status === 'completed').length || 0;
+  const workingHumans = state.actors.filter((actor) => actor.kind === 'human'
+    && actor.role === 'text-operator' && actor.state === 'working').length;
+  const aiConnected = entries.filter((entry) => entry.structure.aiEnabled
+    && entry.structure.aiConnected && !entry.structure.aiFault).length;
+  const sold = Math.max(0, Number(state.progress?.rawFlopsSold) || 0);
+
+  const pair = (current, total, label, complete = current >= total) => ({
+    current, total, label, complete,
+  });
+  switch (turnId) {
+    case 'the-inheritance':
+      return pair(
+        state.recovery?.completedRepairIds?.length || 0,
+        state.recovery?.repairTargetIds?.length || 2,
+        `${state.recovery?.completedRepairIds?.length || 0} / ${state.recovery?.repairTargetIds?.length || 2} critical systems restored`,
+        state.recovery?.phase === 'online',
+      );
+    case 'first-light': {
+      const raw = Math.max(0, Number(state.flops?.raw) || 0);
+      return pair(raw > EPSILON ? 1 : 0, 1,
+        raw > EPSILON ? `${raw.toFixed(1)} raw FLOPS online` : 'Rack booting · waiting for one clean FLOP');
+    }
+    case 'room-to-breathe': {
+      const current = Math.min(1, extraOwned) + Math.min(1, completedBuilds);
+      return pair(current, 2,
+        `${extraOwned ? 'tile claimed' : 'claim a frontier tile'} · ${completedBuilds ? 'structure commissioned' : 'commission a structure'}`);
+    }
+    case 'the-outside-line': {
+      const researched = state.research.completedIds.includes('external-markets');
+      const connected = operationalFiber && state.sell?.fiberFloor === 1;
+      const current = Number(researched) + Number(connected) + Number(sold > EPSILON);
+      return pair(current, 3,
+        `${researched ? 'markets researched' : 'research External Markets'} · ${connected ? 'fiber live' : 'connect F1 Fiber'} · ${sold > EPSILON ? `${sold.toFixed(1)} FLOPS sold` : 'make first sale'}`);
+    }
+    case 'the-first-mind':
+      return pair(Math.min(1, textModels), 1,
+        textModels ? `${textModels} text model${textModels === 1 ? '' : 's'} trained` : 'Train / Text model not yet completed');
+    case 'hands-for-the-mind':
+      return pair(Math.min(1, harnesses), 1,
+        harnesses ? `${harnesses} harness${harnesses === 1 ? '' : 'es'} ready` : state.business.pendingHarness
+          ? `MICA fabricating · ${state.business.pendingHarness.remainingTicks} ticks remain`
+          : 'No completed harness');
+    case 'the-night-shift':
+      return pair(Math.min(1, agents), 1,
+        agents ? `${agents} agent${agents === 1 ? '' : 's'} active` : 'Bind a harness into an agent');
+    case 'prove-it': {
+      const running = state.business.jobs.find((job) => job.status === 'running');
+      return pair(Math.min(1, completedJobs), 1,
+        completedJobs ? `${completedJobs} contract${completedJobs === 1 ? '' : 's'} completed`
+          : running ? `${Math.min(running.requiredFlops, running.completedFlops).toFixed(1)} / ${running.requiredFlops} inference FLOPS`
+            : 'Start the first agent contract');
+    }
+    case 'make-payroll': {
+      const paid = Math.max(0, Number(state.economy?.invoicesPaid) || 0);
+      const issued = state.business.invoices.filter((invoice) => invoice.status === 'issued').length;
+      return pair(Math.min(1, paid), 1,
+        paid ? `${paid} invoice${paid === 1 ? '' : 's'} paid` : issued ? 'Invoice issued · collect through live fiber' : 'Finish a contract to issue an invoice');
+    }
+    case 'shared-control': {
+      const researched = state.research.completedIds.includes('machine-assistance');
+      const current = Number(researched) + Number(workingHumans > 0) + Number(aiConnected > 0);
+      return pair(current, 3,
+        `${researched ? 'machine assistance researched' : 'research Machine Assistance'} · ${workingHumans ? 'human operator online' : 'hire and onboard a human'} · ${aiConnected ? `${aiConnected} AI-connected structure${aiConnected === 1 ? '' : 's'}` : 'connect one structure to AI'}`);
+    }
+    default:
+      return pair(0, 1, 'Unknown campaign requirement', false);
+  }
+}
+
+function storySnapshot(state) {
+  const completed = new Set(state.story?.completedIds || []);
+  const turns = OVERHAUL_BALANCE.story.turns.map((turn) => {
+    const requirement = storyRequirement(state, turn.id);
+    const isCurrent = state.story?.currentId === turn.id;
+    return {
+      ...clone(turn),
+      state: completed.has(turn.id) ? 'complete' : isCurrent ? 'current' : 'locked',
+      progress: requirement,
+    };
+  });
+  const current = turns.find((turn) => turn.state === 'current') || null;
+  return {
+    state: current ? 'active' : 'complete',
+    completedIds: [...(state.story?.completedIds || [])],
+    completed: completed.size,
+    total: turns.length,
+    current,
+    turns,
+    turnStartedTick: state.story?.turnStartedTick ?? 0,
+    lastBeat: state.story?.lastBeat ? clone(state.story.lastBeat) : null,
+  };
+}
+
 function semanticSnapshot(state) {
   const owned = allCells(state).filter((cell) => cell.owned).map((cell) => ({
     key: cell.key, uiKey: `f0:${cell.x},${cell.y}`,
@@ -1294,12 +1414,11 @@ function semanticSnapshot(state) {
   });
   const recovery = recoverySnapshot(state);
   const research = researchSnapshot(state);
+  const story = storySnapshot(state);
   const progression = {
-    current: recovery.repaired + research.completedIds.length,
-    total: recovery.total + research.nodes.length,
-    label: recovery.phase === 'online'
-      ? (research.next ? `Research · ${research.next.name}` : 'Inherited site mastered')
-      : `Recovery · ${recovery.siteName}`,
+    current: story.completed,
+    total: story.total,
+    label: story.current ? `Turn ${story.current.number} · ${story.current.title}` : 'Opening campaign complete',
   };
   const result = {
     schemaVersion: OVERHAUL_SCHEMA_VERSION,
@@ -1329,6 +1448,7 @@ function semanticSnapshot(state) {
     progress: clone(state.progress),
     recovery,
     research,
+    story,
     progression,
     business: clone(state.business),
     construction: clone(state.construction),
@@ -1615,6 +1735,37 @@ export function createOverhaulGame(options = {}) {
       });
     }
     return newlyCompleted;
+  }
+
+  function updateStoryProgression() {
+    const turns = OVERHAUL_BALANCE.story.turns;
+    const currentIndex = turns.findIndex((turn) => turn.id === state.story.currentId);
+    if (currentIndex < 0) return null;
+    const turn = turns[currentIndex];
+    const requirement = storyRequirement(state, turn.id);
+    if (!requirement.complete) return null;
+    if (!state.story.completedIds.includes(turn.id)) state.story.completedIds.push(turn.id);
+    state.story.lastBeat = {
+      id: turn.id,
+      number: turn.number,
+      title: turn.title,
+      copy: turn.completion,
+      tick: state.tick,
+    };
+    const next = turns[currentIndex + 1] || null;
+    state.story.currentId = next?.id || null;
+    state.story.turnStartedTick = state.tick;
+    emit('story.turn-completed', {
+      turnId: turn.id,
+      number: turn.number,
+      title: turn.title,
+      completion: turn.completion,
+      completed: state.story.completedIds.length,
+      total: turns.length,
+      nextTurnId: next?.id || null,
+      nextTitle: next?.title || null,
+    }, turn.id);
+    return turn.id;
   }
 
   function purchaseFrontier(key) {
@@ -2124,23 +2275,26 @@ export function createOverhaulGame(options = {}) {
 
   function command(input) {
     if (!input || typeof input !== 'object') return reject('invalid-command');
+    let result;
     switch (input.type) {
-      case 'purchase-frontier': return purchaseFrontier(input.cellKey);
-      case 'preview-placement': return previewPlacement(input.blueprintId, input.x, input.y);
-      case 'place': return place(input.blueprintId, input.x, input.y);
-      case 'remove': return remove(input.x, input.y, input.layer);
-      case 'set-routes': return setRoutes(input.routes || input);
-      case 'set-ai-enabled': return setAiEnabled(input.entityId, input.enabled);
-      case 'repair-structure': return repairStructure(input.entityId);
-      case 'repair-ai-fault': return repairAiFault(input.entityId);
-      case 'complete-text-training': return completeTextTraining();
-      case 'build-harness': return buildHarness(input.textId);
-      case 'create-agent': return createAgent(input.harnessId);
-      case 'start-job': return startJob(input.agentId);
-      case 'receive-invoice': return receiveInvoice(input.invoiceId);
-      case 'hire-human': return hireHuman();
-      default: return reject('unknown-command', { commandType: input.type });
+      case 'purchase-frontier': result = purchaseFrontier(input.cellKey); break;
+      case 'preview-placement': result = previewPlacement(input.blueprintId, input.x, input.y); break;
+      case 'place': result = place(input.blueprintId, input.x, input.y); break;
+      case 'remove': result = remove(input.x, input.y, input.layer); break;
+      case 'set-routes': result = setRoutes(input.routes || input); break;
+      case 'set-ai-enabled': result = setAiEnabled(input.entityId, input.enabled); break;
+      case 'repair-structure': result = repairStructure(input.entityId); break;
+      case 'repair-ai-fault': result = repairAiFault(input.entityId); break;
+      case 'complete-text-training': result = completeTextTraining(); break;
+      case 'build-harness': result = buildHarness(input.textId); break;
+      case 'create-agent': result = createAgent(input.harnessId); break;
+      case 'start-job': result = startJob(input.agentId); break;
+      case 'receive-invoice': result = receiveInvoice(input.invoiceId); break;
+      case 'hire-human': result = hireHuman(); break;
+      default: result = reject('unknown-command', { commandType: input.type });
     }
+    if (result?.ok && input.type !== 'preview-placement') updateStoryProgression();
+    return result;
   }
 
   function transitionComputer(entry, nextState, eventType, extra = {}) {
@@ -2744,6 +2898,7 @@ export function createOverhaulGame(options = {}) {
     processHarnessBuild();
     processHumanStates();
     maybeRaiseAiFault();
+    updateStoryProgression();
   }
 
   function tick(steps = 1) {
@@ -2999,6 +3154,113 @@ export function createOverhaulGame(options = {}) {
           snapshots.push(snapshot());
         }
         scenarioEvents = clone(state.business.events.slice(eventOffset));
+        break;
+      }
+      case 'story-campaign': {
+        state.economy.cash = 10000;
+        state.ai.mistakeChance = 0;
+        const advanceTurn = (turnId, limit = 80) => {
+          for (let count = 0; state.story.currentId === turnId && count < limit; count++) {
+            tick();
+            snapshots.push(snapshot());
+          }
+          if (state.story.currentId === turnId) {
+            throw new Error(`Story scenario did not advance past ${turnId}`);
+          }
+        };
+
+        snapshots.push(snapshot());
+        advanceTurn('the-inheritance', 2);
+        advanceTurn('first-light', 12);
+
+        const frontier = allCells(state).find((cell) => cell.frontier);
+        if (!frontier) throw new Error('Story scenario has no frontier tile');
+        requireAction(command({ type: 'purchase-frontier', cellKey: frontier.key }),
+          'story frontier claim');
+        ensurePlaced('power_line', frontier.x, frontier.y);
+        snapshots.push(snapshot());
+        advanceTurn('room-to-breathe', 2);
+
+        const layout = OVERHAUL_SCENARIO_LAYOUT;
+        requireAction(command({
+          type: 'set-routes', routes: { sell: 0, research: 1, train: 0, inference: 0 },
+        }), 'story external-markets research');
+        while (!state.research.completedIds.includes('external-markets')) {
+          tick();
+          snapshots.push(snapshot());
+        }
+        ensurePlaced('fiber_gateway', layout.fiber.x, layout.fiber.y);
+        requireAction(command({
+          type: 'set-routes', routes: { sell: 1, research: 0, train: 0, inference: 0 },
+        }), 'story first-sale route');
+        snapshots.push(snapshot());
+        advanceTurn('the-outside-line', 12);
+
+        requireAction(command({
+          type: 'set-routes', routes: { sell: 0, research: 0, train: 1, inference: 0 },
+        }), 'story training route');
+        while (state.progress.training - state.business.trainingSpent
+            + EPSILON < OVERHAUL_BALANCE.business.textTrainingRequired) {
+          tick();
+          snapshots.push(snapshot());
+        }
+        const text = requireAction(command({ type: 'complete-text-training' }),
+          'story text training');
+        snapshots.push(snapshot());
+        if (state.story.currentId === 'the-first-mind') advanceTurn('the-first-mind', 2);
+
+        const harnessBuild = requireAction(command({ type: 'build-harness', textId: text.entityId }),
+          'story harness');
+        snapshots.push(snapshot());
+        while (state.business.pendingHarness) {
+          tick();
+          snapshots.push(snapshot());
+        }
+        if (state.story.currentId === 'hands-for-the-mind') advanceTurn('hands-for-the-mind', 2);
+        const harness = state.business.harnesses.find((item) => item.id === harnessBuild.entityId);
+        if (!harness) throw new Error('Story harness did not finish');
+
+        const agent = requireAction(command({ type: 'create-agent', harnessId: harness.id }),
+          'story agent');
+        snapshots.push(snapshot());
+        if (state.story.currentId === 'the-night-shift') advanceTurn('the-night-shift', 2);
+        const job = requireAction(command({ type: 'start-job', agentId: agent.entityId }),
+          'story contract');
+        requireAction(command({
+          type: 'set-routes', routes: { sell: 0, research: 0, train: 0, inference: 1 },
+        }), 'story inference route');
+        snapshots.push(snapshot());
+        while (state.business.jobs.find((item) => item.id === job.entityId)?.status === 'running') {
+          tick();
+          snapshots.push(snapshot());
+        }
+        if (state.story.currentId === 'prove-it') advanceTurn('prove-it', 2);
+
+        const completedJob = state.business.jobs.find((item) => item.id === job.entityId);
+        const invoice = state.business.invoices.find((item) => item.id === completedJob?.invoiceId);
+        if (!invoice) throw new Error('Story contract did not issue an invoice');
+        requireAction(command({ type: 'receive-invoice', invoiceId: invoice.id }),
+          'story invoice');
+        snapshots.push(snapshot());
+        if (state.story.currentId === 'make-payroll') advanceTurn('make-payroll', 2);
+
+        requireAction(command({
+          type: 'set-routes', routes: { sell: 0, research: 1, train: 0, inference: 0 },
+        }), 'story machine-assistance research');
+        while (!state.research.completedIds.includes('machine-assistance')) {
+          tick();
+          snapshots.push(snapshot());
+        }
+        buildAiTopology();
+        const aiTarget = structureEntries(state).find((entry) => entry.blueprint.kind === 'computer');
+        if (!aiTarget) throw new Error('Story scenario has no AI target');
+        requireAction(command({
+          type: 'set-ai-enabled', entityId: aiTarget.structure.entityId, enabled: true,
+        }), 'story AI opt-in');
+        requireAction(command({ type: 'hire-human' }), 'story human hire');
+        snapshots.push(snapshot());
+        advanceTurn('shared-control', 12);
+        snapshots.push(snapshot());
         break;
       }
       default:

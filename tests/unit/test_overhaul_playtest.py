@@ -412,6 +412,49 @@ def test_player_recovers_inherited_site_and_research_unlocks_real_construction(o
     assert not errors, f"recovery/research UI emitted browser errors: {errors[-5:]!r}"
 
 
+def test_ten_turn_campaign_tracker_and_dossier_reach_the_final_signal(overhaul, errors):
+    initial = _reset(overhaul, "browser-ten-turn-story")
+    root = overhaul.locator("#overhaul-root")
+    assert root.get_attribute("data-story-turn") == "1"
+    assert root.get_attribute("data-story-completed") == "0"
+    assert root.get_attribute("data-story-state") == "active"
+    tracker = overhaul.locator("[data-story-step]")
+    assert tracker.count() == 10
+    assert tracker.nth(0).get_attribute("data-story-state") == "current"
+    assert tracker.nth(9).get_attribute("data-story-state") == "locked"
+    assert initial["story"]["current"]["title"] == "The Inheritance"
+
+    campaign = _scenario(overhaul, "story-campaign")
+    assert len(campaign["snapshots"]) >= 10
+    overhaul.wait_for_function(
+        """() => {
+          const root=document.querySelector('#overhaul-root');
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          return snapshot.story.state === 'complete'
+            && snapshot.story.completed === 10
+            && root?.dataset.storyState === 'complete'
+            && root?.dataset.storyCompleted === '10';
+        }""",
+        timeout=10_000,
+    )
+    final = _snapshot(overhaul)
+    assert final["story"]["completed"] == final["story"]["total"] == 10
+    assert all(
+        item == "complete"
+        for item in tracker.evaluate_all("nodes => nodes.map(node => node.dataset.storyState)")
+    )
+    assert "WHO OWNS THE NEXT FLOOR" in overhaul.locator("[data-quest]").inner_text()
+
+    overhaul.locator('[data-tab="jobs"]').click()
+    dossier = overhaul.locator("[data-story-dossier]")
+    dossier.wait_for(state="visible")
+    assert dossier.get_attribute("data-story-state") == "complete"
+    assert "OPENING COMPLETE" in dossier.inner_text()
+    assert "WHO OWNS THE NEXT FLOOR" in dossier.inner_text()
+    assert overhaul.locator("[data-story-dossier-step]").count() == 10
+    assert not errors, f"ten-turn campaign UI emitted browser errors: {errors[-5:]!r}"
+
+
 def test_owned_footprint_is_connected_and_frontier_is_legal(overhaul):
     snapshot = _reset(overhaul, "footprint-contract")
     _assert_connected_owned(snapshot)
