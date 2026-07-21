@@ -1900,13 +1900,15 @@ export function createOverhaulGame(options = {}) {
     }
 
     const utilityTick = ticks['expand-utilities'];
+    const completedResearch = state.research.completedIds.find(
+      (id) => id !== 'recovery-grid',
+    );
     if (utilityTick != null && ticks['research-capability'] == null
-        && Number(state.research?.lastUnlock?.tick) > utilityTick
-        && state.research.lastUnlock.id !== 'recovery-grid') {
+        && completedResearch) {
       ticks['research-capability'] = state.tick;
       emit('opening.checkpoint-completed', {
         checkpointId: 'research-capability', number: 3,
-        researchId: state.research.lastUnlock.id,
+        researchId: completedResearch,
       }, 'research-capability');
     }
 

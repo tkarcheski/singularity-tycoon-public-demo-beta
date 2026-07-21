@@ -412,6 +412,77 @@ def test_player_recovers_inherited_site_and_research_unlocks_real_construction(o
     assert not errors, f"recovery/research UI emitted browser errors: {errors[-5:]!r}"
 
 
+def test_first_gate_locates_the_retrofit_and_explains_compute_unlock(overhaul, errors):
+    initial = _reset(overhaul, "browser-first-gate-guidance")
+    inherited_compute = next(
+        item for item in initial["structures"] if item["kind"] == "computer"
+    )
+
+    for target in initial["recovery"]["targets"]:
+        overhaul.locator(
+            f'.cell[data-x="{target["x"]}"][data-y="{target["y"]}"]'
+        ).click()
+        overhaul.locator(
+            f'[data-repair-structure="{target["entityId"]}"]'
+        ).click()
+        overhaul.wait_for_function(
+            """entityId => window.__overhaulAcceptance.snapshot().recovery.targets
+              .find(item => item.entityId === entityId)?.state === 'repaired'""",
+            arg=target["entityId"],
+            timeout=6_000,
+        )
+
+    overhaul.wait_for_function(
+        """() => {
+          const snapshot=window.__overhaulAcceptance.snapshot();
+          return snapshot.recovery.phase === 'online' && snapshot.flops.raw > 0
+            && !!document.querySelector('[data-quest-action="locate-retrofit"]');
+        }""",
+        timeout=7_000,
+    )
+    quest_action = overhaul.locator('[data-quest-action="locate-retrofit"]')
+    assert "locate inherited rack" in quest_action.inner_text().lower()
+    rack_cell = overhaul.locator(
+        f'.cell[data-x="{inherited_compute["x"]}"]'
+        f'[data-y="{inherited_compute["y"]}"]'
+    )
+    assert rack_cell.get_attribute("data-opening-target") == "compute-retrofit"
+    assert "retrofit" in rack_cell.locator(".cell-status").inner_text().lower()
+
+    quest_action.click()
+    assert rack_cell.get_attribute("aria-pressed") == "true"
+    upgrade = overhaul.locator(
+        f'[data-upgrade-compute="{inherited_compute["id"]}"]'
+    )
+    upgrade.wait_for(state="visible")
+    assert "$180" in upgrade.inner_text()
+    upgrade.click()
+    overhaul.wait_for_function(
+        """() => window.__overhaulAcceptance.snapshot().opening.completed >= 1""",
+        timeout=8_000,
+    )
+
+    overhaul.locator('[data-layer="compute"]').click()
+    blueprint = overhaul.locator(
+        f'[data-blueprint="{inherited_compute["blueprintId"]}"]'
+    )
+    assert blueprint.get_attribute("aria-disabled") == "true"
+    assert "rack standardization" in blueprint.inner_text().lower()
+    assert "route 6 rf" in blueprint.inner_text().lower()
+    blueprint.click(force=True)
+    feedback = overhaul.locator("[data-inspector] .command-feedback")
+    assert "choose research in the resource router" in feedback.inner_text().lower()
+
+    overhaul.locator('[data-route-preset="ai-train"]').click()
+    overhaul.wait_for_function(
+        """blueprintId => document.querySelector(`[data-blueprint="${blueprintId}"]`)
+          ?.getAttribute('aria-disabled') === 'false'""",
+        arg=inherited_compute["blueprintId"],
+        timeout=6_000,
+    )
+    assert not errors, f"first-gate guidance emitted browser errors: {errors[-5:]!r}"
+
+
 def test_ten_turn_campaign_tracker_and_dossier_reach_the_final_signal(overhaul, errors):
     initial = _reset(overhaul, "browser-ten-turn-story")
     root = overhaul.locator("#overhaul-root")
@@ -448,6 +519,19 @@ def test_ten_turn_campaign_tracker_and_dossier_reach_the_final_signal(overhaul, 
     assert "OPENING COMPLETE" in dossier.inner_text()
     assert "WHO OWNS THE NEXT FLOOR" in dossier.inner_text()
     assert overhaul.locator("[data-story-dossier-step]").count() == 10
+    dossier_stable = overhaul.evaluate(
+        """async () => {
+          const before=document.querySelector('[data-story-dossier]');
+          const roadmap=document.querySelector('.research-roadmap-head');
+          await new Promise(resolve => setTimeout(resolve, 650));
+          return {
+            dossier: before === document.querySelector('[data-story-dossier]'),
+            roadmap: roadmap === document.querySelector('.research-roadmap-head'),
+          };
+        }"""
+    )
+    assert dossier_stable["dossier"], "completed dossier was detached by an unrelated UI tick"
+    assert dossier_stable["roadmap"], "settled research roadmap was detached by an unrelated UI tick"
     assert not errors, f"ten-turn campaign UI emitted browser errors: {errors[-5:]!r}"
 
 

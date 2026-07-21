@@ -46,7 +46,7 @@
     { id:'sell', label:'Sell', detail:'100% revenue', routes:{sell:1,research:0,train:0,inference:0} },
     { id:'train', label:'Train / Text', detail:'80% training', routes:{sell:0,research:.1,train:.8,inference:.1} },
     { id:'jobs', label:'Jobs', detail:'80% inference', routes:{sell:.1,research:.1,train:0,inference:.8} },
-    { id:'ai-train', label:'AI Train', detail:'100% research', routes:{sell:0,research:1,train:0,inference:0} },
+    { id:'ai-train', label:'Research', detail:'100% research FLOPS', routes:{sell:0,research:1,train:0,inference:0} },
   ];
   const BUSINESS_BALANCE = {
     textTrainingRequired:20,
@@ -519,11 +519,17 @@
         'unlock-second-floor':['Prepare vertical expansion.','F2'],
       };
       const [action,hotkey] = actions[checkpoint.id] || ['Advance the opening checkpoint.','GO'];
+      const retrofitPending = checkpoint.id === 'recover-and-retrofit'
+        && recovery?.phase === 'online'
+        && structures.some((item) => item.kind === 'computer'
+          && (Number(item.computeUpgradeLevel) || 0) < 1);
       return {
         index:`C${checkpoint.number}/5`,
         title:checkpoint.title,
-        body:checkpoint.label,
-        action,
+        body:retrofitPending
+          ? 'Repairs complete. Select the pulsing green rack, then authorize its $180 retrofit.'
+          : checkpoint.label,
+        action:retrofitPending ? 'Locate inherited rack' : action,
         hotkey,
       };
     }
@@ -832,6 +838,9 @@
     };
     let snapshot = normalizeSnapshot(typeof game.snapshot === 'function' ? game.snapshot() : game.state);
     let paletteSignature = '';
+    let researchRoadmapMarkup = null;
+    let storyPanelMarkup = null;
+    let venturePanelMarkup = null;
     let unsubscribe = null;
 
     function territoryMaps() {
@@ -940,7 +949,11 @@
           && snapshot.ticks.completed - Number(snapshot.research.lastUnlock.tick || 0) <= 2;
         return `<article class="research-node" data-research-node="${escapeHtml(node.id)}" data-research-state="${escapeHtml(node.state)}" data-latest-unlock="${latest}"><span class="research-node-light" aria-hidden="true"></span><span class="research-node-copy"><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.detail)}</small><span class="research-node-meter"><i style="--research-progress:${progress}%"></i></span></span><span class="state-chip ${node.state === 'complete' ? 'good' : node.state === 'available' ? 'warn' : ''}">${escapeHtml(label)}</span></article>`;
       }).join('');
-      refs.researchRoadmap.innerHTML = `<div class="research-roadmap-head"><span><strong>${escapeHtml(recovery.phase === 'online' ? 'Site recovered' : 'Recovery contract')}</strong><small>${escapeHtml(repairCopy)}</small></span><span class="state-chip ${recovery.phase === 'online' ? 'good' : 'bad'}">${escapeHtml(recovery.phase)}</span></div><div class="research-nodes">${nodes}</div>`;
+      const markup = `<div class="research-roadmap-head"><span><strong>${escapeHtml(recovery.phase === 'online' ? 'Site recovered' : 'Recovery contract')}</strong><small>${escapeHtml(repairCopy)}</small></span><span class="state-chip ${recovery.phase === 'online' ? 'good' : 'bad'}">${escapeHtml(recovery.phase)}</span></div><div class="research-nodes">${nodes}</div>`;
+      if (researchRoadmapMarkup !== markup) {
+        refs.researchRoadmap.innerHTML = markup;
+        researchRoadmapMarkup = markup;
+      }
     }
 
     function renderPalette() {
@@ -953,9 +966,18 @@
       refs.blueprints.innerHTML = BLUEPRINTS.filter((item) => ui.layer === 'all' || item.layer === ui.layer).map((item) => {
         const state = unlocked.has(item.id) ? 'unlocked' : item.state;
         const node = researchNodeForBlueprint(item.id);
-        const stateLabel = state === 'unlocked' ? `$${item.cost}` : node ? `${node.threshold} RF` : state;
-        const lockedCopy = node ? `Research ${node.name} at ${node.threshold} research FLOPS. ${item.detail}` : `Locked. ${item.detail}`;
-        return `<button class="blueprint" type="button" data-blueprint="${item.id}" data-state="${state}" aria-pressed="${ui.selectedBlueprint === item.id}" aria-disabled="${state !== 'unlocked'}" data-tooltip-title="${escapeHtml(item.name)}" data-tooltip-copy="${escapeHtml(state === 'locked' ? lockedCopy : item.detail)}"><span class="blueprint-icon">${icon(item.icon)}</span><span><span class="blueprint-name">${escapeHtml(item.name)}</span><span class="blueprint-detail">${escapeHtml(state === 'locked' && node ? `Unlock: ${node.name}` : item.detail)}</span></span><span class="state-chip ${state === 'locked' ? 'bad' : 'good'}">${escapeHtml(stateLabel)}</span></button>`;
+        const seedLocked = state === 'locked' && item.kind === 'computer' && !node;
+        const stateLabel = state === 'unlocked' ? `$${item.cost}`
+          : node ? `${node.threshold} RF` : seedLocked ? 'SEED' : state;
+        const lockedCopy = node
+          ? `Research ${node.name} at ${node.threshold} research FLOPS. ${item.detail}`
+          : seedLocked
+            ? `This inherited site uses a different starter compute profile. ${item.detail}`
+            : `Locked. ${item.detail}`;
+        const detail = state === 'locked' && node
+          ? `Unlock: ${node.name} · route ${node.threshold} RF`
+          : seedLocked ? 'Different starter profile for this seed' : item.detail;
+        return `<button class="blueprint" type="button" data-blueprint="${item.id}" data-state="${state}" data-lock-reason="${seedLocked ? 'seed-profile' : node ? 'research' : state}" data-unlock-node="${escapeHtml(node?.id || '')}" aria-pressed="${ui.selectedBlueprint === item.id}" aria-disabled="${state !== 'unlocked'}" data-tooltip-title="${escapeHtml(item.name)}" data-tooltip-copy="${escapeHtml(state === 'locked' ? lockedCopy : item.detail)}"><span class="blueprint-icon">${icon(item.icon)}</span><span><span class="blueprint-name">${escapeHtml(item.name)}</span><span class="blueprint-detail">${escapeHtml(detail)}</span></span><span class="state-chip ${state === 'locked' ? 'bad' : 'good'}">${escapeHtml(stateLabel)}</span></button>`;
       }).join('');
     }
 
@@ -1014,6 +1036,12 @@
         const placementState = !selectedBlueprint ? 'none' : slotOccupied ? 'occupied'
           : utilityLink ? (networkAdjacent ? 'connected' : 'isolated') : 'available';
         const activity = tileActivity(actors,structures);
+        const openingTarget = snapshot.opening?.current?.id === 'recover-and-retrofit'
+          && snapshot.recovery?.phase === 'online'
+          && (Number(snapshot.flops?.raw) || 0) > 0
+          && primary?.kind === 'computer'
+          && (Number(primary.computeUpgradeLevel) || 0) < 1
+          && primary.construction?.kind !== 'compute-upgrade';
         cell.dataset.territory = territory;
         cell.dataset.buildTarget = String(legalBuildTarget);
         cell.dataset.placementState = placementState;
@@ -1022,6 +1050,7 @@
         cell.dataset.utilityLayers = utilities.join(' ');
         cell.dataset.equipment = primary?.blueprintId || 'none';
         cell.dataset.tileActivity = activity.activity;
+        cell.dataset.openingTarget = openingTarget ? 'compute-retrofit' : 'none';
         cell.dataset.inherited = String(structures.some((item) => item.inherited));
         cell.dataset.construction = worksite?.construction?.phase || 'none';
         cell.dataset.constructionProgress = String(worksite?.construction?.progress || 0);
@@ -1048,7 +1077,8 @@
           return `<span class="cell-utility utility-${layer}" data-cell-utility="${layer}" data-route-layer="${layer}" data-layer-entity-id="${escapeHtml(structure.id)}" data-layer-blueprint-id="${escapeHtml(structure.blueprintId)}" data-overlay-visible="${ui.overlays.has(overlay)}" data-resource-emphasis="${emphasis}" aria-hidden="true"></span>`;
         }).join('');
         content.innerHTML = `${primaryMarkup}${utilityMarkup}${worksiteMarkup}${crewMarkup}`;
-        cell.querySelector('.cell-status').textContent = activity.activity === 'broken' ? 'FAULT'
+        cell.querySelector('.cell-status').textContent = openingTarget ? 'NEXT · RETROFIT'
+          : activity.activity === 'broken' ? 'FAULT'
           : activity.activity === 'repairing' ? 'REPAIR'
             : activity.activity === 'building' ? `${worksite?.construction?.phase || 'BUILD'} ${Math.round((worksite?.construction?.progress || 0) * 100)}%`
               : actor?.state || primary?.kind || (utilities.length ? utilities.map((layer) => layer[0].toUpperCase()).join('·') : territory === 'frontier' ? `$${frontierCell.cost}` : '');
@@ -1294,10 +1324,33 @@
       const tabLabels = {actors:'actors',jobs:'campaign',help:'help'};
       refs.tabs.innerHTML = ['actors','jobs','help'].map((tab) => `<button class="tab-button" type="button" role="tab" data-tab="${tab}" aria-selected="${ui.tab === tab}">${tabLabels[tab]}</button>`).join('');
       if (ui.tab === 'actors') {
+        storyPanelMarkup = null;
+        venturePanelMarkup = null;
+        refs.tabPanel.dataset.panelKind = 'actors';
         refs.tabPanel.innerHTML = `<div class="actor-list">${snapshot.actors.map((actor) => `<button class="actor-row" type="button" data-focus-actor="${escapeHtml(actor.id)}"><span class="state-chip ${['blocked','fault','throttled'].includes(actor.state)?'bad':['booting','charging','training','moving','building','maintaining','inspecting'].includes(actor.state)?'warn':'good'}">${actor.kind.slice(0,3)}</span><span class="row-copy"><strong>${escapeHtml(actor.label)}</strong><span>${escapeHtml(actor.state)}${actor.assignment?.kind ? ` · ${escapeHtml(actor.assignment.kind)}` : ''} · F${actor.floor+1} ${actor.x+1},${actor.y+1}</span></span><span class="state-chip">${escapeHtml(actor.state)}</span></button>`).join('')}</div>`;
       } else if (ui.tab === 'jobs') {
-        refs.tabPanel.innerHTML = `${renderStoryDossier()}${renderVenture()}`;
+        if (refs.tabPanel.dataset.panelKind !== 'jobs') {
+          refs.tabPanel.dataset.panelKind = 'jobs';
+          refs.tabPanel.innerHTML = '<div data-story-slot></div><div data-venture-slot></div>';
+          storyPanelMarkup = null;
+          venturePanelMarkup = null;
+        }
+        const storySlot = refs.tabPanel.querySelector('[data-story-slot]');
+        const ventureSlot = refs.tabPanel.querySelector('[data-venture-slot]');
+        const storyMarkup = renderStoryDossier();
+        const ventureMarkup = renderVenture();
+        if (storyPanelMarkup !== storyMarkup) {
+          storySlot.innerHTML = storyMarkup;
+          storyPanelMarkup = storyMarkup;
+        }
+        if (venturePanelMarkup !== ventureMarkup) {
+          ventureSlot.innerHTML = ventureMarkup;
+          venturePanelMarkup = ventureMarkup;
+        }
       } else {
+        storyPanelMarkup = null;
+        venturePanelMarkup = null;
+        refs.tabPanel.dataset.panelKind = 'help';
         refs.tabPanel.innerHTML = `<div class="context-help"><strong>Read the floor, then route it.</strong><br>Solid cells are owned. Dashed cells are purchasable frontier. Lines report real delivered Power, Cooling, and Data—blocked routes never animate as live.<div class="utility-help" data-cooling-help><strong>Cooling: reach ≠ supply.</strong><br>Stack Cooling Pipe under every pump and compute tile, with an unbroken pipe path between them. More pipe extends the reachable floor; only another powered Cooling Pump adds 12 kW of supply.</div><div class="shortcut-line">Arrow keys · move grid focus<br>P / C / N · toggle overlays<br>1–9 · select floor</div></div>`;
       }
     }
@@ -1310,7 +1363,17 @@
         : story?.turns?.length
           ? `<div class="story-turn-track" aria-label="Campaign: ${story.completed} of ${story.total} turns complete">${story.turns.map((turn) => `<span class="story-turn-dot" data-story-step="${turn.number}" data-story-state="${escapeHtml(turn.state)}" title="Turn ${turn.number}: ${escapeHtml(turn.title)}"><i>${turn.number}</i></span>`).join('')}</div>`
           : '';
-      refs.quest.innerHTML = `<div class="quest-story-shell"><div class="quest-main"><span class="quest-index">${escapeHtml(snapshot.quest.index)}</span><span class="quest-copy"><strong>${escapeHtml(snapshot.quest.title)}</strong><span>${escapeHtml(snapshot.quest.body)}</span></span></div>${track}</div><span class="quest-action">${escapeHtml(snapshot.quest.action)} <kbd>${escapeHtml(snapshot.quest.hotkey)}</kbd></span>`;
+      const retrofitTarget = opening?.current?.id === 'recover-and-retrofit'
+        && snapshot.recovery?.phase === 'online'
+        && (Number(snapshot.flops?.raw) || 0) > 0
+        ? snapshot.structures.find((item) => item.kind === 'computer'
+          && (Number(item.computeUpgradeLevel) || 0) < 1
+          && item.construction?.kind !== 'compute-upgrade')
+        : null;
+      const questAction = retrofitTarget
+        ? `<button type="button" class="quest-action" data-quest-action="locate-retrofit" data-quest-target="${escapeHtml(retrofitTarget.id)}">${escapeHtml(snapshot.quest.action)} <kbd>${escapeHtml(snapshot.quest.hotkey)}</kbd></button>`
+        : `<span class="quest-action">${escapeHtml(snapshot.quest.action)} <kbd>${escapeHtml(snapshot.quest.hotkey)}</kbd></span>`;
+      refs.quest.innerHTML = `<div class="quest-story-shell"><div class="quest-main"><span class="quest-index">${escapeHtml(snapshot.quest.index)}</span><span class="quest-copy"><strong>${escapeHtml(snapshot.quest.title)}</strong><span>${escapeHtml(snapshot.quest.body)}</span></span></div>${track}</div>${questAction}`;
     }
 
     function render(next) {
@@ -1358,7 +1421,23 @@
       if (!target || !root.contains(target)) return;
       if (target.dataset.layer) { ui.layer = target.dataset.layer; paletteSignature = ''; renderPalette(); return; }
       if (target.dataset.blueprint) {
-        if (target.getAttribute('aria-disabled') === 'true') { setFeedback(`${target.querySelector('.blueprint-name')?.textContent || 'Blueprint'} is locked.`, 'warn', true); return; }
+        if (target.getAttribute('aria-disabled') === 'true') {
+          const node = snapshot.research.nodes.find((item) => item.id === target.dataset.unlockNode);
+          const name = target.querySelector('.blueprint-name')?.textContent || 'Blueprint';
+          const starterNode = target.dataset.lockReason === 'seed-profile'
+            ? snapshot.research.nodes.find((item) => item.unlocks.some(
+              (id) => BLUEPRINT_BY_ID.get(id)?.kind === 'computer',
+            )) : null;
+          const starter = starterNode?.unlocks.map((id) => BLUEPRINT_BY_ID.get(id))
+            .find((item) => item?.kind === 'computer');
+          const guidance = node
+            ? `${name} is locked. Choose Research in the Resource Router until ${node.name} reaches ${node.threshold} RF.`
+            : starterNode && starter
+              ? `${name} is not this seed's starter profile. Unlock ${starter.name} through ${starterNode.name}.`
+            : `${name} is locked.`;
+          setFeedback(guidance, 'warn', true);
+          return;
+        }
         if (ui.selectedBlueprint === target.dataset.blueprint) {
           ui.selectedBlueprint = null;
           ui.networkFocus = null;
@@ -1387,6 +1466,21 @@
         return;
       }
       if (target.dataset.floor != null) { ui.floor = Number(target.dataset.floor); ui.selectedCell = null; render(); return; }
+      if (target.dataset.questAction === 'locate-retrofit') {
+        const compute = snapshot.structures.find((item) => item.id === target.dataset.questTarget);
+        if (compute) {
+          ui.floor = Number(compute.floor) || 0;
+          ui.selectedCell = cellKey(ui.floor, compute.x, compute.y);
+          ui.selectedBlueprint = null;
+          ui.networkFocus = null;
+          paletteSignature = '';
+          ui.feedback = {message:'Inherited rack located. Authorize the highlighted retrofit in the Inspector.',tone:'ready'};
+          render();
+          refs.worldGrid.querySelector(`[data-cell-key="${CSS.escape(ui.selectedCell)}"]`)?.focus();
+          refs.inspector.querySelector('[data-upgrade-compute]')?.scrollIntoView({block:'nearest'});
+        }
+        return;
+      }
       if (target.dataset.placeSelected) {
         const blueprint = BLUEPRINT_BY_ID.get(target.dataset.placeSelected);
         send({type:'place',blueprintId:target.dataset.placeSelected,x:Number(target.dataset.placeX),y:Number(target.dataset.placeY)}).then((result) => {

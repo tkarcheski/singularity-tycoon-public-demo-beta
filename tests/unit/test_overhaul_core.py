@@ -909,6 +909,41 @@ def test_checkpoint_one_requires_a_real_compute_retrofit_and_increases_output():
     assert result["afterOpening"]["current"]["id"] == "expand-utilities"
 
 
+def test_early_compute_research_counts_after_utility_expansion_without_deadlock():
+    result = _run_core(
+        """
+        const game = createOverhaulGame({seed: "early-compute-research-order"});
+        game.runScenario("computer-path-connected");
+        const target = game.snapshot().structures.find(item => item.kind === "computer");
+        game.command({type: "upgrade-compute", entityId: target.id});
+        while (game.snapshot().construction.jobs.length) game.tick();
+        while (game.snapshot().flops.raw <= 0) game.tick();
+        game.command({type: "set-routes", routes: {
+          sell: 0, research: 1, train: 0, inference: 0,
+        }});
+        while (!game.snapshot().research.completedIds.includes("rack-standard")) game.tick();
+        const beforeUtilities = game.snapshot();
+
+        game.actions.place("generator", 4, 4);
+        while (game.snapshot().construction.jobs.length) game.tick();
+        game.actions.place("power_line", 5, 5);
+        while (game.snapshot().construction.jobs.length) game.tick();
+        game.actions.place("cooling_pump", 5, 5);
+        while (game.snapshot().construction.jobs.length) game.tick();
+        const afterUtilities = game.snapshot();
+        console.log(JSON.stringify({beforeUtilities, afterUtilities}));
+        """
+    )
+
+    assert "rack-standard" in result["beforeUtilities"]["research"]["completedIds"]
+    assert result["beforeUtilities"]["opening"]["completed"] == 1
+    assert result["beforeUtilities"]["opening"]["current"]["id"] == "expand-utilities"
+    assert result["afterUtilities"]["networks"]["power"]["telemetry"]["capacity"] > 24
+    assert result["afterUtilities"]["networks"]["cooling"]["telemetry"]["capacity"] > 12
+    assert result["afterUtilities"]["opening"]["completed"] == 3
+    assert result["afterUtilities"]["opening"]["current"]["id"] == "expand-first-floor"
+
+
 def test_cooling_preview_distinguishes_live_reach_from_supply_and_isolated_pipe():
     result = _run_core(
         """
